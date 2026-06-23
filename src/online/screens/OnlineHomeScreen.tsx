@@ -36,6 +36,7 @@ export default function OnlineHomeScreen() {
   const duelResult = useOnline((s) => s.duelResult);
   const refresh = useOnline((s) => s.refreshState);
   const disconnect = useOnline((s) => s.disconnect);
+  const spawnInitialRoster = useOnline((s) => s.spawnInitialRoster);
   const registerAiDuel = useOnline((s) => s.registerAiDuel);
   const timeSkip = useOnline((s) => s.timeSkip);
   const go = useOnline((s) => s.go);
@@ -278,7 +279,14 @@ export default function OnlineHomeScreen() {
       <div className="panel" style={{ padding: 14 }}>
         <div className="panel-title">Roster</div>
         {roster.length === 0 ? (
-          <div className="muted small">No players yet — server is spawning your newgens.</div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div className="muted small">
+              No players yet. If you just created the team this should fill in a moment — otherwise the initial spawn never completed.
+            </div>
+            <button className="btn btn-accent btn-tiny" onClick={spawnInitialRoster}>
+              Spawn roster
+            </button>
+          </div>
         ) : (
           <table className="table table-dense">
             <thead>
