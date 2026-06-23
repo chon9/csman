@@ -383,8 +383,10 @@ export function openDb(path: string) {
   const deleteTeamPlayers = db.prepare(`DELETE FROM players WHERE team_id = ?`);
   const clearOwnerTeam = db.prepare(`UPDATE owners SET team_id = NULL WHERE team_id = ?`);
   const deleteTeamListings = db.prepare(`DELETE FROM market_listings WHERE seller_team_id = ?`);
+  // Challenges only track the challenger; accepted ones are removed and
+  // promoted to match_history immediately. So no accepter column exists.
   const deleteTeamChallenges = db.prepare(
-    `DELETE FROM challenges WHERE challenger_team_id = ? OR accepter_team_id = ?`,
+    `DELETE FROM challenges WHERE challenger_team_id = ?`,
   );
   const deleteTeamMatches = db.prepare(
     `DELETE FROM match_history WHERE team_a_id = ? OR team_b_id = ?`,
@@ -393,7 +395,7 @@ export function openDb(path: string) {
   function deleteTeamCascade(teamId: string): void {
     db.transaction(() => {
       deleteTeamListings.run(teamId);
-      deleteTeamChallenges.run(teamId, teamId);
+      deleteTeamChallenges.run(teamId);
       deleteTeamMatches.run(teamId, teamId);
       deleteTeamAchievements.run(teamId);
       deleteTeamPlayers.run(teamId);
