@@ -1,0 +1,22 @@
+[Unit]
+Description=CS2 Manager multiplayer server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/csmanager/server
+# Bind only to localhost — Caddy fronts the public traffic on 443 and
+# proxies in. Stops the raw Node port from being exposed to the internet.
+Environment=CSM_PORT=8787
+Environment=CSM_BIND=127.0.0.1
+Environment=CSM_DB=/home/ubuntu/csmanager/server/data/csm.db
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

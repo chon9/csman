@@ -1,0 +1,42 @@
+# Caddy reverse-proxy + static-file config for a single-domain CS2 Manager
+# deploy. Replace `csm.yourdomain.com` with your actual hostname before
+# copying this to /etc/caddy/Caddyfile and reloading Caddy.
+#
+# Layout:
+#   - WebSocket upgrades on any path  → Node server on :8787
+#   - Public HTTP routes (/team /replay /stats /hof) → Node server on :8787
+#   - Everything else → React static build with SPA-fallback to index.html
+#
+# Caddy auto-provisions a Let's Encrypt cert for the domain — no manual
+# certbot dance.
+
+csm.yourdomain.com {
+  encode zstd gzip
+
+  # ---- WebSocket upgrades (must come before the file_server handler) ----
+  @websockets header Connection *Upgrade*
+  handle @websockets {
+    reverse_proxy localhost:8787
+  }
+
+  # ---- Server-rendered public HTML pages ----
+  handle /team/* {
+    reverse_proxy localhost:8787
+  }
+  handle /replay/* {
+    reverse_proxy localhost:8787
+  }
+  handle /stats {
+    reverse_proxy localhost:8787
+  }
+  handle /hof {
+    reverse_proxy localhost:8787
+  }
+
+  # ---- Default: serve the React client build with SPA fallback ----
+  handle {
+    root * /home/ubuntu/csmanager/dist
+    try_files {path} /index.html
+    file_server
+  }
+}

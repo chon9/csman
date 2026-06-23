@@ -1,0 +1,1440 @@
+// SQLite schema + small query helpers. One file = one DB; survives restarts.
+// Players are stored as JSON blobs (the Player shape is big and evolves
+// frequently; querying by inner fields isn't needed for Phase 1-2).
+
+import Database from 'better-sqlite3';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import type { Player, Region, Tactics } from '../../src/types.ts';
+
+export interface TeamRow {
+  id: string;
+  name: string;
+  tag: string;
+  region: Region;
+  ownerNick: string;
+  money: number;
+  day: number;
+  createdAt: number;
+  playerIds: string[];
+  /** Persisted Tactics object — empty `{}` until the owner first edits. */
+  tactics: Partial<Tactics>;
+  /** Owner-uploaded logo as a data URI ('' = none). */
+  logoDataUrl: string;
+  /** Free-form bio shown on the public team profile page. */
+  bio: string;
+  /** Primary team color (CSS hex) — drives accents on the profile page. */
+  primaryColor: string;
+  twitchUrl: string;
+  twitterUrl: string;
+  youtubeUrl: string;
+}
+
+/** Profile fields editable on the home customisation modal. */
+export interface TeamProfileFields {
+  bio?: string;
+  primaryColor?: string;
+  twitchUrl?: string;
+  twitterUrl?: string;
+  youtubeUrl?: string;
+}
+
+export interface SessionRow {
+  token: string;
+  teamId: string;
+  lastSeen: number;
+}
+
+export function openDb(path: string) {
+  mkdirSync(dirname(path), { recursive: true });
+  const db = new Database(path);
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS owners (
+      nickname TEXT PRIMARY KEY COLLATE NOCASE,
+      pin_hash TEXT NOT NULL,
+      pin_salt TEXT NOT NULL,
+      team_id TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS teams (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      tag TEXT NOT NULL,
+      region TEXT NOT NULL,
+      owner_nick TEXT NOT NULL,
+      money INTEGER NOT NULL,
+      day INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      player_ids TEXT NOT NULL DEFAULT '[]',
+      tactics_json TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (owner_nick) REFERENCES owners(nickname)
+    );
+
+    -- Single-row table tracking the current weekly season + a rolling
+    -- standings counter per team. Season rolls over every 7 real days.
+    CREATE TABLE IF NOT EXISTS seasons (
+      season_no INTEGER PRIMARY KEY,
+      started_at INTEGER NOT NULL,
+      ends_at INTEGER NOT NULL,
+      prize_pool INTEGER NOT NULL DEFAULT 0,
+      finished INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS season_standings (
+      season_no INTEGER NOT NULL,
+      team_id TEXT NOT NULL,
+      wins INTEGER NOT NULL DEFAULT 0,
+      losses INTEGER NOT NULL DEFAULT 0,
+      net_money INTEGER NOT NULL DEFAULT 0,
+      streak INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (season_no, team_id),
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_standings_season ON season_standings(season_no, wins DESC);
+
+    CREATE TABLE IF NOT EXISTS players (
+      id TEXT PRIMARY KEY,
+      team_id TEXT,
+      json TEXT NOT NULL,
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_players_team ON players(team_id);
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      team_id TEXT NOT NULL,
+      last_seen INTEGER NOT NULL,
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS market_listings (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL UNIQUE,
+      seller_team_id TEXT NOT NULL,
+      seller_team_tag TEXT NOT NULL,
+      asking_price INTEGER NOT NULL,
+      listed_at INTEGER NOT NULL,
+      FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
+      FOREIGN KEY (seller_team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_listings_team ON market_listings(seller_team_id);
+
+    -- PvP challenges. Sits in 'open' until accepted (and resolved in the
+    -- same handler call) or cancelled. Resolved matches drop their row and
+    -- write into match_history.
+    CREATE TABLE IF NOT EXISTS challenges (
+      id TEXT PRIMARY KEY,
+      challenger_team_id TEXT NOT NULL,
+      challenger_tag TEXT NOT NULL,
+      challenger_nick TEXT NOT NULL,
+      stake INTEGER NOT NULL,
+      format TEXT NOT NULL,
+      message TEXT,
+      created_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      FOREIGN KEY (challenger_team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_challenges_status ON challenges(status);
+
+    -- Match history. Persisted summary of every resolved duel (AI + PvP).
+    -- Frames are stripped before insert, so each row stays small.
+    CREATE TABLE IF NOT EXISTS match_history (
+      id TEXT PRIMARY KEY,
+      team_a_id TEXT NOT NULL,
+      team_b_id TEXT,                -- nullable for AI opponents
+      team_a_tag TEXT NOT NULL,
+      team_b_tag TEXT NOT NULL,
+      winner_id TEXT NOT NULL,
+      maps_a INTEGER NOT NULL,
+      maps_b INTEGER NOT NULL,
+      stake INTEGER NOT NULL,
+      kind TEXT NOT NULL,            -- 'ai' | 'pvp'
+      played_at INTEGER NOT NULL,
+      result_json TEXT NOT NULL      -- stripped MatchResult for replay
+    );
+    CREATE INDEX IF NOT EXISTS idx_history_team_a ON match_history(team_a_id, played_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_history_team_b ON match_history(team_b_id, played_at DESC);
+
+    -- Named tactics presets, scoped to an owner nickname.
+    CREATE TABLE IF NOT EXISTS tactics_presets (
+      id TEXT PRIMARY KEY,
+      owner_nick TEXT NOT NULL,
+      name TEXT NOT NULL,
+      tactics_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_presets_owner ON tactics_presets(owner_nick, created_at DESC);
+
+    -- Achievement unlocks per team. PK on (team_id, kind) keeps each
+    -- unlockable to exactly one row even if the unlock check fires twice.
+    CREATE TABLE IF NOT EXISTS achievements (
+      team_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      value INTEGER,
+      achieved_at INTEGER NOT NULL,
+      PRIMARY KEY (team_id, kind),
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+
+    -- Player loans (online). Lifecycle: pending → active → returned, or
+    -- pending → declined. Auto-return fires when ends_at passes (checked
+    -- on every relevant handler call — no separate scheduler).
+    CREATE TABLE IF NOT EXISTS player_loans (
+      id TEXT PRIMARY KEY,
+      from_team_id TEXT NOT NULL,
+      to_team_id TEXT NOT NULL,
+      player_id TEXT NOT NULL,
+      fee INTEGER NOT NULL,
+      days INTEGER NOT NULL,
+      offered_at INTEGER NOT NULL,
+      ends_at INTEGER,
+      status TEXT NOT NULL DEFAULT 'pending',
+      FOREIGN KEY (from_team_id) REFERENCES teams(id) ON DELETE CASCADE,
+      FOREIGN KEY (to_team_id) REFERENCES teams(id) ON DELETE CASCADE,
+      FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_loans_status ON player_loans(status, ends_at);
+    CREATE INDEX IF NOT EXISTS idx_loans_to ON player_loans(to_team_id, status);
+    CREATE INDEX IF NOT EXISTS idx_loans_from ON player_loans(from_team_id, status);
+
+    -- Permanent honour list of retired players. Snapshot at retirement
+    -- time — independent of the players table (rows may eventually be
+    -- pruned to keep that table slim).
+    CREATE TABLE IF NOT EXISTS hall_of_fame (
+      player_id TEXT PRIMARY KEY,
+      nickname TEXT NOT NULL,
+      role TEXT NOT NULL,
+      nationality TEXT NOT NULL,
+      last_age INTEGER NOT NULL,
+      peak_ca INTEGER NOT NULL,
+      career_wins INTEGER NOT NULL DEFAULT 0,
+      career_losses INTEGER NOT NULL DEFAULT 0,
+      last_team_id TEXT,
+      last_team_tag TEXT,
+      retired_at INTEGER NOT NULL
+    );
+
+    -- NPC coach pool. Rotates server-wide; each coach can be hired by one
+    -- team at a time. When hired, gives the buyer's training tick a flat
+    -- boost during time-skip.
+    CREATE TABLE IF NOT EXISTS coaches (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      nationality TEXT NOT NULL,
+      skill INTEGER NOT NULL,         -- 1-20, multiplies training tick
+      monthly_wage INTEGER NOT NULL,
+      hired_by_team_id TEXT,          -- null when in the open pool
+      hired_at INTEGER,
+      generated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_coaches_hired ON coaches(hired_by_team_id);
+
+    -- Sponsor deals. Server generates pending offers; team accepts; the
+    -- monthly amount auto-credits on each refresh-state when at least
+    -- 30 days have elapsed since last payout (simple cadence).
+    CREATE TABLE IF NOT EXISTS sponsors (
+      id TEXT PRIMARY KEY,
+      team_id TEXT NOT NULL,
+      sponsor_name TEXT NOT NULL,
+      monthly_amount INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'active' | 'declined'
+      offered_at INTEGER NOT NULL,
+      last_paid_at INTEGER,
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_sponsors_team ON sponsors(team_id, status);
+
+    -- Auto-generated news ticker items — capped via post-insert trim.
+    CREATE TABLE IF NOT EXISTS news_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,         -- 'transfer' | 'tournament' | 'goal' | 'duel' | 'other'
+      body TEXT NOT NULL,
+      at INTEGER NOT NULL
+    );
+
+    -- Player development goals: manager-set attribute targets. Cleared on
+    -- success (reached_at set) so they stay on the player profile as
+    -- a "completed" badge. Limit ~5 per team enforced at the handler.
+    CREATE TABLE IF NOT EXISTS player_goals (
+      player_id TEXT NOT NULL,
+      attr TEXT NOT NULL,
+      target INTEGER NOT NULL,
+      set_at INTEGER NOT NULL,
+      reached_at INTEGER,
+      PRIMARY KEY (player_id, attr),
+      FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_goals_player ON player_goals(player_id);
+
+    -- Persistent chat messages. Trimmed via post-insert delete to keep the
+    -- table tiny — no per-channel auth, treat as semi-public.
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel TEXT NOT NULL DEFAULT 'global',
+      author_nick TEXT NOT NULL,
+      team_tag TEXT,
+      text TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_channel ON chat_messages(channel, id DESC);
+
+    -- Tournaments: lobby + bracket state. Bracket is JSON because it's
+    -- only ever read in full and the size is small (4/8 team brackets).
+    CREATE TABLE IF NOT EXISTS tournaments (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      entry_fee INTEGER NOT NULL,
+      prize_pool INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'open',
+      bracket_json TEXT NOT NULL DEFAULT '[]',
+      prizes_json TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS tournament_registrations (
+      tournament_id TEXT NOT NULL,
+      team_id TEXT NOT NULL,
+      seed INTEGER NOT NULL,
+      PRIMARY KEY (tournament_id, team_id),
+      FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+  `);
+
+  // ----- Lightweight schema migrations -----
+  //
+  // CREATE TABLE IF NOT EXISTS skips adding columns to a pre-existing table.
+  // Add them defensively here; ignore "duplicate column" errors so reruns are
+  // idempotent.
+  const tryAddColumn = (table: string, col: string, type: string, def: string) => {
+    try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type} NOT NULL DEFAULT ${def}`); }
+    catch { /* column already present */ }
+  };
+  tryAddColumn('teams', 'tactics_json', 'TEXT', "'{}'");
+  tryAddColumn('teams', 'logo_data', 'TEXT', "''");
+  tryAddColumn('teams', 'bio', 'TEXT', "''");
+  tryAddColumn('teams', 'primary_color', 'TEXT', "'#de9b35'");
+  tryAddColumn('teams', 'twitch_url', 'TEXT', "''");
+  tryAddColumn('teams', 'twitter_url', 'TEXT', "''");
+  tryAddColumn('teams', 'youtube_url', 'TEXT', "''");
+
+  // -------- Owner / auth --------
+
+  const insertOwner = db.prepare(
+    `INSERT INTO owners (nickname, pin_hash, pin_salt, team_id, created_at) VALUES (?, ?, ?, NULL, ?)`,
+  );
+  const findOwner = db.prepare(`SELECT * FROM owners WHERE nickname = ? COLLATE NOCASE`);
+  const setOwnerTeam = db.prepare(`UPDATE owners SET team_id = ? WHERE nickname = ? COLLATE NOCASE`);
+
+  function hashPin(pin: string, salt: string): string {
+    return createHash('sha256').update(`${salt}:${pin}`).digest('hex');
+  }
+
+  function authenticateOrRegister(nickname: string, pin: string): { ok: boolean; teamId: string | null } {
+    const existing = findOwner.get(nickname) as
+      | { nickname: string; pin_hash: string; pin_salt: string; team_id: string | null }
+      | undefined;
+    if (existing) {
+      const ok = hashPin(pin, existing.pin_salt) === existing.pin_hash;
+      return { ok, teamId: ok ? existing.team_id : null };
+    }
+    // First time this nickname has been seen — register on the spot.
+    const salt = randomBytes(8).toString('hex');
+    insertOwner.run(nickname, hashPin(pin, salt), salt, Date.now());
+    return { ok: true, teamId: null };
+  }
+
+  // -------- Teams --------
+
+  const insertTeam = db.prepare(
+    `INSERT INTO teams (id, name, tag, region, owner_nick, money, day, created_at, player_ids, tactics_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const getTeam = db.prepare(`SELECT * FROM teams WHERE id = ?`);
+  const updateTeamPlayers = db.prepare(`UPDATE teams SET player_ids = ? WHERE id = ?`);
+  const updateTeamMoneyDay = db.prepare(`UPDATE teams SET money = ?, day = ? WHERE id = ?`);
+  const updateTeamTactics = db.prepare(`UPDATE teams SET tactics_json = ? WHERE id = ?`);
+  const updateTeamLogo = db.prepare(`UPDATE teams SET logo_data = ? WHERE id = ?`);
+  const updatePlayerJson = db.prepare(`UPDATE players SET json = ?, team_id = ? WHERE id = ?`);
+
+  function rowToTeam(row: Record<string, unknown>): TeamRow {
+    let tactics: Partial<Tactics> = {};
+    try {
+      const raw = row.tactics_json as string | undefined;
+      if (raw) tactics = JSON.parse(raw);
+    } catch { /* malformed JSON → default empty */ }
+    return {
+      id: row.id as string,
+      name: row.name as string,
+      tag: row.tag as string,
+      region: row.region as Region,
+      ownerNick: row.owner_nick as string,
+      money: row.money as number,
+      day: row.day as number,
+      createdAt: row.created_at as number,
+      playerIds: JSON.parse(row.player_ids as string),
+      tactics,
+      logoDataUrl: (row.logo_data as string | null) ?? '',
+      bio: (row.bio as string | null) ?? '',
+      primaryColor: (row.primary_color as string | null) ?? '#de9b35',
+      twitchUrl: (row.twitch_url as string | null) ?? '',
+      twitterUrl: (row.twitter_url as string | null) ?? '',
+      youtubeUrl: (row.youtube_url as string | null) ?? '',
+    };
+  }
+
+  function createTeam(team: TeamRow): void {
+    insertTeam.run(
+      team.id,
+      team.name,
+      team.tag,
+      team.region,
+      team.ownerNick,
+      team.money,
+      team.day,
+      team.createdAt,
+      JSON.stringify(team.playerIds),
+      JSON.stringify(team.tactics ?? {}),
+    );
+    setOwnerTeam.run(team.id, team.ownerNick);
+  }
+
+  function setTeamTactics(teamId: string, tactics: Partial<Tactics>): void {
+    updateTeamTactics.run(JSON.stringify(tactics), teamId);
+  }
+
+  function setTeamLogo(teamId: string, dataUrl: string): void {
+    updateTeamLogo.run(dataUrl, teamId);
+  }
+
+  // Profile customization update — sparse, each field optional.
+  function updateTeamProfile(teamId: string, fields: TeamProfileFields): void {
+    const sets: string[] = [];
+    const args: (string | number)[] = [];
+    if (typeof fields.bio === 'string') { sets.push('bio = ?'); args.push(fields.bio.slice(0, 500)); }
+    if (typeof fields.primaryColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(fields.primaryColor)) {
+      sets.push('primary_color = ?'); args.push(fields.primaryColor);
+    }
+    if (typeof fields.twitchUrl === 'string') { sets.push('twitch_url = ?'); args.push(fields.twitchUrl.slice(0, 200)); }
+    if (typeof fields.twitterUrl === 'string') { sets.push('twitter_url = ?'); args.push(fields.twitterUrl.slice(0, 200)); }
+    if (typeof fields.youtubeUrl === 'string') { sets.push('youtube_url = ?'); args.push(fields.youtubeUrl.slice(0, 200)); }
+    if (sets.length === 0) return;
+    args.push(teamId);
+    db.prepare(`UPDATE teams SET ${sets.join(', ')} WHERE id = ?`).run(...args);
+  }
+
+  // -------- Achievements --------
+
+  interface AchievementRow { team_id: string; kind: string; value: number | null; achieved_at: number; }
+
+  const upsertAchievement = db.prepare(
+    `INSERT INTO achievements (team_id, kind, value, achieved_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(team_id, kind) DO NOTHING`,
+  );
+  const findAchievement = db.prepare(`SELECT * FROM achievements WHERE team_id = ? AND kind = ?`);
+  const achievementsForTeam = db.prepare(`SELECT * FROM achievements WHERE team_id = ? ORDER BY achieved_at DESC`);
+
+  /** Returns true if this was a fresh unlock, false if the team already had it. */
+  function unlockAchievement(teamId: string, kind: string, value?: number): boolean {
+    const before = findAchievement.get(teamId, kind);
+    if (before) return false;
+    upsertAchievement.run(teamId, kind, value ?? null, Date.now());
+    return true;
+  }
+
+  function loadAchievements(teamId: string) {
+    const rows = achievementsForTeam.all(teamId) as AchievementRow[];
+    return rows.map((r) => ({
+      teamId: r.team_id,
+      kind: r.kind,
+      value: r.value ?? undefined,
+      achievedAt: r.achieved_at,
+    }));
+  }
+
+  function loadTeam(teamId: string): TeamRow | null {
+    const row = getTeam.get(teamId) as Record<string, unknown> | undefined;
+    return row ? rowToTeam(row) : null;
+  }
+
+  function setTeamPlayers(teamId: string, playerIds: string[]): void {
+    updateTeamPlayers.run(JSON.stringify(playerIds), teamId);
+  }
+
+  function setTeamMoneyDay(teamId: string, money: number, day: number): void {
+    updateTeamMoneyDay.run(money, day, teamId);
+  }
+
+  function persistPlayer(player: Player): void {
+    updatePlayerJson.run(JSON.stringify(player), player.teamId, player.id);
+  }
+
+  // -------- Players --------
+
+  const insertPlayer = db.prepare(`INSERT INTO players (id, team_id, json) VALUES (?, ?, ?)`);
+  const loadPlayerStmt = db.prepare(`SELECT json FROM players WHERE id = ?`);
+  const loadPlayersByTeam = db.prepare(`SELECT json FROM players WHERE team_id = ?`);
+
+  function savePlayer(player: Player): void {
+    insertPlayer.run(player.id, player.teamId, JSON.stringify(player));
+  }
+
+  function loadPlayer(id: string): Player | null {
+    const row = loadPlayerStmt.get(id) as { json: string } | undefined;
+    return row ? (JSON.parse(row.json) as Player) : null;
+  }
+
+  function loadTeamPlayers(teamId: string): Player[] {
+    const rows = loadPlayersByTeam.all(teamId) as { json: string }[];
+    return rows.map((r) => JSON.parse(r.json) as Player);
+  }
+
+  // -------- Sessions --------
+
+  const upsertSession = db.prepare(
+    `INSERT INTO sessions (token, team_id, last_seen) VALUES (?, ?, ?)
+     ON CONFLICT(token) DO UPDATE SET last_seen = excluded.last_seen`,
+  );
+  const findSession = db.prepare(`SELECT * FROM sessions WHERE token = ?`);
+
+  function issueSession(teamId: string): string {
+    const token = randomBytes(16).toString('hex');
+    upsertSession.run(token, teamId, Date.now());
+    return token;
+  }
+
+  function resolveSession(token: string): SessionRow | null {
+    const row = findSession.get(token) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      token: row.token as string,
+      teamId: row.team_id as string,
+      lastSeen: row.last_seen as number,
+    };
+  }
+
+  // -------- Market --------
+
+  const insertListing = db.prepare(
+    `INSERT INTO market_listings (id, player_id, seller_team_id, seller_team_tag, asking_price, listed_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+  const deleteListing = db.prepare(`DELETE FROM market_listings WHERE id = ?`);
+  const findListing = db.prepare(`SELECT * FROM market_listings WHERE id = ?`);
+  const findListingByPlayer = db.prepare(`SELECT * FROM market_listings WHERE player_id = ?`);
+  const allListings = db.prepare(`SELECT * FROM market_listings ORDER BY listed_at DESC LIMIT 200`);
+
+  interface ListingRow {
+    id: string;
+    player_id: string;
+    seller_team_id: string;
+    seller_team_tag: string;
+    asking_price: number;
+    listed_at: number;
+  }
+
+  function listingRowToObj(row: ListingRow) {
+    return {
+      id: row.id,
+      playerId: row.player_id,
+      sellerTeamId: row.seller_team_id,
+      sellerTeamTag: row.seller_team_tag,
+      askingPrice: row.asking_price,
+      listedAt: row.listed_at,
+    };
+  }
+
+  function createListing(
+    id: string,
+    playerId: string,
+    sellerTeamId: string,
+    sellerTeamTag: string,
+    askingPrice: number,
+  ): { id: string; playerId: string; sellerTeamId: string; sellerTeamTag: string; askingPrice: number; listedAt: number } {
+    const listedAt = Date.now();
+    insertListing.run(id, playerId, sellerTeamId, sellerTeamTag, askingPrice, listedAt);
+    return { id, playerId, sellerTeamId, sellerTeamTag, askingPrice, listedAt };
+  }
+
+  function removeListing(id: string): void {
+    deleteListing.run(id);
+  }
+
+  function loadListing(id: string) {
+    const row = findListing.get(id) as ListingRow | undefined;
+    return row ? listingRowToObj(row) : null;
+  }
+
+  function loadListingByPlayer(playerId: string) {
+    const row = findListingByPlayer.get(playerId) as ListingRow | undefined;
+    return row ? listingRowToObj(row) : null;
+  }
+
+  function loadAllListings() {
+    const rows = allListings.all() as ListingRow[];
+    return rows.map(listingRowToObj);
+  }
+
+  // -------- Free agent pool --------
+  //
+  // Free agents are stored in the same `players` table with team_id = NULL.
+  // We keep a small pool fresh at all times so a solo player always has
+  // someone to scout / sign. `loadFreeAgents` ignores any player that's
+  // currently on a listing (those are paid market entries).
+
+  const freeAgentsStmt = db.prepare(
+    `SELECT players.json FROM players
+     WHERE players.team_id IS NULL
+       AND players.id NOT IN (SELECT player_id FROM market_listings)
+     ORDER BY RANDOM()
+     LIMIT ?`,
+  );
+  const countFreeAgentsStmt = db.prepare(
+    `SELECT COUNT(*) AS n FROM players WHERE team_id IS NULL`,
+  );
+
+  function loadFreeAgents(limit = 60): Player[] {
+    const rows = freeAgentsStmt.all(limit) as { json: string }[];
+    return rows.map((r) => JSON.parse(r.json) as Player);
+  }
+
+  function countFreeAgents(): number {
+    const row = countFreeAgentsStmt.get() as { n: number };
+    return row.n;
+  }
+
+  // -------- Challenges --------
+
+  interface ChallengeRow {
+    id: string;
+    challenger_team_id: string;
+    challenger_tag: string;
+    challenger_nick: string;
+    stake: number;
+    format: string;
+    message: string | null;
+    created_at: number;
+    status: string;
+  }
+
+  const insertChallenge = db.prepare(
+    `INSERT INTO challenges (id, challenger_team_id, challenger_tag, challenger_nick, stake, format, message, created_at, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')`,
+  );
+  const findChallenge = db.prepare(`SELECT * FROM challenges WHERE id = ?`);
+  const deleteChallenge = db.prepare(`DELETE FROM challenges WHERE id = ?`);
+  const allOpenChallenges = db.prepare(
+    `SELECT * FROM challenges WHERE status = 'open' ORDER BY created_at DESC LIMIT 50`,
+  );
+  const challengesByTeam = db.prepare(
+    `SELECT * FROM challenges WHERE challenger_team_id = ? AND status = 'open'`,
+  );
+
+  function rowToChallenge(row: ChallengeRow) {
+    return {
+      id: row.id,
+      challengerTeamId: row.challenger_team_id,
+      challengerTag: row.challenger_tag,
+      challengerNick: row.challenger_nick,
+      stake: row.stake,
+      format: row.format as 'BO1' | 'BO3' | 'BO5',
+      message: row.message ?? undefined,
+      createdAt: row.created_at,
+    };
+  }
+
+  function createChallenge(args: {
+    id: string;
+    challengerTeamId: string;
+    challengerTag: string;
+    challengerNick: string;
+    stake: number;
+    format: string;
+    message?: string;
+  }) {
+    insertChallenge.run(
+      args.id,
+      args.challengerTeamId,
+      args.challengerTag,
+      args.challengerNick,
+      args.stake,
+      args.format,
+      args.message ?? null,
+      Date.now(),
+    );
+  }
+
+  function loadChallenge(id: string) {
+    const row = findChallenge.get(id) as ChallengeRow | undefined;
+    return row ? rowToChallenge(row) : null;
+  }
+
+  function removeChallenge(id: string): void {
+    deleteChallenge.run(id);
+  }
+
+  function loadOpenChallenges() {
+    const rows = allOpenChallenges.all() as ChallengeRow[];
+    return rows.map(rowToChallenge);
+  }
+
+  function loadChallengesByTeam(teamId: string) {
+    const rows = challengesByTeam.all(teamId) as ChallengeRow[];
+    return rows.map(rowToChallenge);
+  }
+
+  // -------- Match history --------
+
+  interface MatchHistoryRow {
+    id: string;
+    team_a_id: string;
+    team_b_id: string | null;
+    team_a_tag: string;
+    team_b_tag: string;
+    winner_id: string;
+    maps_a: number;
+    maps_b: number;
+    stake: number;
+    kind: string;
+    played_at: number;
+    result_json: string;
+  }
+
+  const insertMatch = db.prepare(
+    `INSERT INTO match_history (id, team_a_id, team_b_id, team_a_tag, team_b_tag, winner_id, maps_a, maps_b, stake, kind, played_at, result_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const findMatch = db.prepare(`SELECT * FROM match_history WHERE id = ?`);
+  const matchesForTeam = db.prepare(
+    `SELECT * FROM match_history
+     WHERE team_a_id = ? OR team_b_id = ?
+     ORDER BY played_at DESC
+     LIMIT ?`,
+  );
+
+  function recordMatch(args: {
+    id: string;
+    teamAId: string;
+    teamBId: string | null;
+    teamATag: string;
+    teamBTag: string;
+    winnerId: string;
+    mapsA: number;
+    mapsB: number;
+    stake: number;
+    kind: 'ai' | 'pvp';
+    resultJson: string;
+  }): void {
+    insertMatch.run(
+      args.id,
+      args.teamAId,
+      args.teamBId,
+      args.teamATag,
+      args.teamBTag,
+      args.winnerId,
+      args.mapsA,
+      args.mapsB,
+      args.stake,
+      args.kind,
+      Date.now(),
+      args.resultJson,
+    );
+  }
+
+  function loadMatch(id: string) {
+    const row = findMatch.get(id) as MatchHistoryRow | undefined;
+    return row;
+  }
+
+  function loadMatchesForTeam(teamId: string, limit = 25) {
+    const rows = matchesForTeam.all(teamId, teamId, limit) as MatchHistoryRow[];
+    return rows;
+  }
+
+  // -------- Seasons + leaderboard --------
+
+  interface SeasonRow {
+    season_no: number;
+    started_at: number;
+    ends_at: number;
+    prize_pool: number;
+    finished: number;
+  }
+
+  interface StandingsRow {
+    team_id: string;
+    team_tag: string;
+    team_name: string;
+    wins: number;
+    losses: number;
+    net_money: number;
+    streak: number;
+  }
+
+  const SEASON_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // weekly
+
+  const insertSeason = db.prepare(
+    `INSERT INTO seasons (season_no, started_at, ends_at, prize_pool, finished) VALUES (?, ?, ?, ?, 0)`,
+  );
+  const latestSeasonStmt = db.prepare(
+    `SELECT * FROM seasons ORDER BY season_no DESC LIMIT 1`,
+  );
+  const finishSeasonStmt = db.prepare(`UPDATE seasons SET finished = 1 WHERE season_no = ?`);
+
+  function currentSeason(): { seasonNo: number; startedAt: number; endsAt: number; prizePool: number } {
+    const row = latestSeasonStmt.get() as SeasonRow | undefined;
+    const now = Date.now();
+    if (!row) {
+      // First-ever season starts now.
+      const ends = now + SEASON_DURATION_MS;
+      insertSeason.run(1, now, ends, 0);
+      return { seasonNo: 1, startedAt: now, endsAt: ends, prizePool: 0 };
+    }
+    if (row.finished || row.ends_at <= now) {
+      // Previous one expired — open a new season.
+      const nextNo = row.season_no + 1;
+      const ends = now + SEASON_DURATION_MS;
+      insertSeason.run(nextNo, now, ends, 0);
+      // Mark prior season as finished if it wasn't already (helps reads).
+      if (!row.finished) finishSeasonStmt.run(row.season_no);
+      return { seasonNo: nextNo, startedAt: now, endsAt: ends, prizePool: 0 };
+    }
+    return {
+      seasonNo: row.season_no,
+      startedAt: row.started_at,
+      endsAt: row.ends_at,
+      prizePool: row.prize_pool,
+    };
+  }
+
+  const upsertStanding = db.prepare(
+    `INSERT INTO season_standings (season_no, team_id, wins, losses, net_money, streak)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(season_no, team_id) DO UPDATE SET
+       wins = season_standings.wins + excluded.wins,
+       losses = season_standings.losses + excluded.losses,
+       net_money = season_standings.net_money + excluded.net_money,
+       streak = excluded.streak`,
+  );
+  const standingsForTeamStmt = db.prepare(
+    `SELECT wins, losses, net_money, streak FROM season_standings WHERE season_no = ? AND team_id = ?`,
+  );
+  const leaderboardStmt = db.prepare(
+    `SELECT s.team_id, s.wins, s.losses, s.net_money, s.streak,
+            t.tag AS team_tag, t.name AS team_name
+     FROM season_standings s
+     INNER JOIN teams t ON t.id = s.team_id
+     WHERE s.season_no = ?
+     ORDER BY s.wins DESC, s.net_money DESC
+     LIMIT 50`,
+  );
+
+  function recordSeasonOutcome(
+    seasonNo: number,
+    teamId: string,
+    won: boolean,
+    moneyDelta: number,
+  ): { wins: number; losses: number; netMoney: number; streak: number } {
+    const prior = standingsForTeamStmt.get(seasonNo, teamId) as
+      | { wins: number; losses: number; net_money: number; streak: number }
+      | undefined;
+    const priorStreak = prior?.streak ?? 0;
+    const newStreak = won
+      ? Math.max(1, priorStreak + 1)   // wins continue / restart positive
+      : Math.min(-1, priorStreak - 1); // losses go negative
+    upsertStanding.run(seasonNo, teamId, won ? 1 : 0, won ? 0 : 1, moneyDelta, newStreak);
+    const fresh = standingsForTeamStmt.get(seasonNo, teamId) as
+      | { wins: number; losses: number; net_money: number; streak: number };
+    return {
+      wins: fresh.wins,
+      losses: fresh.losses,
+      netMoney: fresh.net_money,
+      streak: fresh.streak,
+    };
+  }
+
+  function loadLeaderboard(seasonNo: number) {
+    const rows = leaderboardStmt.all(seasonNo) as StandingsRow[];
+    return rows.map((r, i) => ({
+      rank: i + 1,
+      teamId: r.team_id,
+      teamTag: r.team_tag,
+      teamName: r.team_name,
+      wins: r.wins,
+      losses: r.losses,
+      netMoney: r.net_money,
+      streak: r.streak,
+    }));
+  }
+
+  function loadTeamStandings(seasonNo: number, teamId: string) {
+    const row = standingsForTeamStmt.get(seasonNo, teamId) as
+      | { wins: number; losses: number; net_money: number; streak: number }
+      | undefined;
+    if (!row) return { wins: 0, losses: 0, netMoney: 0, streak: 0 };
+    return { wins: row.wins, losses: row.losses, netMoney: row.net_money, streak: row.streak };
+  }
+
+  // -------- Hall of Fame --------
+
+  interface HoFRow {
+    player_id: string;
+    nickname: string;
+    role: string;
+    nationality: string;
+    last_age: number;
+    peak_ca: number;
+    career_wins: number;
+    career_losses: number;
+    last_team_id: string | null;
+    last_team_tag: string | null;
+    retired_at: number;
+  }
+
+  const insertHoF = db.prepare(
+    `INSERT INTO hall_of_fame (player_id, nickname, role, nationality, last_age, peak_ca, career_wins, career_losses, last_team_id, last_team_tag, retired_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(player_id) DO NOTHING`,
+  );
+  const findHoF = db.prepare(`SELECT * FROM hall_of_fame WHERE player_id = ?`);
+  const topHoF = db.prepare(`SELECT * FROM hall_of_fame ORDER BY peak_ca DESC, retired_at DESC LIMIT ?`);
+
+  function rowToHoF(r: HoFRow) {
+    return {
+      playerId: r.player_id,
+      nickname: r.nickname,
+      role: r.role,
+      nationality: r.nationality,
+      lastAge: r.last_age,
+      peakCA: r.peak_ca,
+      careerWins: r.career_wins,
+      careerLosses: r.career_losses,
+      lastTeamId: r.last_team_id ?? undefined,
+      lastTeamTag: r.last_team_tag ?? undefined,
+      retiredAt: r.retired_at,
+    };
+  }
+
+  function inductIntoHoF(args: {
+    playerId: string;
+    nickname: string;
+    role: string;
+    nationality: string;
+    lastAge: number;
+    peakCA: number;
+    careerWins?: number;
+    careerLosses?: number;
+    lastTeamId?: string | null;
+    lastTeamTag?: string | null;
+  }): void {
+    insertHoF.run(
+      args.playerId, args.nickname, args.role, args.nationality,
+      args.lastAge, args.peakCA, args.careerWins ?? 0, args.careerLosses ?? 0,
+      args.lastTeamId ?? null, args.lastTeamTag ?? null, Date.now(),
+    );
+  }
+
+  function loadHallOfFame(limit = 50) {
+    return (topHoF.all(limit) as HoFRow[]).map(rowToHoF);
+  }
+
+  function loadHoFEntry(playerId: string) {
+    const r = findHoF.get(playerId) as HoFRow | undefined;
+    return r ? rowToHoF(r) : null;
+  }
+
+  // -------- Coaches --------
+
+  interface CoachRow {
+    id: string;
+    name: string;
+    nationality: string;
+    skill: number;
+    monthly_wage: number;
+    hired_by_team_id: string | null;
+    hired_at: number | null;
+    generated_at: number;
+  }
+
+  const insertCoach = db.prepare(
+    `INSERT INTO coaches (id, name, nationality, skill, monthly_wage, hired_by_team_id, hired_at, generated_at)
+     VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)`,
+  );
+  const openCoaches = db.prepare(
+    `SELECT * FROM coaches WHERE hired_by_team_id IS NULL ORDER BY skill DESC LIMIT 12`,
+  );
+  const findCoach = db.prepare(`SELECT * FROM coaches WHERE id = ?`);
+  const coachForTeam = db.prepare(`SELECT * FROM coaches WHERE hired_by_team_id = ? LIMIT 1`);
+  const setCoachHired = db.prepare(`UPDATE coaches SET hired_by_team_id = ?, hired_at = ? WHERE id = ?`);
+  const countCoaches = db.prepare(`SELECT COUNT(*) AS n FROM coaches WHERE hired_by_team_id IS NULL`);
+
+  function rowToCoach(r: CoachRow) {
+    return {
+      id: r.id,
+      name: r.name,
+      nationality: r.nationality,
+      skill: r.skill,
+      monthlyWage: r.monthly_wage,
+      hiredByTeamId: r.hired_by_team_id ?? undefined,
+      hiredAt: r.hired_at ?? undefined,
+    };
+  }
+
+  function addCoachToPool(args: { id: string; name: string; nationality: string; skill: number; monthlyWage: number }): void {
+    insertCoach.run(args.id, args.name, args.nationality, args.skill, args.monthlyWage, Date.now());
+  }
+  function loadOpenCoaches() { return (openCoaches.all() as CoachRow[]).map(rowToCoach); }
+  function loadCoach(id: string) { const r = findCoach.get(id) as CoachRow | undefined; return r ? rowToCoach(r) : null; }
+  function loadHiredCoachFor(teamId: string) { const r = coachForTeam.get(teamId) as CoachRow | undefined; return r ? rowToCoach(r) : null; }
+  function hireCoach(id: string, teamId: string | null) { setCoachHired.run(teamId, teamId ? Date.now() : null, id); }
+  function countOpenCoaches() { return (countCoaches.get() as { n: number }).n; }
+
+  // -------- Sponsors --------
+
+  interface SponsorRow {
+    id: string;
+    team_id: string;
+    sponsor_name: string;
+    monthly_amount: number;
+    status: string;
+    offered_at: number;
+    last_paid_at: number | null;
+  }
+
+  const insertSponsor = db.prepare(
+    `INSERT INTO sponsors (id, team_id, sponsor_name, monthly_amount, status, offered_at, last_paid_at)
+     VALUES (?, ?, ?, ?, 'pending', ?, NULL)`,
+  );
+  const findSponsor = db.prepare(`SELECT * FROM sponsors WHERE id = ?`);
+  const sponsorsForTeam = db.prepare(`SELECT * FROM sponsors WHERE team_id = ? AND status != 'declined' ORDER BY offered_at DESC`);
+  const updateSponsorStatus = db.prepare(`UPDATE sponsors SET status = ? WHERE id = ?`);
+  const markSponsorPaid = db.prepare(`UPDATE sponsors SET last_paid_at = ? WHERE id = ?`);
+  const dueSponsors = db.prepare(
+    `SELECT * FROM sponsors WHERE team_id = ? AND status = 'active' AND (last_paid_at IS NULL OR last_paid_at <= ?)`,
+  );
+
+  function rowToSponsor(r: SponsorRow) {
+    return {
+      id: r.id,
+      teamId: r.team_id,
+      sponsorName: r.sponsor_name,
+      monthlyAmount: r.monthly_amount,
+      status: r.status as 'pending' | 'active' | 'declined',
+      offeredAt: r.offered_at,
+      lastPaidAt: r.last_paid_at ?? undefined,
+    };
+  }
+
+  function createSponsorOffer(args: { id: string; teamId: string; sponsorName: string; monthlyAmount: number }): void {
+    insertSponsor.run(args.id, args.teamId, args.sponsorName, args.monthlyAmount, Date.now());
+  }
+  function loadSponsor(id: string) { const r = findSponsor.get(id) as SponsorRow | undefined; return r ? rowToSponsor(r) : null; }
+  function loadSponsorsForTeam(teamId: string) { return (sponsorsForTeam.all(teamId) as SponsorRow[]).map(rowToSponsor); }
+  function setSponsorStatus(id: string, status: 'pending' | 'active' | 'declined') { updateSponsorStatus.run(status, id); }
+  function recordSponsorPaid(id: string) { markSponsorPaid.run(Date.now(), id); }
+  function loadDueSponsors(teamId: string, cutoff: number) { return (dueSponsors.all(teamId, cutoff) as SponsorRow[]).map(rowToSponsor); }
+
+  // -------- Player loans --------
+
+  interface LoanRow {
+    id: string;
+    from_team_id: string;
+    to_team_id: string;
+    player_id: string;
+    fee: number;
+    days: number;
+    offered_at: number;
+    ends_at: number | null;
+    status: string;
+  }
+
+  const insertLoan = db.prepare(
+    `INSERT INTO player_loans (id, from_team_id, to_team_id, player_id, fee, days, offered_at, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+  );
+  const findLoan = db.prepare(`SELECT * FROM player_loans WHERE id = ?`);
+  const loanFromTeam = db.prepare(`SELECT * FROM player_loans WHERE from_team_id = ? AND status != 'returned' AND status != 'declined' ORDER BY offered_at DESC`);
+  const loanToTeam = db.prepare(`SELECT * FROM player_loans WHERE to_team_id = ? AND status != 'returned' AND status != 'declined' ORDER BY offered_at DESC`);
+  const dueLoans = db.prepare(`SELECT * FROM player_loans WHERE status = 'active' AND ends_at IS NOT NULL AND ends_at <= ?`);
+  const updateLoanStatus = db.prepare(`UPDATE player_loans SET status = ?, ends_at = ? WHERE id = ?`);
+
+  function rowToLoan(r: LoanRow) {
+    return {
+      id: r.id,
+      fromTeamId: r.from_team_id,
+      toTeamId: r.to_team_id,
+      playerId: r.player_id,
+      fee: r.fee,
+      days: r.days,
+      offeredAt: r.offered_at,
+      endsAt: r.ends_at ?? undefined,
+      status: r.status as 'pending' | 'active' | 'returned' | 'declined',
+    };
+  }
+
+  function createLoanOffer(args: { id: string; fromTeamId: string; toTeamId: string; playerId: string; fee: number; days: number }): void {
+    insertLoan.run(args.id, args.fromTeamId, args.toTeamId, args.playerId, args.fee, args.days, Date.now());
+  }
+  function loadLoan(id: string) { const r = findLoan.get(id) as LoanRow | undefined; return r ? rowToLoan(r) : null; }
+  function loadLoansFromTeam(teamId: string) { return (loanFromTeam.all(teamId) as LoanRow[]).map(rowToLoan); }
+  function loadLoansToTeam(teamId: string) { return (loanToTeam.all(teamId) as LoanRow[]).map(rowToLoan); }
+  function loadDueLoans(now: number) { return (dueLoans.all(now) as LoanRow[]).map(rowToLoan); }
+  function setLoanStatus(id: string, status: 'pending' | 'active' | 'returned' | 'declined', endsAt: number | null = null) {
+    updateLoanStatus.run(status, endsAt, id);
+  }
+
+  // -------- Tactics presets --------
+
+  interface PresetRow {
+    id: string;
+    owner_nick: string;
+    name: string;
+    tactics_json: string;
+    created_at: number;
+  }
+
+  const insertPreset = db.prepare(
+    `INSERT INTO tactics_presets (id, owner_nick, name, tactics_json, created_at) VALUES (?, ?, ?, ?, ?)`,
+  );
+  const findPreset = db.prepare(`SELECT * FROM tactics_presets WHERE id = ?`);
+  const presetsForOwner = db.prepare(
+    `SELECT * FROM tactics_presets WHERE owner_nick = ? COLLATE NOCASE ORDER BY created_at DESC LIMIT 20`,
+  );
+  const deletePreset = db.prepare(`DELETE FROM tactics_presets WHERE id = ? AND owner_nick = ? COLLATE NOCASE`);
+
+  function rowToPreset(row: PresetRow) {
+    let tactics: Partial<Tactics> = {};
+    try { tactics = JSON.parse(row.tactics_json); } catch { /* default empty */ }
+    return {
+      id: row.id,
+      ownerNick: row.owner_nick,
+      name: row.name,
+      tactics,
+      createdAt: row.created_at,
+    };
+  }
+
+  function savePreset(id: string, ownerNick: string, name: string, tactics: Partial<Tactics>): void {
+    insertPreset.run(id, ownerNick, name.slice(0, 32), JSON.stringify(tactics), Date.now());
+  }
+
+  function loadPresetsForOwner(ownerNick: string) {
+    const rows = presetsForOwner.all(ownerNick) as PresetRow[];
+    return rows.map(rowToPreset);
+  }
+
+  function loadPreset(id: string) {
+    const row = findPreset.get(id) as PresetRow | undefined;
+    return row ? rowToPreset(row) : null;
+  }
+
+  function removePreset(id: string, ownerNick: string): void {
+    deletePreset.run(id, ownerNick);
+  }
+
+  // -------- News ticker --------
+
+  interface NewsRow { id: number; kind: string; body: string; at: number; }
+
+  const insertNews = db.prepare(`INSERT INTO news_items (kind, body, at) VALUES (?, ?, ?)`);
+  const findNews = db.prepare(`SELECT * FROM news_items WHERE id = ?`);
+  const newsRecent = db.prepare(`SELECT * FROM news_items ORDER BY id DESC LIMIT ?`);
+  const trimNews = db.prepare(
+    `DELETE FROM news_items WHERE id NOT IN (SELECT id FROM news_items ORDER BY id DESC LIMIT 200)`,
+  );
+
+  function rowToNews(r: NewsRow) {
+    return { id: r.id, kind: r.kind, body: r.body, at: r.at };
+  }
+
+  function publishNews(kind: string, body: string) {
+    const at = Date.now();
+    const info = insertNews.run(kind, body.slice(0, 220), at);
+    trimNews.run();
+    const id = info.lastInsertRowid as number;
+    const row = findNews.get(id) as NewsRow;
+    return rowToNews(row);
+  }
+
+  function loadRecentNews(limit = 50) {
+    const rows = newsRecent.all(limit) as NewsRow[];
+    return rows.map(rowToNews).reverse(); // oldest first for ticker
+  }
+
+  // -------- Player development goals --------
+
+  interface GoalRow {
+    player_id: string;
+    attr: string;
+    target: number;
+    set_at: number;
+    reached_at: number | null;
+  }
+
+  const upsertGoal = db.prepare(
+    `INSERT INTO player_goals (player_id, attr, target, set_at, reached_at) VALUES (?, ?, ?, ?, NULL)
+     ON CONFLICT(player_id, attr) DO UPDATE SET target = excluded.target, set_at = excluded.set_at, reached_at = NULL`,
+  );
+  const deleteGoal = db.prepare(`DELETE FROM player_goals WHERE player_id = ? AND attr = ?`);
+  const goalsForPlayers = db.prepare(
+    `SELECT * FROM player_goals WHERE player_id IN (SELECT id FROM players WHERE team_id = ?)`,
+  );
+  const goalsAllOpen = db.prepare(`SELECT * FROM player_goals WHERE reached_at IS NULL`);
+  const markGoalReached = db.prepare(
+    `UPDATE player_goals SET reached_at = ? WHERE player_id = ? AND attr = ?`,
+  );
+
+  function rowToGoal(r: GoalRow) {
+    return {
+      playerId: r.player_id,
+      attr: r.attr,
+      target: r.target,
+      setAt: r.set_at,
+      reachedAt: r.reached_at ?? undefined,
+    };
+  }
+
+  function setGoal(playerId: string, attr: string, target: number): void {
+    upsertGoal.run(playerId, attr, target, Date.now());
+  }
+
+  function clearGoal(playerId: string, attr: string): void {
+    deleteGoal.run(playerId, attr);
+  }
+
+  function loadGoalsForTeam(teamId: string) {
+    const rows = goalsForPlayers.all(teamId) as GoalRow[];
+    return rows.map(rowToGoal);
+  }
+
+  function loadAllOpenGoals() {
+    const rows = goalsAllOpen.all() as GoalRow[];
+    return rows.map(rowToGoal);
+  }
+
+  function flagGoalReached(playerId: string, attr: string): void {
+    markGoalReached.run(Date.now(), playerId, attr);
+  }
+
+  // -------- Chat --------
+
+  const insertChat = db.prepare(
+    `INSERT INTO chat_messages (channel, author_nick, team_tag, text, created_at) VALUES (?, ?, ?, ?, ?)`,
+  );
+  const findChat = db.prepare(`SELECT * FROM chat_messages WHERE id = ?`);
+  const chatByChannel = db.prepare(
+    `SELECT * FROM chat_messages WHERE channel = ? ORDER BY id DESC LIMIT ?`,
+  );
+  const trimChat = db.prepare(
+    `DELETE FROM chat_messages WHERE id NOT IN (
+       SELECT id FROM chat_messages WHERE channel = ? ORDER BY id DESC LIMIT 200
+     ) AND channel = ?`,
+  );
+
+  interface ChatRow {
+    id: number;
+    channel: string;
+    author_nick: string;
+    team_tag: string | null;
+    text: string;
+    created_at: number;
+  }
+
+  function rowToChat(row: ChatRow) {
+    return {
+      id: row.id,
+      channel: row.channel,
+      from: row.author_nick,
+      teamTag: row.team_tag ?? undefined,
+      text: row.text,
+      at: row.created_at,
+    };
+  }
+
+  function appendChatMessage(channel: string, nick: string, tag: string | undefined, text: string) {
+    const at = Date.now();
+    const info = insertChat.run(channel, nick, tag ?? null, text, at);
+    // Keep each channel capped at 200 messages — cheap delete on insert.
+    trimChat.run(channel, channel);
+    const id = info.lastInsertRowid as number;
+    const row = findChat.get(id) as ChatRow;
+    return rowToChat(row);
+  }
+
+  function loadChatHistory(channel: string, limit = 100) {
+    const rows = chatByChannel.all(channel, limit) as ChatRow[];
+    return rows.map(rowToChat).reverse(); // chronological asc for client display
+  }
+
+  // -------- Tournaments --------
+
+  interface TournamentRow {
+    id: string;
+    name: string;
+    size: number;
+    entry_fee: number;
+    prize_pool: number;
+    status: string;
+    bracket_json: string;
+    prizes_json: string | null;
+    created_at: number;
+  }
+
+  const insertTournament = db.prepare(
+    `INSERT INTO tournaments (id, name, size, entry_fee, prize_pool, status, bracket_json, created_at)
+     VALUES (?, ?, ?, ?, 0, 'open', '[]', ?)`,
+  );
+  const findTournament = db.prepare(`SELECT * FROM tournaments WHERE id = ?`);
+  const allTournaments = db.prepare(
+    `SELECT * FROM tournaments ORDER BY created_at DESC LIMIT 30`,
+  );
+  const updateTournament = db.prepare(
+    `UPDATE tournaments SET status = ?, prize_pool = ?, bracket_json = ?, prizes_json = ? WHERE id = ?`,
+  );
+
+  const insertRegistration = db.prepare(
+    `INSERT INTO tournament_registrations (tournament_id, team_id, seed) VALUES (?, ?, ?)`,
+  );
+  const findRegistrations = db.prepare(
+    `SELECT team_id, seed FROM tournament_registrations WHERE tournament_id = ? ORDER BY seed ASC`,
+  );
+  const countRegistrations = db.prepare(
+    `SELECT COUNT(*) AS n FROM tournament_registrations WHERE tournament_id = ?`,
+  );
+  const isRegistered = db.prepare(
+    `SELECT 1 FROM tournament_registrations WHERE tournament_id = ? AND team_id = ?`,
+  );
+
+  function createTournamentRow(
+    id: string,
+    name: string,
+    size: number,
+    entryFee: number,
+  ): void {
+    insertTournament.run(id, name, size, entryFee, Date.now());
+  }
+
+  function loadTournament(id: string): TournamentRow | null {
+    const row = findTournament.get(id) as TournamentRow | undefined;
+    return row ?? null;
+  }
+
+  function loadAllTournaments(): TournamentRow[] {
+    return allTournaments.all() as TournamentRow[];
+  }
+
+  function saveTournament(args: {
+    id: string;
+    status: string;
+    prizePool: number;
+    bracketJson: string;
+    prizesJson: string | null;
+  }): void {
+    updateTournament.run(args.status, args.prizePool, args.bracketJson, args.prizesJson, args.id);
+  }
+
+  function registerTeam(tournamentId: string, teamId: string, seed: number): void {
+    insertRegistration.run(tournamentId, teamId, seed);
+  }
+
+  function loadRegistrations(tournamentId: string): { teamId: string; seed: number }[] {
+    const rows = findRegistrations.all(tournamentId) as { team_id: string; seed: number }[];
+    return rows.map((r) => ({ teamId: r.team_id, seed: r.seed }));
+  }
+
+  function countTournamentRegistrations(tournamentId: string): number {
+    return (countRegistrations.get(tournamentId) as { n: number }).n;
+  }
+
+  function teamIsRegistered(tournamentId: string, teamId: string): boolean {
+    return !!isRegistered.get(tournamentId, teamId);
+  }
+
+  return {
+    raw: db,
+    authenticateOrRegister,
+    createTeam,
+    loadTeam,
+    setTeamPlayers,
+    setTeamMoneyDay,
+    setTeamTactics,
+    setTeamLogo,
+    updateTeamProfile,
+    unlockAchievement,
+    loadAchievements,
+    savePlayer,
+    persistPlayer,
+    loadPlayer,
+    loadTeamPlayers,
+    issueSession,
+    resolveSession,
+    createListing,
+    removeListing,
+    loadListing,
+    loadListingByPlayer,
+    loadAllListings,
+    loadFreeAgents,
+    countFreeAgents,
+    createChallenge,
+    loadChallenge,
+    removeChallenge,
+    loadOpenChallenges,
+    loadChallengesByTeam,
+    recordMatch,
+    loadMatch,
+    loadMatchesForTeam,
+    currentSeason,
+    recordSeasonOutcome,
+    loadLeaderboard,
+    loadTeamStandings,
+    createTournamentRow,
+    loadTournament,
+    loadAllTournaments,
+    saveTournament,
+    registerTeam,
+    loadRegistrations,
+    countTournamentRegistrations,
+    teamIsRegistered,
+    appendChatMessage,
+    loadChatHistory,
+    setGoal,
+    clearGoal,
+    loadGoalsForTeam,
+    loadAllOpenGoals,
+    flagGoalReached,
+    savePreset,
+    loadPresetsForOwner,
+    loadPreset,
+    removePreset,
+    publishNews,
+    loadRecentNews,
+    createLoanOffer,
+    loadLoan,
+    loadLoansFromTeam,
+    loadLoansToTeam,
+    loadDueLoans,
+    setLoanStatus,
+    inductIntoHoF,
+    loadHallOfFame,
+    loadHoFEntry,
+    addCoachToPool,
+    loadOpenCoaches,
+    loadCoach,
+    loadHiredCoachFor,
+    hireCoach,
+    countOpenCoaches,
+    createSponsorOffer,
+    loadSponsor,
+    loadSponsorsForTeam,
+    setSponsorStatus,
+    recordSponsorPaid,
+    loadDueSponsors,
+  };
+}
+
+export type DB = ReturnType<typeof openDb>;

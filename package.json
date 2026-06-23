@@ -1,0 +1,53 @@
+{
+  "name": "cs2-manager",
+  "private": true,
+  "version": "0.13.3",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "description": "CS2 Manager — FM-style esports manager",
+  "author": "CS2Man",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "electron:preview": "npm run build && electron .",
+    "pack:win": "npm run build && electron-builder --win portable"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.0.2",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  },
+  "build": {
+    "appId": "com.alexchon.cs2manager",
+    "productName": "CS2 Manager",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "portable",
+      "artifactName": "CS2-Manager-${version}-portable.exe",
+      "icon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "CS2-Manager-${version}-portable.exe"
+    },
+    "asar": true,
+    "compression": "maximum"
+  }
+}

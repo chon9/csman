@@ -1,0 +1,49 @@
+# ===== Dependencies =====
+node_modules/
+
+# ===== Build outputs =====
+dist/
+release/
+*.local
+*.tsbuildinfo
+
+# ===== Local env / secrets =====
+.env
+.env.*
+!.env.example
+
+# ===== Tooling caches =====
+.vite/
+.turbo/
+coverage/
+
+# ===== Local-only tools =====
+# Claude Code per-user config — never share
+.claude/
+# Playwright MCP automation captures (screenshots, snapshots, console logs)
+.playwright-mcp/
+
+# ===== OS / editor =====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.code-workspace
+
+# ===== Logs =====
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== Dev screenshots at repo root =====
+# Per-session captures used while iterating — not project assets.
+# Game assets in public/ and build/ stay tracked normally.
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+
+# ===== Local exports =====
+# Team export files downloaded from the online mode
+*.csm.json
