@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
+import { MINT_TIERS, type MintTier } from '../protocol';
 import ToastStack from './ToastStack';
 
 type SortKey = 'price' | 'ca' | 'age' | 'pa';
@@ -19,6 +20,7 @@ export default function OnlineMarketScreen() {
   const refreshMarket = useOnline((s) => s.refreshMarket);
   const refreshFreeAgents = useOnline((s) => s.refreshFreeAgents);
   const signFreeAgent = useOnline((s) => s.signFreeAgent);
+  const mintFreeAgent = useOnline((s) => s.mintFreeAgent);
   const listPlayer = useOnline((s) => s.listPlayer);
   const unlistPlayer = useOnline((s) => s.unlistPlayer);
   const buyListedPlayer = useOnline((s) => s.buyListedPlayer);
@@ -109,7 +111,44 @@ export default function OnlineMarketScreen() {
         </span>
       </div>
 
-      {tab === 'free-agents' && (
+      {tab === 'free-agents' && (<>
+        <div className="panel" style={{ padding: 14 }}>
+          <div className="panel-title">
+            Commission a Scout
+            <span className="muted small"> — pay to drop a fresh prospect onto the market</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 8 }}>
+            {(Object.keys(MINT_TIERS) as MintTier[]).map((tier) => {
+              const meta = MINT_TIERS[tier];
+              const afford = team.money >= meta.cost;
+              return (
+                <div key={tier} className="panel" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 6, background: 'rgba(255,255,255,0.02)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
+                    <strong>{meta.label}</strong>
+                    <span className="num">${meta.cost.toLocaleString()}</span>
+                  </div>
+                  <div className="muted small">{meta.hint}</div>
+                  <div className="muted small">
+                    Age {meta.ageRange[0]}–{meta.ageRange[1]} · PA bonus +{meta.paBonusRange[0]} to +{meta.paBonusRange[1]}
+                  </div>
+                  <button
+                    className="btn btn-accent"
+                    disabled={!afford}
+                    onClick={() => mintFreeAgent(tier)}
+                    title={afford ? '' : `Need $${meta.cost.toLocaleString()}`}
+                    style={{ marginTop: 'auto' }}
+                  >
+                    Commission
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="muted small" style={{ marginTop: 8 }}>
+            The new player joins the public free-agent pool — anyone can sign them. Move fast.
+          </div>
+        </div>
+
         <div className="panel" style={{ padding: 14 }}>
           <div className="panel-title">
             Free Agents
@@ -164,7 +203,7 @@ export default function OnlineMarketScreen() {
             </table>
           )}
         </div>
-      )}
+      </>)}
 
       {tab === 'listings' && <>
       {/* ===== Active listings ===== */}

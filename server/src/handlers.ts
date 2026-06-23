@@ -27,9 +27,11 @@ import {
   MAX_TEAM_LOGO_BYTES,
   MAX_TIME_SKIP_DAYS,
   MIN_DUEL_STAKE,
+  MINT_TIERS,
   STARTING_MONEY,
   TIME_SKIP_COST_PER_DAY,
   isDmParticipant,
+  type MintTier,
 } from '../../src/online/protocol.ts';
 import type { MatchResult, Player, Team } from '../../src/types.ts';
 
@@ -115,7 +117,7 @@ import type { DB, TeamRow } from './db.ts';
 import { spawnInitialRoster } from './spawn.ts';
 import { runAiDuel, runPvpDuel, stripFrames } from './duels.ts';
 import { skipTime } from './timeskip.ts';
-import { buildWageMap, ensureFreeAgentPool, suggestedWage } from './freeAgents.ts';
+import { buildWageMap, ensureFreeAgentPool, mintWonderkid, suggestedWage } from './freeAgents.ts';
 import { cacheLiveReplay, getLiveReplay } from './liveState.ts';
 import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorPayouts } from './serverTick.ts';
 import {
@@ -748,6 +750,34 @@ export function handle(
       broadcast({ kind: 'news-item', item: newsItem as NewsItem });
       tryUnlock(db, notifyTeam, team.id, 'first_fa_sign', ACHIEVEMENT_LABELS.first_fa_sign);
       return { kind: 'free-agent-signed', player, wage };
+    }
+
+    case 'mint-free-agent': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const tier: MintTier = (['standard', 'premium', 'elite'] as const).includes(msg.tier)
+        ? msg.tier
+        : 'standard';
+      const meta = MINT_TIERS[tier];
+      if (team.money < meta.cost) {
+        return {
+          kind: 'error',
+          code: 'insufficient-funds',
+          message: `Need $${meta.cost.toLocaleString()} to commission a ${meta.label} — you have $${team.money.toLocaleString()}.`,
+        };
+      }
+      team.money -= meta.cost;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      const startDate = new Date().toISOString().slice(0, 10);
+      const player = mintWonderkid(db, tier, startDate);
+      log(`mint(${tier}): ${team.tag} -$${meta.cost} → FA ${player.nickname} (PA ${player.potentialAbility})`);
+      const newsItem = db.publishNews(
+        'transfer',
+        `${team.tag} commissioned a ${meta.label} — ${player.nickname} (${player.age}yo ${player.role}, PA ${player.potentialAbility}) hits the market.`,
+      );
+      broadcast({ kind: 'news-item', item: newsItem as NewsItem });
+      return { kind: 'free-agent-minted', player, cost: meta.cost, tier };
     }
 
     // ---------- Phase 3: match history ----------

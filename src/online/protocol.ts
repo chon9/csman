@@ -385,7 +385,9 @@ export type ClientMessage =
   | { kind: 'hire-coach'; coachId: string }
   | { kind: 'fire-coach' }
   | { kind: 'list-sponsors' }
-  | { kind: 'respond-sponsor'; sponsorId: string; accept: boolean };
+  | { kind: 'respond-sponsor'; sponsorId: string; accept: boolean }
+  // ----- Mint: scout a fresh wonderkid into the FA pool -----
+  | { kind: 'mint-free-agent'; tier: MintTier };
 
 // ============ Server → Client messages ============
 
@@ -451,7 +453,8 @@ export type ServerMessage =
   | { kind: 'player-retired'; playerId: string; nickname: string; lastAge: number }
   | { kind: 'coach-pool'; openCoaches: CoachListing[]; myCoach: CoachListing | null }
   | { kind: 'coach-hired'; coach: CoachListing }
-  | { kind: 'sponsors'; offers: SponsorOffer[]; paid: { sponsorId: string; amount: number }[] };
+  | { kind: 'sponsors'; offers: SponsorOffer[]; paid: { sponsorId: string; amount: number }[] }
+  | { kind: 'free-agent-minted'; player: Player; cost: number; tier: MintTier };
 
 // ============ Constants the client/server both reference ============
 
@@ -465,6 +468,46 @@ export const PROTOCOL_VERSION = 9;
 export const RETIREMENT_AGE_THRESHOLD = 32;
 /** Sponsor payment cadence — auto-credit once per 30 real days while active. */
 export const SPONSOR_PAYMENT_INTERVAL_MS = 30 * 24 * 3600 * 1000;
+
+// ============ Mint tiers (pay-to-scout a fresh wonderkid) ============
+
+/** Tiers the user can mint into the free-agent pool. */
+export type MintTier = 'standard' | 'premium' | 'elite';
+
+/** Per-tier metadata — cost + label + flavour line + engine inputs. */
+export const MINT_TIERS: Record<MintTier, {
+  label: string;
+  cost: number;
+  baseTier: 1 | 2 | 3 | 4 | 5; // passed to dbBuild
+  ageRange: [number, number];
+  paBonusRange: [number, number];
+  hint: string;
+}> = {
+  standard: {
+    label: 'Standard Scout',
+    cost: 2_500,
+    baseTier: 4,
+    ageRange: [18, 22],
+    paBonusRange: [10, 25],
+    hint: 'A regional talent — solid attributes, modest ceiling.',
+  },
+  premium: {
+    label: 'Premium Scout',
+    cost: 10_000,
+    baseTier: 3,
+    ageRange: [16, 19],
+    paBonusRange: [25, 45],
+    hint: 'A real wonderkid — high PA, takes a season to develop.',
+  },
+  elite: {
+    label: 'Elite Scout',
+    cost: 35_000,
+    baseTier: 2,
+    ageRange: [16, 18],
+    paBonusRange: [40, 65],
+    hint: 'The next superstar. PA cap pushes 190+. Worth the price tag.',
+  },
+};
 /** Hard cap on per-team loan offer duration. */
 export const MAX_LOAN_DAYS = 21;
 /** Achievement kinds with human-readable labels. Server passes the label

@@ -16,6 +16,7 @@ import type {
   LoanOffer,
   MarketListing,
   MatchHistoryEntry,
+  MintTier,
   MyStandings,
   NewsItem,
   OnlineTeam,
@@ -150,6 +151,7 @@ interface OnlineState {
   // Phase 3 actions
   refreshFreeAgents: () => void;
   signFreeAgent: (playerId: string, wage: number) => void;
+  mintFreeAgent: (tier: MintTier) => void;
   refreshChallenges: () => void;
   postChallenge: (stake: number, format: MatchFormat, message?: string) => void;
   cancelChallenge: (challengeId: string) => void;
@@ -407,6 +409,15 @@ export const useOnline = create<OnlineState>((set, get) => ({
             freeAgents: get().freeAgents.filter((p) => p.id !== msg.player.id),
           });
           client.send({ kind: 'refresh-state' });
+          break;
+        }
+        case 'free-agent-minted': {
+          pushToast(
+            'success',
+            `Scout report in — ${msg.player.nickname} (PA ${msg.player.potentialAbility}) joined the market for $${msg.cost.toLocaleString()}.`,
+          );
+          client.send({ kind: 'refresh-state' });
+          client.send({ kind: 'list-free-agents' });
           break;
         }
         case 'history': {
@@ -736,6 +747,10 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   signFreeAgent(playerId, wage) {
     get().client?.send({ kind: 'sign-free-agent', playerId, wage });
+  },
+
+  mintFreeAgent(tier) {
+    get().client?.send({ kind: 'mint-free-agent', tier });
   },
 
   refreshChallenges() {
