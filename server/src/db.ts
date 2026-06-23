@@ -320,6 +320,21 @@ export function openDb(path: string) {
   tryAddColumn('teams', 'twitch_url', 'TEXT', "''");
   tryAddColumn('teams', 'twitter_url', 'TEXT', "''");
   tryAddColumn('teams', 'youtube_url', 'TEXT', "''");
+  // ISO date (YYYY-MM-DD) of the team's last daily-login bonus claim.
+  tryAddColumn('teams', 'last_daily_claim', 'TEXT', "''");
+  // ISO date of the last free case claim — daily, mirrors the SP perk.
+  tryAddColumn('teams', 'last_free_case', 'TEXT', "''");
+  // Skin inventory rows owned by this team — JSON-blob per skin instance.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS skin_inventory (
+      id TEXT PRIMARY KEY,
+      team_id TEXT NOT NULL,
+      acquired_at INTEGER NOT NULL,
+      json TEXT NOT NULL,
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_skin_team ON skin_inventory(team_id);
+  `);
 
   // -------- Owner / auth --------
 
@@ -398,6 +413,7 @@ export function openDb(path: string) {
       deleteTeamChallenges.run(teamId);
       deleteTeamMatches.run(teamId, teamId);
       deleteTeamAchievements.run(teamId);
+      deleteTeamSkins.run(teamId);
       deleteTeamPlayers.run(teamId);
       clearOwnerTeam.run(teamId);
       deleteTeamRow.run(teamId);
@@ -427,6 +443,49 @@ export function openDb(path: string) {
   }
   function adminSetTeamMoney(teamId: string, money: number): boolean {
     return updateTeamMoney.run(money, teamId).changes > 0;
+  }
+
+  // -------- Daily login bonus + free case --------
+
+  const getLastDailyClaim = db.prepare(`SELECT last_daily_claim FROM teams WHERE id = ?`);
+  const setLastDailyClaim = db.prepare(`UPDATE teams SET last_daily_claim = ? WHERE id = ?`);
+  function getDailyClaimDate(teamId: string): string {
+    const r = getLastDailyClaim.get(teamId) as { last_daily_claim: string | null } | undefined;
+    return r?.last_daily_claim ?? '';
+  }
+  function markDailyClaim(teamId: string, isoDate: string): void {
+    setLastDailyClaim.run(isoDate, teamId);
+  }
+
+  const getLastFreeCase = db.prepare(`SELECT last_free_case FROM teams WHERE id = ?`);
+  const setLastFreeCase = db.prepare(`UPDATE teams SET last_free_case = ? WHERE id = ?`);
+  function getFreeCaseDate(teamId: string): string {
+    const r = getLastFreeCase.get(teamId) as { last_free_case: string | null } | undefined;
+    return r?.last_free_case ?? '';
+  }
+  function markFreeCaseClaim(teamId: string, isoDate: string): void {
+    setLastFreeCase.run(isoDate, teamId);
+  }
+
+  // -------- Skin inventory --------
+
+  const insertSkin = db.prepare(`INSERT INTO skin_inventory (id, team_id, acquired_at, json) VALUES (?, ?, ?, ?)`);
+  const deleteSkin = db.prepare(`DELETE FROM skin_inventory WHERE id = ? AND team_id = ?`);
+  const loadSkinsForTeam = db.prepare(`SELECT json FROM skin_inventory WHERE team_id = ? ORDER BY acquired_at DESC LIMIT 500`);
+  const loadSkinById = db.prepare(`SELECT json FROM skin_inventory WHERE id = ? AND team_id = ?`);
+  const deleteTeamSkins = db.prepare(`DELETE FROM skin_inventory WHERE team_id = ?`);
+  function addSkin(teamId: string, skinId: string, skinJson: string): void {
+    insertSkin.run(skinId, teamId, Date.now(), skinJson);
+  }
+  function loadSkins(teamId: string): unknown[] {
+    return (loadSkinsForTeam.all(teamId) as { json: string }[]).map((r) => JSON.parse(r.json));
+  }
+  function loadSkin(teamId: string, skinId: string): unknown | null {
+    const r = loadSkinById.get(skinId, teamId) as { json: string } | undefined;
+    return r ? JSON.parse(r.json) : null;
+  }
+  function removeSkin(teamId: string, skinId: string): boolean {
+    return deleteSkin.run(skinId, teamId).changes > 0;
   }
 
   function rowToTeam(row: Record<string, unknown>): TeamRow {
@@ -1450,6 +1509,15 @@ export function openDb(path: string) {
     deleteTeamCascade,
     adminEditTeamField,
     adminSetTeamMoney,
+    // Daily bonus + cases:
+    getDailyClaimDate,
+    markDailyClaim,
+    getFreeCaseDate,
+    markFreeCaseClaim,
+    addSkin,
+    loadSkins,
+    loadSkin,
+    removeSkin,
     createTeam,
     loadTeam,
     setTeamPlayers,

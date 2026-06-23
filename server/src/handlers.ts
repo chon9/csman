@@ -18,6 +18,7 @@ import type {
 } from '../../src/online/protocol.ts';
 import {
   ACHIEVEMENT_LABELS,
+  DAILY_BONUS_AMOUNT,
   FREE_AGENT_POOL_SIZE,
   INITIAL_ROSTER_SIZE,
   MAX_DUEL_STAKE,
@@ -115,6 +116,11 @@ import { spawnInitialRoster } from './spawn.ts';
 import { runAiDuel, runPvpDuel, stripFrames } from './duels.ts';
 import { skipTime } from './timeskip.ts';
 import { buildWageMap, ensureFreeAgentPool, mintWonderkid, suggestedWage } from './freeAgents.ts';
+import { CASES, DAILY_FREE_CASE_ID } from '../../src/data/cs2Cases.ts';
+import { openCase as rollCaseOpen } from '../../src/sim/caseOpening.ts';
+import { RNG } from '../../src/engine/rng.ts';
+import type { CaseSummary, SkinInstanceWire } from '../../src/online/protocol.ts';
+import type { SkinInstance } from '../../src/types.ts';
 import { cacheLiveReplay, getLiveReplay } from './liveState.ts';
 import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorPayouts } from './serverTick.ts';
 import {
@@ -126,6 +132,14 @@ import {
   registerForTournament,
   runReadyTournaments,
 } from './tournaments.ts';
+
+/** ISO timestamp of the next 00:00 UTC — used to tell the client when the
+ *  daily bonus resets so it can show a countdown without polling. */
+function nextUtcMidnight(): string {
+  const d = new Date();
+  d.setUTCHours(24, 0, 0, 0);
+  return d.toISOString();
+}
 
 /** Nickname (lowercased) that gets admin powers. Set via CSM_ADMIN_NICK env
  *  var at server boot — empty/unset means no admin exists. Case-insensitive
@@ -193,7 +207,14 @@ function buildState(db: DB, teamId: string): ServerMessage | null {
   const team = db.loadTeam(teamId);
   if (!team) return null;
   const players: Player[] = db.loadTeamPlayers(teamId);
-  return { kind: 'state', team: teamRowToOnline(team), players };
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    kind: 'state',
+    team: teamRowToOnline(team),
+    players,
+    dailyBonusAvailable: db.getDailyClaimDate(teamId) !== today,
+    freeCaseAvailable: db.getFreeCaseDate(teamId) !== today,
+  };
 }
 
 export function handle(
@@ -787,6 +808,116 @@ export function handle(
       );
       broadcast({ kind: 'news-item', item: newsItem as NewsItem });
       return { kind: 'free-agent-minted', player, cost: meta.cost, tier };
+    }
+
+    // ---------- Daily login bonus ----------
+
+    case 'claim-daily-bonus': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const today = new Date().toISOString().slice(0, 10);
+      const last = db.getDailyClaimDate(conn.teamId);
+      if (last === today) {
+        return {
+          kind: 'error',
+          code: 'already-claimed',
+          message: `Already claimed today — next reward unlocks at 00:00 UTC.`,
+        };
+      }
+      const newMoney = team.money + DAILY_BONUS_AMOUNT;
+      team.money = newMoney;
+      db.setTeamMoneyDay(team.id, newMoney, team.day);
+      db.markDailyClaim(team.id, today);
+      log(`daily: ${team.tag} claimed $${DAILY_BONUS_AMOUNT.toLocaleString()} (total $${newMoney.toLocaleString()})`);
+      return {
+        kind: 'daily-bonus-claimed',
+        amount: DAILY_BONUS_AMOUNT,
+        newMoney,
+        nextClaimUtc: nextUtcMidnight(),
+      };
+    }
+
+    // ---------- Case opening ----------
+
+    case 'list-cases': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const today = new Date().toISOString().slice(0, 10);
+      const last = db.getFreeCaseDate(conn.teamId);
+      const summaries: CaseSummary[] = CASES.map((c) => ({
+        id: c.id,
+        name: c.name,
+        keyPrice: c.keyPrice,
+        skinCount: c.skins.length,
+        accent: c.accent,
+      }));
+      return {
+        kind: 'case-list',
+        cases: summaries,
+        freeCaseId: DAILY_FREE_CASE_ID,
+        freeCaseAvailable: last !== today,
+      };
+    }
+
+    case 'open-case':
+    case 'open-free-case': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const isFree = msg.kind === 'open-free-case';
+      const caseId = isFree ? DAILY_FREE_CASE_ID : msg.caseId;
+      const caseDef = CASES.find((c) => c.id === caseId);
+      if (!caseDef) return { kind: 'error', code: 'no-case', message: 'Unknown case.' };
+      const today = new Date().toISOString().slice(0, 10);
+      let cost = 0;
+      if (isFree) {
+        if (db.getFreeCaseDate(team.id) === today) {
+          return { kind: 'error', code: 'free-case-used', message: 'Daily free case already opened — come back tomorrow.' };
+        }
+        db.markFreeCaseClaim(team.id, today);
+      } else {
+        cost = caseDef.keyPrice;
+        if (team.money < cost) {
+          return { kind: 'error', code: 'insufficient-funds', message: `Need $${cost.toLocaleString()} for a key.` };
+        }
+        team.money -= cost;
+        db.setTeamMoneyDay(team.id, team.money, team.day);
+      }
+      const rng = new RNG((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0);
+      let counter = 0;
+      const result = rollCaseOpen(caseDef, rng, today, () => `skin-${Date.now().toString(36)}-${(counter++).toString(36)}`);
+      db.addSkin(team.id, result.instance.id, JSON.stringify(result.instance));
+      log(`case(${caseId}): ${team.tag} ${isFree ? '[FREE]' : `-$${cost}`} → ${result.instance.weapon} ${result.instance.name} (${result.instance.rarity}, $${result.instance.marketValue})`);
+      return {
+        kind: 'case-opened',
+        instance: result.instance as SkinInstanceWire,
+        caseId,
+        cost,
+        newMoney: team.money,
+        freeCase: isFree ? true : undefined,
+        strip: result.strip.map((s) => ({ weapon: s.weapon, name: s.name, rarity: s.rarity as SkinInstanceWire['rarity'] })),
+        winnerIndex: result.winnerIndex,
+      };
+    }
+
+    case 'list-skins': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const skins = db.loadSkins(conn.teamId) as SkinInstance[];
+      return { kind: 'skin-inventory', skins: skins as SkinInstanceWire[] };
+    }
+
+    case 'sell-skin': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const skin = db.loadSkin(conn.teamId, msg.skinId) as SkinInstance | null;
+      if (!skin) return { kind: 'error', code: 'no-skin', message: 'Skin not in inventory.' };
+      const payout = Math.max(0, Math.round(skin.marketValue));
+      db.removeSkin(conn.teamId, msg.skinId);
+      team.money += payout;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      log(`skin sold: ${team.tag} +$${payout.toLocaleString()} (${skin.weapon} ${skin.name})`);
+      return { kind: 'skin-sold', skinId: msg.skinId, payout, newMoney: team.money };
     }
 
     // ---------- Phase 3: match history ----------

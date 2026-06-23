@@ -38,6 +38,8 @@ export default function OnlineHomeScreen() {
   const disconnect = useOnline((s) => s.disconnect);
   const spawnInitialRoster = useOnline((s) => s.spawnInitialRoster);
   const isAdmin = useOnline((s) => s.isAdmin);
+  const dailyBonusAvailable = useOnline((s) => s.dailyBonusAvailable);
+  const claimDailyBonus = useOnline((s) => s.claimDailyBonus);
   const registerAiDuel = useOnline((s) => s.registerAiDuel);
   const timeSkip = useOnline((s) => s.timeSkip);
   const go = useOnline((s) => s.go);
@@ -123,6 +125,17 @@ export default function OnlineHomeScreen() {
           <button className="btn" onClick={() => { go('market'); }}>Market</button>
           <button className="btn" onClick={() => { go('leaderboard'); }}>Leaderboard</button>
           <button className="btn" onClick={() => { go('history'); }}>History</button>
+          <button className="btn" onClick={() => { go('cases'); }} title="Open CS2-style cases for cash">📦 Cases</button>
+          {dailyBonusAvailable && (
+            <button
+              className="btn btn-accent"
+              onClick={claimDailyBonus}
+              title="Claim $10,000 daily login bonus"
+              style={{ background: 'linear-gradient(135deg, #2a7d4f, #4caf75)' }}
+            >
+              🎁 Claim daily $10k
+            </button>
+          )}
           {isAdmin && (
             <button
               className="btn"

@@ -13,6 +13,7 @@ import OnlineLeaderboardScreen from './online/screens/OnlineLeaderboardScreen';
 import OnlineTournamentsScreen from './online/screens/OnlineTournamentsScreen';
 import OnlineLiveReplayScreen from './online/screens/OnlineLiveReplayScreen';
 import OnlineAdminScreen from './online/screens/OnlineAdminScreen';
+import OnlineCasesScreen from './online/screens/OnlineCasesScreen';
 import ChatWidget from './online/screens/ChatWidget';
 import DevReportModal from './online/screens/DevReportModal';
 import LiveFeedWidget from './online/screens/LiveFeedWidget';
@@ -131,6 +132,7 @@ export default function App() {
     else if (onlineScreen === 'tournaments') body = <OnlineTournamentsScreen />;
     else if (onlineScreen === 'replay') body = <OnlineLiveReplayScreen />;
     else if (onlineScreen === 'admin') body = <OnlineAdminScreen />;
+    else if (onlineScreen === 'cases') body = <OnlineCasesScreen />;
     else body = <OnlineHomeScreen />;
     return (
       <>

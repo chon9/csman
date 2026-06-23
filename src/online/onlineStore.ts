@@ -16,11 +16,14 @@ import type {
   LoanOffer,
   AdminTeamEditFields,
   AdminUserRow,
+  CaseSummary,
   MarketListing,
   MatchHistoryEntry,
   MintTier,
   MyStandings,
   NewsItem,
+  SkinInstanceWire,
+  SkinStripEntry,
   OnlineTeam,
   PlayerGoal,
   PvpChallenge,
@@ -36,7 +39,7 @@ import type {
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -111,6 +114,18 @@ interface OnlineState {
   /** Player goals — open + completed, refreshed from server. */
   playerGoals: PlayerGoal[];
 
+  // ----- Daily bonus + cases -----
+  /** True if a daily-bonus claim hasn't been recorded for the current UTC day. */
+  dailyBonusAvailable: boolean;
+  /** Cached list of openable cases (no skin pool, server holds that). */
+  cases: CaseSummary[];
+  freeCaseId: string;
+  freeCaseAvailable: boolean;
+  /** Owned skin instances. */
+  skins: SkinInstanceWire[];
+  /** Set while a case-opening animation is in flight (modal active). */
+  caseOpening: { caseId: string; strip: SkinStripEntry[]; winnerIndex: number; instance: SkinInstanceWire } | null;
+
   // ----- Phase 7 -----
   tacticsPresets: TacticsPreset[];
   news: NewsItem[];
@@ -142,6 +157,14 @@ interface OnlineState {
   refreshState: () => void;
   clearError: () => void;
   go: (screen: OnlineScreen) => void;
+  // Daily bonus + cases.
+  claimDailyBonus: () => void;
+  listCases: () => void;
+  openCase: (caseId: string) => void;
+  openFreeCase: () => void;
+  listSkins: () => void;
+  sellSkin: (skinId: string) => void;
+  dismissCaseOpening: () => void;
   // Admin actions (no-op for non-admins; server still validates).
   adminListUsers: () => void;
   adminResetPin: (nickname: string, newPin: string) => void;
@@ -253,6 +276,12 @@ export const useOnline = create<OnlineState>((set, get) => ({
   liveFeed: [],
   liveFeedOpen: false,
   playerGoals: [],
+  dailyBonusAvailable: false,
+  cases: [],
+  freeCaseId: '',
+  freeCaseAvailable: false,
+  skins: [],
+  caseOpening: null,
   tacticsPresets: [],
   news: [],
   directory: [],
@@ -335,7 +364,12 @@ export const useOnline = create<OnlineState>((set, get) => ({
         case 'state': {
           const players: Record<string, Player> = {};
           for (const p of msg.players) players[p.id] = p;
-          set({ team: msg.team, players });
+          set({
+            team: msg.team,
+            players,
+            dailyBonusAvailable: msg.dailyBonusAvailable,
+            freeCaseAvailable: msg.freeCaseAvailable,
+          });
           break;
         }
         case 'duel-result': {
@@ -655,6 +689,49 @@ export const useOnline = create<OnlineState>((set, get) => ({
           }
           break;
         }
+        case 'daily-bonus-claimed': {
+          const t = get().team;
+          set({
+            dailyBonusAvailable: false,
+            team: t ? { ...t, money: msg.newMoney } : t,
+          });
+          pushToast('success', `Daily bonus: +$${msg.amount.toLocaleString()}.`);
+          break;
+        }
+        case 'case-list': {
+          set({ cases: msg.cases, freeCaseId: msg.freeCaseId, freeCaseAvailable: msg.freeCaseAvailable });
+          break;
+        }
+        case 'case-opened': {
+          const t = get().team;
+          set({
+            team: t ? { ...t, money: msg.newMoney } : t,
+            // Modal animation runs client-side from this payload.
+            caseOpening: {
+              caseId: msg.caseId,
+              strip: msg.strip,
+              winnerIndex: msg.winnerIndex,
+              instance: msg.instance,
+            },
+            // Optimistically prepend to inventory so the count updates.
+            skins: [msg.instance, ...get().skins],
+            freeCaseAvailable: msg.freeCase ? false : get().freeCaseAvailable,
+          });
+          break;
+        }
+        case 'skin-inventory': {
+          set({ skins: msg.skins });
+          break;
+        }
+        case 'skin-sold': {
+          const t = get().team;
+          set({
+            team: t ? { ...t, money: msg.newMoney } : t,
+            skins: get().skins.filter((s) => s.id !== msg.skinId),
+          });
+          pushToast('success', `Skin sold: +$${msg.payout.toLocaleString()}.`);
+          break;
+        }
         case 'admin-users': {
           set({ adminUsers: msg.rows });
           break;
@@ -720,6 +797,29 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   createTeam(name, tag, region) {
     get().client?.send({ kind: 'create-team', name, tag, region });
+  },
+
+  // ----- Daily bonus + cases -----
+  claimDailyBonus() {
+    get().client?.send({ kind: 'claim-daily-bonus' });
+  },
+  listCases() {
+    get().client?.send({ kind: 'list-cases' });
+  },
+  openCase(caseId) {
+    get().client?.send({ kind: 'open-case', caseId });
+  },
+  openFreeCase() {
+    get().client?.send({ kind: 'open-free-case' });
+  },
+  listSkins() {
+    get().client?.send({ kind: 'list-skins' });
+  },
+  sellSkin(skinId) {
+    get().client?.send({ kind: 'sell-skin', skinId });
+  },
+  dismissCaseOpening() {
+    set({ caseOpening: null });
   },
 
   // ----- Admin actions -----

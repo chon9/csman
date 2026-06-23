@@ -73,9 +73,9 @@ function synthAiTeam(rng: RNG, region: Region): Team {
   };
 }
 
-/** Generate an AI opponent scaled to the user's avg CA. The challenge curve
- *  hovers around parity with a slight ±10 swing so duels stay interesting
- *  without being trivially one-sided. */
+/** Generate an AI opponent scaled to the user's avg CA. Tilted to favor the
+ *  player — the AI averages about -5 CA versus the user across the swing
+ *  range, so players win ≈60-65% of duels without being trivially easy. */
 export function generateAiOpponent(userPlayers: Player[], seed: number): { team: Team; players: Player[] } {
   const rng = new RNG(seed);
   const region = rng.pick(REGIONS);
@@ -87,7 +87,9 @@ export function generateAiOpponent(userPlayers: Player[], seed: number): { team:
   const userAvgCA = userPlayers.length
     ? userPlayers.reduce((s, p) => s + p.currentAbility, 0) / userPlayers.length
     : 110;
-  const tilt = rng.int(-10, 10);
+  // Range -15..+5 → mean -5 CA. Occasional tougher opponent (+5) keeps it
+  // honest; most matches the player has the edge.
+  const tilt = rng.int(-15, 5);
   for (const p of spawned) {
     const target = Math.max(60, Math.min(190, Math.round(userAvgCA + tilt + rng.int(-6, 6))));
     const delta = target - p.currentAbility;

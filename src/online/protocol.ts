@@ -55,6 +55,46 @@ export interface TeamProfileFields {
   youtubeUrl?: string;
 }
 
+// ============ Daily bonus + case opening ============
+
+/** Fixed daily login bonus credited to the team's money on claim. */
+export const DAILY_BONUS_AMOUNT = 10_000;
+
+/** Slim case-card data sent to clients to render the case picker. The skin
+ *  pool itself isn't sent — clients receive the opened skin in `case-opened`. */
+export interface CaseSummary {
+  id: string;
+  name: string;
+  keyPrice: number;
+  /** Total skins in the pool (UI hint only). */
+  skinCount: number;
+  /** Optional accent colour from CaseDef. */
+  accent?: string;
+}
+
+/** SkinInstance shape on the wire — matches src/types SkinInstance but
+ *  redeclared here so the protocol stays self-contained. */
+export interface SkinInstanceWire {
+  id: string;
+  skinId: string;
+  weapon: string;
+  name: string;
+  rarity: 'mil-spec' | 'restricted' | 'classified' | 'covert' | 'rare-special';
+  wear: 'Factory New' | 'Minimal Wear' | 'Field-Tested' | 'Well-Worn' | 'Battle-Scarred';
+  marketValue: number;
+  statTrak: boolean;
+  acquiredOn: string;
+  caseId: string;
+  souvenir?: boolean;
+}
+
+/** One tile on the case-opening animation reel — slim render-only payload. */
+export interface SkinStripEntry {
+  weapon: string;
+  name: string;
+  rarity: SkinInstanceWire['rarity'];
+}
+
 // ============ Admin operations ============
 
 /** Slim view of an owner row for the admin user-list screen. */
@@ -405,6 +445,14 @@ export type ClientMessage =
   | { kind: 'respond-sponsor'; sponsorId: string; accept: boolean }
   // ----- Mint: scout a fresh wonderkid into the FA pool -----
   | { kind: 'mint-free-agent'; tier: MintTier }
+  // ----- Daily login bonus -----
+  | { kind: 'claim-daily-bonus' }
+  // ----- Case opening (skins → team.money on resale) -----
+  | { kind: 'list-cases' }
+  | { kind: 'open-case'; caseId: string }
+  | { kind: 'open-free-case' }
+  | { kind: 'list-skins' }
+  | { kind: 'sell-skin'; skinId: string }
   // ----- Admin (gated server-side by CSM_ADMIN_NICK env var) -----
   | { kind: 'admin-list-users' }
   | { kind: 'admin-reset-pin'; nickname: string; newPin: string }
@@ -417,7 +465,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { kind: 'hello-ok'; sessionToken: string; hasTeam: boolean; isAdmin: boolean }
   | { kind: 'hello-bad-pin' }
-  | { kind: 'state'; team: OnlineTeam; players: Player[] }
+  | { kind: 'state'; team: OnlineTeam; players: Player[]; dailyBonusAvailable: boolean; freeCaseAvailable: boolean }
   | { kind: 'team-created'; team: OnlineTeam }
   | { kind: 'players-spawned'; players: Player[] }
   | { kind: 'error'; code: string; message: string }
@@ -477,6 +525,12 @@ export type ServerMessage =
   | { kind: 'coach-hired'; coach: CoachListing }
   | { kind: 'sponsors'; offers: SponsorOffer[]; paid: { sponsorId: string; amount: number }[] }
   | { kind: 'free-agent-minted'; player: Player; cost: number; tier: MintTier }
+  // ----- Daily bonus + cases -----
+  | { kind: 'daily-bonus-claimed'; amount: number; newMoney: number; nextClaimUtc: string }
+  | { kind: 'case-list'; cases: CaseSummary[]; freeCaseId: string; freeCaseAvailable: boolean }
+  | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
+  | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
+  | { kind: 'skin-sold'; skinId: string; payout: number; newMoney: number }
   // ----- Admin -----
   | { kind: 'admin-users'; rows: AdminUserRow[] }
   | { kind: 'admin-pin-reset'; nickname: string; newPin: string }
@@ -493,7 +547,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 /** Age past which players have a non-zero chance to retire each time-skip week. */
 export const RETIREMENT_AGE_THRESHOLD = 32;
 /** Sponsor payment cadence — auto-credit once per 30 real days while active. */
