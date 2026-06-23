@@ -1,25 +1,28 @@
 #!/usr/bin/env bash
 #
 # One-shot Lightsail bootstrap for CS2 Manager.
-# Run on a fresh Ubuntu 22.04 / 24.04 instance as the `ubuntu` user.
+# Works on any Debian-family Lightsail blueprint (Ubuntu → user `ubuntu`,
+# Debian → user `admin`). The runtime user is auto-detected from $SUDO_USER.
 #
 # Usage:
-#   ssh ubuntu@<lightsail-ip>
+#   ssh <user>@<lightsail-ip>
 #   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/<you>/csmanager/main/deploy/install.sh)" -- csm.yourdomain.com https://github.com/<you>/csmanager.git
 #
 # Or after cloning manually:
-#   bash deploy/install.sh csm.yourdomain.com
+#   sudo bash deploy/install.sh csm.yourdomain.com
 #
 # What it does:
-#   1. Installs Node 20, git, Caddy
-#   2. Clones the repo to /home/ubuntu/csmanager (skips if it exists)
-#   3. Installs server deps + builds the React client
-#   4. Drops in the systemd unit + Caddy config with the supplied domain
-#   5. Enables both services + tails the server log
+#   1. Stops + disables any pre-existing webserver on :80 (Apache / nginx)
+#   2. Installs Node 20, git, build tools, Caddy
+#   3. Clones the repo to ~/csmanager (skips if it exists)
+#   4. Installs server deps + builds the React client
+#   5. Templates + installs the systemd unit + Caddy config with the
+#      supplied domain and the detected runtime user
+#   6. Enables both services
 #
 # What you do yourself:
 #   - Point an A record (csm.yourdomain.com) at the Lightsail static IP
-#   - Open ports 80 + 443 in the Lightsail firewall (the only public ports)
+#   - Open ports 80 + 443 in the Lightsail firewall
 
 set -euo pipefail
 
@@ -32,54 +35,102 @@ if [[ -z "$DOMAIN" ]]; then
   exit 1
 fi
 
+# ---- Detect the human user this script should chown for / run as ----
+# Priority: $SUDO_USER (the invoker) > the first non-root login user on the box.
+RUN_USER="${SUDO_USER:-}"
+if [[ -z "$RUN_USER" || "$RUN_USER" == "root" ]]; then
+  RUN_USER=$(getent passwd 1000 2>/dev/null | cut -d: -f1)
+fi
+if [[ -z "$RUN_USER" ]]; then
+  echo "Could not detect a non-root user. Re-run as: sudo bash deploy/install.sh ..."
+  exit 1
+fi
+HOME_DIR=$(getent passwd "$RUN_USER" | cut -d: -f6)
+REPO_DIR="$HOME_DIR/csmanager"
+echo "==> Runtime user: $RUN_USER ($HOME_DIR)"
+
 SUDO=""
 if [[ $EUID -ne 0 ]]; then SUDO="sudo"; fi
 
+# ---- Free up port 80 if Apache or nginx are squatting it ----
+echo "==> Checking port 80"
+for svc in apache2 nginx httpd; do
+  if systemctl list-unit-files 2>/dev/null | grep -q "^${svc}\\.service"; then
+    if systemctl is-enabled "$svc" >/dev/null 2>&1 || systemctl is-active "$svc" >/dev/null 2>&1; then
+      echo "    Stopping pre-existing $svc"
+      $SUDO systemctl disable --now "$svc" || true
+    fi
+  fi
+done
+
+# ---- Install Node 20, git, Caddy ----
 echo "==> Installing Node.js 20, git, build tools, Caddy"
 $SUDO apt-get update
 $SUDO apt-get install -y curl git build-essential debian-keyring debian-archive-keyring apt-transport-https
 curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO bash -
 $SUDO apt-get install -y nodejs
-# Caddy official repo
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | $SUDO gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | $SUDO tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
 $SUDO apt-get update
 $SUDO apt-get install -y caddy
 
-echo "==> Repo location"
-REPO_DIR="/home/ubuntu/csmanager"
+# ---- Repo on disk ----
+echo "==> Repo location: $REPO_DIR"
 if [[ -d "$REPO_DIR/.git" ]]; then
-  echo "    Already cloned at $REPO_DIR — pulling latest"
-  git -C "$REPO_DIR" pull --ff-only
+  echo "    Already cloned — pulling latest"
+  $SUDO -u "$RUN_USER" git -C "$REPO_DIR" pull --ff-only
 elif [[ -n "$REPO_URL" ]]; then
-  echo "    Cloning $REPO_URL into $REPO_DIR"
-  git clone "$REPO_URL" "$REPO_DIR"
+  echo "    Cloning $REPO_URL"
+  $SUDO -u "$RUN_USER" git clone "$REPO_URL" "$REPO_DIR"
 else
-  echo "    No clone present and no repo URL supplied — copy the project to $REPO_DIR manually, then rerun this script."
+  echo "    No clone present and no repo URL supplied — copy the project to $REPO_DIR manually, then rerun."
   exit 1
 fi
-chown -R ubuntu:ubuntu "$REPO_DIR"
+$SUDO chown -R "$RUN_USER:$RUN_USER" "$REPO_DIR"
 
+# ---- Server deps + client build (as the runtime user, not root) ----
 echo "==> Installing server deps + building client"
-sudo -u ubuntu bash -c "cd $REPO_DIR/server && npm install"
-sudo -u ubuntu bash -c "cd $REPO_DIR && npm install && npm run build"
-sudo -u ubuntu mkdir -p "$REPO_DIR/server/data"
+$SUDO -u "$RUN_USER" bash -c "cd $REPO_DIR/server && npm install"
+$SUDO -u "$RUN_USER" bash -c "cd $REPO_DIR && npm install && npm run build"
+$SUDO -u "$RUN_USER" mkdir -p "$REPO_DIR/server/data"
 
-echo "==> Installing systemd unit"
-$SUDO cp "$REPO_DIR/deploy/csm-server.service" /etc/systemd/system/csm-server.service
+# ---- Templated systemd unit ----
+echo "==> Installing systemd unit for $RUN_USER"
+$SUDO tee /etc/systemd/system/csm-server.service > /dev/null <<EOF
+[Unit]
+Description=CS2 Manager multiplayer server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$RUN_USER
+WorkingDirectory=$REPO_DIR/server
+Environment=CSM_PORT=8787
+Environment=CSM_BIND=127.0.0.1
+Environment=CSM_DB=$REPO_DIR/server/data/csm.db
+ExecStart=/usr/bin/npm run start
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable --now csm-server
 
-echo "==> Installing Caddyfile with domain=$DOMAIN"
-$SUDO sed "s/csm.yourdomain.com/$DOMAIN/g" "$REPO_DIR/deploy/Caddyfile" > /tmp/Caddyfile
-$SUDO mv /tmp/Caddyfile /etc/caddy/Caddyfile
-$SUDO systemctl reload caddy
+# ---- Templated Caddyfile ----
+echo "==> Installing Caddyfile for $DOMAIN (root: $REPO_DIR/dist)"
+$SUDO bash -c "sed -e 's|csm.yourdomain.com|$DOMAIN|g' -e 's|/home/ubuntu/csmanager|$REPO_DIR|g' $REPO_DIR/deploy/Caddyfile > /etc/caddy/Caddyfile"
+$SUDO systemctl reload caddy || $SUDO systemctl restart caddy
 
 echo
 echo "==> Done."
-echo "    Server:   sudo systemctl status csm-server"
+echo "    Server:    sudo systemctl status csm-server"
 echo "    Server log: sudo journalctl -fu csm-server"
-echo "    Caddy:    sudo systemctl status caddy"
+echo "    Caddy:     sudo systemctl status caddy"
 echo "    Caddy log:  sudo journalctl -fu caddy"
 echo
 echo "    Once DNS for $DOMAIN points at this box AND ports 80/443 are open,"
