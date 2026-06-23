@@ -476,7 +476,10 @@ export function openDb(path: string) {
 
   // -------- Players --------
 
-  const insertPlayer = db.prepare(`INSERT INTO players (id, team_id, json) VALUES (?, ?, ?)`);
+  // OR IGNORE so a duplicate id never crashes a batch insert — the caller's
+  // collision-avoidance loop is the authoritative dedupe; this is belt-and-
+  // braces only. Use `persistPlayer` (UPDATE) for in-place mutations.
+  const insertPlayer = db.prepare(`INSERT OR IGNORE INTO players (id, team_id, json) VALUES (?, ?, ?)`);
   const loadPlayerStmt = db.prepare(`SELECT json FROM players WHERE id = ?`);
   const loadPlayersByTeam = db.prepare(`SELECT json FROM players WHERE team_id = ?`);
 
@@ -492,6 +495,27 @@ export function openDb(path: string) {
   function loadTeamPlayers(teamId: string): Player[] {
     const rows = loadPlayersByTeam.all(teamId) as { json: string }[];
     return rows.map((r) => JSON.parse(r.json) as Player);
+  }
+
+  // Used by every newgen-spawning code path (initial roster, FA pool refill,
+  // pay-to-scout mint) to avoid `UNIQUE constraint failed` on insert. We have
+  // to scan the whole table — checking only free agents misses signed roster
+  // players whose nick happens to collide with the next generated one.
+  const allPlayerKeysStmt = db.prepare(`SELECT id, json FROM players`);
+  function loadAllPlayerKeys(): { ids: Set<string>; nicks: Set<string> } {
+    const rows = allPlayerKeysStmt.all() as { id: string; json: string }[];
+    const ids = new Set<string>();
+    const nicks = new Set<string>();
+    for (const r of rows) {
+      ids.add(r.id);
+      try {
+        const p = JSON.parse(r.json) as Player;
+        if (p.nickname) nicks.add(p.nickname.toLowerCase());
+      } catch {
+        // bad row → skip nickname check, id already added
+      }
+    }
+    return { ids, nicks };
   }
 
   // -------- Sessions --------
@@ -1371,6 +1395,7 @@ export function openDb(path: string) {
     persistPlayer,
     loadPlayer,
     loadTeamPlayers,
+    loadAllPlayerKeys,
     issueSession,
     resolveSession,
     createListing,

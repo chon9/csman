@@ -272,7 +272,12 @@ export function handle(
           ? msg.roles
           : undefined;
       const startDate = new Date(team.createdAt).toISOString().slice(0, 10);
-      const players = spawnInitialRoster(team.id, team.region, startDate, roles);
+      // Seed collision-avoidance with the entire existing player pool — every
+      // signed roster + every free agent — so we never hand `savePlayer` a
+      // duplicate id (which silently dropped under INSERT OR IGNORE, and
+      // hard-crashed the whole spawn under plain INSERT before that).
+      const { ids: usedIds, nicks: usedNicks } = db.loadAllPlayerKeys();
+      const players = spawnInitialRoster(team.id, team.region, startDate, roles, usedIds, usedNicks);
       for (const p of players) db.savePlayer(p);
       db.setTeamPlayers(
         team.id,

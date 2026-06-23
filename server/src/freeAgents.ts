@@ -28,16 +28,16 @@ export interface SignOutcome {
 export function ensureFreeAgentPool(db: DB): { added: number } {
   const have = db.countFreeAgents();
   if (have >= REFILL_THRESHOLD) return { added: 0 };
-  // Generate a fresh batch and persist each one.
+  // Seed source must include enough entropy that two refills in the same
+  // calendar day don't replay the same RNG sequence (which would collide
+  // with whatever we already inserted on the first run).
   const startDate = new Date().toISOString().slice(0, 10);
-  // Collect IDs/nicks already in use to avoid collisions when seeding.
-  const usedIds = new Set<string>();
-  const usedNicks = new Set<string>();
-  for (const p of db.loadFreeAgents(1000)) {
-    usedIds.add(p.id);
-    usedNicks.add(p.nickname.toLowerCase());
-  }
-  const fresh = generateFreeAgentPool(startDate, usedIds, usedNicks);
+  const seedTag = `${startDate}-${have}-${Date.now()}`;
+  // Collect IDs/nicks from EVERY player in the table — signed roster players
+  // share the same nickname pool as the FA generator, so checking only the
+  // FA subset is not enough to avoid `UNIQUE constraint failed` collisions.
+  const { ids: usedIds, nicks: usedNicks } = db.loadAllPlayerKeys();
+  const fresh = generateFreeAgentPool(seedTag, usedIds, usedNicks);
   const cap = Math.min(REFILL_BATCH, fresh.length);
   for (let i = 0; i < cap; i++) {
     const p = fresh[i];
@@ -72,13 +72,10 @@ export function mintWonderkid(db: DB, tier: MintTier, startDate: string): Player
   const seedSrc = `mint-${tier}-${Date.now()}-${Math.random()}`;
   const rng = new RNG(hashSeed(seedSrc));
 
-  // Avoid id/nick collisions with the existing pool.
-  const usedIds = new Set<string>();
-  const usedNicks = new Set<string>();
-  for (const p of db.loadFreeAgents(1000)) {
-    usedIds.add(p.id);
-    usedNicks.add(p.nickname.toLowerCase());
-  }
+  // Collision check against every existing player — both FAs and signed
+  // roster players share the same nickname pool, and a collision on either
+  // would trigger a UNIQUE constraint failure on insert.
+  const { ids: usedIds, nicks: usedNicks } = db.loadAllPlayerKeys();
 
   const region = MINT_REGIONS[rng.int(0, MINT_REGIONS.length - 1)];
   const pool = NEWGEN_POOLS[region];
