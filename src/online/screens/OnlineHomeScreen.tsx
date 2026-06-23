@@ -37,6 +37,7 @@ export default function OnlineHomeScreen() {
   const refresh = useOnline((s) => s.refreshState);
   const disconnect = useOnline((s) => s.disconnect);
   const spawnInitialRoster = useOnline((s) => s.spawnInitialRoster);
+  const isAdmin = useOnline((s) => s.isAdmin);
   const registerAiDuel = useOnline((s) => s.registerAiDuel);
   const timeSkip = useOnline((s) => s.timeSkip);
   const go = useOnline((s) => s.go);
@@ -150,6 +151,16 @@ export default function OnlineHomeScreen() {
           <button className="btn" onClick={() => { go('market'); }}>Market</button>
           <button className="btn" onClick={() => { go('leaderboard'); }}>Leaderboard</button>
           <button className="btn" onClick={() => { go('history'); }}>History</button>
+          {isAdmin && (
+            <button
+              className="btn"
+              onClick={() => { go('admin'); }}
+              title="Admin console — manage users, reset PINs, edit teams"
+              style={{ background: 'rgba(242,161,60,0.18)' }}
+            >
+              🛠 Admin
+            </button>
+          )}
           <button className="btn" onClick={exportTeam} title="Download your team as a portable JSON file">Export</button>
           <button className="btn" onClick={() => setProfileOpen(true)} title="Edit bio, color, social links">Edit Profile</button>
           <button

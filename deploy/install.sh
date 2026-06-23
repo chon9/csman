@@ -113,6 +113,11 @@ WorkingDirectory=$REPO_DIR/server
 Environment=CSM_PORT=8787
 Environment=CSM_BIND=127.0.0.1
 Environment=CSM_DB=$REPO_DIR/server/data/csm.db
+# Admin powers (optional): set this to the IN-GAME nickname you'll log in with.
+# Whoever connects with that nickname (case-insensitive) sees the Admin button
+# on the home screen — list users, reset PINs, edit teams, force-delete teams.
+# Leave blank or unset to disable admin entirely.
+Environment=CSM_ADMIN_NICK=
 ExecStart=/usr/bin/npm run start
 Restart=always
 RestartSec=3

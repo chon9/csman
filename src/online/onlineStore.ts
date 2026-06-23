@@ -14,6 +14,8 @@ import type {
   LeaderboardRow,
   LiveFeedEntry,
   LoanOffer,
+  AdminTeamEditFields,
+  AdminUserRow,
   MarketListing,
   MatchHistoryEntry,
   MintTier,
@@ -34,7 +36,7 @@ import type {
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -50,6 +52,10 @@ interface OnlineState {
   serverUrl: string;
   nickname: string;
   sessionToken: string | null;
+  /** True when the connected nickname matches the server's CSM_ADMIN_NICK env. */
+  isAdmin: boolean;
+  /** Admin-only: cached user list from admin-list-users. */
+  adminUsers: AdminUserRow[];
 
   // ----- game state mirror -----
   team: OnlineTeam | null;
@@ -138,6 +144,12 @@ interface OnlineState {
   refreshState: () => void;
   clearError: () => void;
   go: (screen: OnlineScreen) => void;
+  // Admin actions (no-op for non-admins; server still validates).
+  adminListUsers: () => void;
+  adminResetPin: (nickname: string, newPin: string) => void;
+  adminEditTeam: (teamId: string, fields: AdminTeamEditFields) => void;
+  adminAdjustMoney: (teamId: string, delta: number, note?: string) => void;
+  adminDeleteTeam: (teamId: string) => void;
 
   // Phase 2 actions
   registerAiDuel: (stake: number, format: MatchFormat) => void;
@@ -215,6 +227,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   serverUrl: '',
   nickname: '',
   sessionToken: null,
+  isAdmin: false,
+  adminUsers: [],
   team: null,
   players: {},
   duelResult: null,
@@ -294,7 +308,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
     function handleMessage(msg: ServerMessage): void {
       switch (msg.kind) {
         case 'hello-ok': {
-          set({ sessionToken: msg.sessionToken });
+          set({ sessionToken: msg.sessionToken, isAdmin: !!msg.isAdmin });
           if (msg.hasTeam) {
             client.send({ kind: 'refresh-state' });
             set({ screen: 'home' });
@@ -654,6 +668,36 @@ export const useOnline = create<OnlineState>((set, get) => ({
           }
           break;
         }
+        case 'admin-users': {
+          set({ adminUsers: msg.rows });
+          break;
+        }
+        case 'admin-pin-reset': {
+          pushToast('success', `PIN reset for ${msg.nickname} → ${msg.newPin}`);
+          client.send({ kind: 'admin-list-users' });
+          break;
+        }
+        case 'admin-team-edited': {
+          pushToast('success', `Team ${msg.teamId} updated.`);
+          client.send({ kind: 'admin-list-users' });
+          break;
+        }
+        case 'admin-team-deleted': {
+          pushToast('success', `Team ${msg.teamId} deleted.`);
+          client.send({ kind: 'admin-list-users' });
+          break;
+        }
+        case 'team-money-updated': {
+          const t = get().team;
+          if (t && t.id === msg.teamId) set({ team: { ...t, money: msg.money } });
+          pushToast('info', `Admin adjusted your cash → $${msg.money.toLocaleString()}.`);
+          break;
+        }
+        case 'team-deleted-by-admin': {
+          pushToast('warn', 'Your team was removed by an admin.');
+          set({ team: null, players: {}, screen: 'create-team' });
+          break;
+        }
         case 'error':
           set({ errorBanner: msg.message, duelPending: false, skipPending: false });
           break;
@@ -680,6 +724,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
       team: null,
       players: {},
       sessionToken: null,
+      isAdmin: false,
+      adminUsers: [],
       screen: 'connect',
       errorBanner: null,
     });
@@ -687,6 +733,23 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   createTeam(name, tag, region) {
     get().client?.send({ kind: 'create-team', name, tag, region });
+  },
+
+  // ----- Admin actions -----
+  adminListUsers() {
+    get().client?.send({ kind: 'admin-list-users' });
+  },
+  adminResetPin(nickname, newPin) {
+    get().client?.send({ kind: 'admin-reset-pin', nickname, newPin });
+  },
+  adminEditTeam(teamId, fields) {
+    get().client?.send({ kind: 'admin-edit-team', teamId, fields });
+  },
+  adminAdjustMoney(teamId, delta, note) {
+    get().client?.send({ kind: 'admin-adjust-money', teamId, delta, note });
+  },
+  adminDeleteTeam(teamId) {
+    get().client?.send({ kind: 'admin-delete-team', teamId });
   },
 
   spawnInitialRoster() {

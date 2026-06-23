@@ -33,7 +33,7 @@ import {
   isDmParticipant,
   type MintTier,
 } from '../../src/online/protocol.ts';
-import type { MatchResult, Player, Team } from '../../src/types.ts';
+import type { MatchResult, Player, Region, Team } from '../../src/types.ts';
 
 /**
  * Process expired loans — restore the player to the lender, mark loan as
@@ -130,6 +130,14 @@ import {
   runReadyTournaments,
 } from './tournaments.ts';
 
+/** Nickname (lowercased) that gets admin powers. Set via CSM_ADMIN_NICK env
+ *  var at server boot — empty/unset means no admin exists. Case-insensitive
+ *  match against the connecting client's nickname. */
+const ADMIN_NICK = (process.env.CSM_ADMIN_NICK ?? '').trim().toLowerCase();
+function isAdminConn(conn: ConnSession): boolean {
+  return !!ADMIN_NICK && !!conn.nickname && conn.nickname.toLowerCase() === ADMIN_NICK;
+}
+
 /** Callback wired in index.ts — pushes a message to every connected socket
  *  belonging to the given teamId. Used for PvP "your challenge was accepted"
  *  pushes. No-op if the target team is offline. */
@@ -216,8 +224,9 @@ export function handle(
       conn.teamId = auth.teamId;
       const sessionToken = auth.teamId ? db.issueSession(auth.teamId) : randomBytes(16).toString('hex');
       conn.sessionToken = sessionToken;
-      log(`hello ok: ${nick}${auth.teamId ? ' (team ' + auth.teamId + ')' : ' (no team yet)'}`);
-      return { kind: 'hello-ok', sessionToken, hasTeam: !!auth.teamId };
+      const admin = isAdminConn(conn);
+      log(`hello ok: ${nick}${auth.teamId ? ' (team ' + auth.teamId + ')' : ' (no team yet)'}${admin ? ' [ADMIN]' : ''}`);
+      return { kind: 'hello-ok', sessionToken, hasTeam: !!auth.teamId, isAdmin: admin };
     }
 
     case 'create-team': {
@@ -1345,6 +1354,80 @@ export function handle(
       // Seller bagged a market sale — gates the badge.
       tryUnlock(db, notifyTeam, sellerTeam.id, 'first_market_sale', ACHIEVEMENT_LABELS.first_market_sale);
       return { kind: 'market-bought', listingId: msg.listingId, player, cost: listing.askingPrice };
+    }
+
+    // ---------- Admin (gated by CSM_ADMIN_NICK env var) ----------
+
+    case 'admin-list-users': {
+      if (!isAdminConn(conn)) return { kind: 'error', code: 'forbidden', message: 'Admin only.' };
+      const rows = db.listAllOwners().map((r) => ({
+        nickname: r.nickname,
+        teamId: r.team_id,
+        teamTag: r.team_tag,
+        teamName: r.team_name,
+        region: (r.region ?? null) as Region | null,
+        money: r.money,
+        rosterSize: r.player_ids ? (JSON.parse(r.player_ids) as string[]).length : 0,
+        createdAt: r.created_at,
+      }));
+      return { kind: 'admin-users', rows };
+    }
+
+    case 'admin-reset-pin': {
+      if (!isAdminConn(conn)) return { kind: 'error', code: 'forbidden', message: 'Admin only.' };
+      const target = msg.nickname.trim();
+      const newPin = msg.newPin.trim();
+      if (!target || !/^\d{4,8}$/.test(newPin)) {
+        return { kind: 'error', code: 'bad-credentials', message: 'PIN must be 4-8 digits.' };
+      }
+      const ok = db.resetOwnerPin(target, newPin);
+      if (!ok) return { kind: 'error', code: 'not-found', message: 'Nickname not registered.' };
+      log(`admin(${conn.nickname}): reset PIN for ${target}`);
+      return { kind: 'admin-pin-reset', nickname: target, newPin };
+    }
+
+    case 'admin-edit-team': {
+      if (!isAdminConn(conn)) return { kind: 'error', code: 'forbidden', message: 'Admin only.' };
+      const team = db.loadTeam(msg.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team not found.' };
+      const f = msg.fields;
+      if (typeof f.name === 'string') {
+        const v = f.name.trim().slice(0, 32);
+        if (v) db.adminEditTeamField(msg.teamId, 'name', v);
+      }
+      if (typeof f.tag === 'string') {
+        const v = f.tag.trim().slice(0, 6).toUpperCase();
+        if (v) db.adminEditTeamField(msg.teamId, 'tag', v);
+      }
+      if (typeof f.region === 'string') {
+        const allowed: Region[] = ['Europe', 'CIS', 'Americas', 'Asia'];
+        if (allowed.includes(f.region)) db.adminEditTeamField(msg.teamId, 'region', f.region);
+      }
+      log(`admin(${conn.nickname}): edited team ${msg.teamId} fields=${JSON.stringify(f)}`);
+      return { kind: 'admin-team-edited', teamId: msg.teamId };
+    }
+
+    case 'admin-adjust-money': {
+      if (!isAdminConn(conn)) return { kind: 'error', code: 'forbidden', message: 'Admin only.' };
+      const team = db.loadTeam(msg.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team not found.' };
+      const next = Math.max(0, Math.round(team.money + msg.delta));
+      db.adminSetTeamMoney(msg.teamId, next);
+      log(`admin(${conn.nickname}): adjusted ${team.tag} money by ${msg.delta} → $${next}${msg.note ? ' (' + msg.note + ')' : ''}`);
+      // Push live update to the affected team if they're connected.
+      notifyTeam(msg.teamId, { kind: 'team-money-updated', teamId: msg.teamId, money: next });
+      return { kind: 'admin-team-edited', teamId: msg.teamId };
+    }
+
+    case 'admin-delete-team': {
+      if (!isAdminConn(conn)) return { kind: 'error', code: 'forbidden', message: 'Admin only.' };
+      const team = db.loadTeam(msg.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team not found.' };
+      db.deleteTeamCascade(msg.teamId);
+      log(`admin(${conn.nickname}): force-deleted team ${team.tag} (${msg.teamId})`);
+      // Kick the deleted team's connected sockets back to the create-team flow.
+      notifyTeam(msg.teamId, { kind: 'team-deleted-by-admin', teamId: msg.teamId });
+      return { kind: 'admin-team-deleted', teamId: msg.teamId };
     }
 
     default:

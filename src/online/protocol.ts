@@ -57,6 +57,27 @@ export interface TeamProfileFields {
   youtubeUrl?: string;
 }
 
+// ============ Admin operations ============
+
+/** Slim view of an owner row for the admin user-list screen. */
+export interface AdminUserRow {
+  nickname: string;
+  teamId: string | null;
+  teamTag: string | null;
+  teamName: string | null;
+  region: Region | null;
+  money: number | null;
+  rosterSize: number;
+  createdAt: number;
+}
+
+/** Fields the admin can rewrite on any team. Mirrors create-team plus name. */
+export interface AdminTeamEditFields {
+  name?: string;
+  tag?: string;
+  region?: Region;
+}
+
 // ============ Phase 9: HoF + coaches + sponsors ============
 
 export interface HoFEntry {
@@ -387,12 +408,18 @@ export type ClientMessage =
   | { kind: 'list-sponsors' }
   | { kind: 'respond-sponsor'; sponsorId: string; accept: boolean }
   // ----- Mint: scout a fresh wonderkid into the FA pool -----
-  | { kind: 'mint-free-agent'; tier: MintTier };
+  | { kind: 'mint-free-agent'; tier: MintTier }
+  // ----- Admin (gated server-side by CSM_ADMIN_NICK env var) -----
+  | { kind: 'admin-list-users' }
+  | { kind: 'admin-reset-pin'; nickname: string; newPin: string }
+  | { kind: 'admin-edit-team'; teamId: string; fields: AdminTeamEditFields }
+  | { kind: 'admin-adjust-money'; teamId: string; delta: number; note?: string }
+  | { kind: 'admin-delete-team'; teamId: string };
 
 // ============ Server → Client messages ============
 
 export type ServerMessage =
-  | { kind: 'hello-ok'; sessionToken: string; hasTeam: boolean }
+  | { kind: 'hello-ok'; sessionToken: string; hasTeam: boolean; isAdmin: boolean }
   | { kind: 'hello-bad-pin' }
   | { kind: 'state'; team: OnlineTeam; players: Player[] }
   | { kind: 'team-created'; team: OnlineTeam }
@@ -454,7 +481,15 @@ export type ServerMessage =
   | { kind: 'coach-pool'; openCoaches: CoachListing[]; myCoach: CoachListing | null }
   | { kind: 'coach-hired'; coach: CoachListing }
   | { kind: 'sponsors'; offers: SponsorOffer[]; paid: { sponsorId: string; amount: number }[] }
-  | { kind: 'free-agent-minted'; player: Player; cost: number; tier: MintTier };
+  | { kind: 'free-agent-minted'; player: Player; cost: number; tier: MintTier }
+  // ----- Admin -----
+  | { kind: 'admin-users'; rows: AdminUserRow[] }
+  | { kind: 'admin-pin-reset'; nickname: string; newPin: string }
+  | { kind: 'admin-team-edited'; teamId: string }
+  | { kind: 'admin-team-deleted'; teamId: string }
+  // Pushed by the server to the AFFECTED team when admin touched their data.
+  | { kind: 'team-money-updated'; teamId: string; money: number }
+  | { kind: 'team-deleted-by-admin'; teamId: string };
 
 // ============ Constants the client/server both reference ============
 
@@ -463,7 +498,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 /** Age past which players have a non-zero chance to retire each time-skip week. */
 export const RETIREMENT_AGE_THRESHOLD = 32;
 /** Sponsor payment cadence — auto-credit once per 30 real days while active. */

@@ -349,6 +349,61 @@ export function openDb(path: string) {
     return { ok: true, teamId: null };
   }
 
+  // -------- Admin (gated upstream by handlers) --------
+
+  const listAllOwnersStmt = db.prepare(`
+    SELECT o.nickname, o.team_id, o.created_at,
+           t.tag AS team_tag, t.name AS team_name, t.region, t.money, t.player_ids
+      FROM owners o
+      LEFT JOIN teams t ON t.id = o.team_id
+      ORDER BY o.created_at ASC
+  `);
+  interface OwnerJoinRow {
+    nickname: string;
+    team_id: string | null;
+    created_at: number;
+    team_tag: string | null;
+    team_name: string | null;
+    region: string | null;
+    money: number | null;
+    player_ids: string | null;
+  }
+  function listAllOwners(): OwnerJoinRow[] {
+    return listAllOwnersStmt.all() as OwnerJoinRow[];
+  }
+  const updateOwnerPinStmt = db.prepare(
+    `UPDATE owners SET pin_hash = ?, pin_salt = ? WHERE nickname = ? COLLATE NOCASE`,
+  );
+  function resetOwnerPin(nickname: string, newPin: string): boolean {
+    const salt = randomBytes(8).toString('hex');
+    const r = updateOwnerPinStmt.run(hashPin(newPin, salt), salt, nickname);
+    return r.changes > 0;
+  }
+  // For force-delete: cascade the team's players, listings, challenges,
+  // history, achievements, loans, sponsors, presets, and the owners pointer.
+  const deleteTeamRow = db.prepare(`DELETE FROM teams WHERE id = ?`);
+  const deleteTeamPlayers = db.prepare(`DELETE FROM players WHERE team_id = ?`);
+  const clearOwnerTeam = db.prepare(`UPDATE owners SET team_id = NULL WHERE team_id = ?`);
+  const deleteTeamListings = db.prepare(`DELETE FROM market_listings WHERE seller_team_id = ?`);
+  const deleteTeamChallenges = db.prepare(
+    `DELETE FROM challenges WHERE challenger_team_id = ? OR accepter_team_id = ?`,
+  );
+  const deleteTeamMatches = db.prepare(
+    `DELETE FROM match_history WHERE team_a_id = ? OR team_b_id = ?`,
+  );
+  const deleteTeamAchievements = db.prepare(`DELETE FROM achievements WHERE team_id = ?`);
+  function deleteTeamCascade(teamId: string): void {
+    db.transaction(() => {
+      deleteTeamListings.run(teamId);
+      deleteTeamChallenges.run(teamId, teamId);
+      deleteTeamMatches.run(teamId, teamId);
+      deleteTeamAchievements.run(teamId);
+      deleteTeamPlayers.run(teamId);
+      clearOwnerTeam.run(teamId);
+      deleteTeamRow.run(teamId);
+    })();
+  }
+
   // -------- Teams --------
 
   const insertTeam = db.prepare(
@@ -361,6 +416,19 @@ export function openDb(path: string) {
   const updateTeamTactics = db.prepare(`UPDATE teams SET tactics_json = ? WHERE id = ?`);
   const updateTeamLogo = db.prepare(`UPDATE teams SET logo_data = ? WHERE id = ?`);
   const updatePlayerJson = db.prepare(`UPDATE players SET json = ?, team_id = ? WHERE id = ?`);
+  // Admin-only: targeted field edits on the teams row.
+  const updateTeamName = db.prepare(`UPDATE teams SET name = ? WHERE id = ?`);
+  const updateTeamTag = db.prepare(`UPDATE teams SET tag = ? WHERE id = ?`);
+  const updateTeamRegion = db.prepare(`UPDATE teams SET region = ? WHERE id = ?`);
+  const updateTeamMoney = db.prepare(`UPDATE teams SET money = ? WHERE id = ?`);
+  function adminEditTeamField(teamId: string, field: 'name' | 'tag' | 'region', value: string): boolean {
+    const stmt =
+      field === 'name' ? updateTeamName : field === 'tag' ? updateTeamTag : updateTeamRegion;
+    return stmt.run(value, teamId).changes > 0;
+  }
+  function adminSetTeamMoney(teamId: string, money: number): boolean {
+    return updateTeamMoney.run(money, teamId).changes > 0;
+  }
 
   function rowToTeam(row: Record<string, unknown>): TeamRow {
     let tactics: Partial<Tactics> = {};
@@ -1382,6 +1450,12 @@ export function openDb(path: string) {
   return {
     raw: db,
     authenticateOrRegister,
+    // Admin (handlers gate by env-var nick before calling these):
+    listAllOwners,
+    resetOwnerPin,
+    deleteTeamCascade,
+    adminEditTeamField,
+    adminSetTeamMoney,
     createTeam,
     loadTeam,
     setTeamPlayers,

@@ -150,7 +150,48 @@ A simple cron job (`crontab -e`) covers it:
 
 ---
 
-## 7. Troubleshooting
+## 7. Becoming the server admin (optional)
+
+The server supports a single admin nickname — whoever logs in with it sees a
+🛠 **Admin** button on the home screen and can:
+
+- List every registered owner + their team
+- Reset any user's PIN (you set the new PIN, share it with them)
+- Edit any team's name/tag/region
+- Adjust any team's cash (positive or negative delta, with a logged note)
+- Force-delete a team (cascades players, listings, history, achievements)
+
+To enable it, edit the systemd unit:
+
+```bash
+sudo systemctl edit csm-server --full
+```
+
+Find the `Environment=CSM_ADMIN_NICK=` line and set it to the nickname you'll
+use in-game (case-insensitive):
+
+```ini
+Environment=CSM_ADMIN_NICK=yournick
+```
+
+Save, then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart csm-server
+```
+
+Reconnect from the client — the Admin button appears on the home screen.
+Server-side, every admin action is logged in `journalctl -u csm-server`
+(prefix `admin(<nick>):`) so you have an audit trail.
+
+> **Security note:** the admin nick must own a PIN like any other account. If
+> someone guesses your nick + PIN they get admin powers. Pick a long-ish PIN
+> for that account.
+
+---
+
+## 8. Troubleshooting
 
 **Browser console shows "WebSocket failed" / mixed-content errors**
 The page is HTTPS but the client tried `ws://...`. Check that the URL
