@@ -74,14 +74,18 @@ curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | $SUDO
 $SUDO apt-get update
 $SUDO apt-get install -y caddy
 
+# Helper: run a command as the runtime user. Always uses `sudo -u` directly
+# (not via $SUDO) because dropping privileges from root still requires sudo.
+as_user() { sudo -u "$RUN_USER" "$@"; }
+
 # ---- Repo on disk ----
 echo "==> Repo location: $REPO_DIR"
 if [[ -d "$REPO_DIR/.git" ]]; then
   echo "    Already cloned — pulling latest"
-  $SUDO -u "$RUN_USER" git -C "$REPO_DIR" pull --ff-only
+  as_user git -C "$REPO_DIR" pull --ff-only
 elif [[ -n "$REPO_URL" ]]; then
   echo "    Cloning $REPO_URL"
-  $SUDO -u "$RUN_USER" git clone "$REPO_URL" "$REPO_DIR"
+  as_user git clone "$REPO_URL" "$REPO_DIR"
 else
   echo "    No clone present and no repo URL supplied — copy the project to $REPO_DIR manually, then rerun."
   exit 1
@@ -90,9 +94,9 @@ $SUDO chown -R "$RUN_USER:$RUN_USER" "$REPO_DIR"
 
 # ---- Server deps + client build (as the runtime user, not root) ----
 echo "==> Installing server deps + building client"
-$SUDO -u "$RUN_USER" bash -c "cd $REPO_DIR/server && npm install"
-$SUDO -u "$RUN_USER" bash -c "cd $REPO_DIR && npm install && npm run build"
-$SUDO -u "$RUN_USER" mkdir -p "$REPO_DIR/server/data"
+as_user bash -c "cd $REPO_DIR/server && npm install"
+as_user bash -c "cd $REPO_DIR && npm install && npm run build"
+as_user mkdir -p "$REPO_DIR/server/data"
 
 # ---- Templated systemd unit ----
 echo "==> Installing systemd unit for $RUN_USER"
