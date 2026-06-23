@@ -26,8 +26,6 @@ export interface OnlineTeam {
   playerIds: string[];
   /** Saved Tactics (sparse — only set fields override DEFAULT_TACTICS). */
   tactics: Partial<Tactics>;
-  /** Owner-uploaded team logo as a data URI. Empty string if none set. */
-  logoDataUrl?: string;
   /** Profile customisation — bio, brand colour, socials. */
   bio?: string;
   primaryColor?: string;
@@ -295,7 +293,6 @@ export interface TeamDirectoryEntry {
   name: string;
   ownerNick: string;
   region: string;
-  logoDataUrl?: string;
 }
 
 /** Manager-set development goal for one of their players. */
@@ -383,7 +380,6 @@ export type ClientMessage =
   | { kind: 'set-player-goal'; playerId: string; attr: string; target: number }
   | { kind: 'clear-player-goal'; playerId: string; attr: string }
   | { kind: 'list-player-goals' }
-  | { kind: 'set-team-logo'; dataUrl: string }
   // ----- Phase 7: presets, news, DM, export/import -----
   | { kind: 'save-tactics-preset'; name: string }
   | { kind: 'list-tactics-presets' }
@@ -460,7 +456,6 @@ export type ServerMessage =
   // ----- Phase 6 -----
   | { kind: 'player-goals'; goals: PlayerGoal[] }
   | { kind: 'goal-reached'; playerId: string; nickname: string; attr: string; target: number }
-  | { kind: 'team-logo-saved'; teamId: string; dataUrl: string }
   // ----- Phase 7 -----
   | { kind: 'tactics-presets'; presets: TacticsPreset[] }
   | { kind: 'news-history'; items: NewsItem[] }
@@ -498,7 +493,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 10;
+export const PROTOCOL_VERSION = 11;
 /** Age past which players have a non-zero chance to retire each time-skip week. */
 export const RETIREMENT_AGE_THRESHOLD = 32;
 /** Sponsor payment cadence — auto-credit once per 30 real days while active. */
@@ -554,7 +549,6 @@ export const ACHIEVEMENT_LABELS: Record<string, string> = {
   first_tournament: '🏆 Trophy Cabinet — won your first tournament',
   first_fa_sign: '💼 Player Agent — signed your first free agent',
   first_market_sale: '💰 Trader — closed your first market sale',
-  first_logo: '🎨 Branded — uploaded a team logo',
   first_goal_reached: '🎯 Coach — first development goal hit',
   bankroll_100k: '💵 First $100k Profit — net duel earnings crossed $100,000',
   underdog_win: '😱 Cinderella — beat a team with a higher avg CA in a PvP',
@@ -579,8 +573,6 @@ export function isDmParticipant(channel: string, teamId: string): boolean {
 export const LIVE_REPLAY_TTL_MS = 5 * 60 * 1000;
 /** Cap on chat history kept server-side. */
 export const CHAT_HISTORY_CAP = 100;
-/** Max bytes for an uploaded team logo data URI (≈ 60 KB after base64). */
-export const MAX_TEAM_LOGO_BYTES = 80_000;
 /** Max simultaneously-open development goals per team. */
 export const MAX_OPEN_GOALS = 5;
 /** Tournament prize-pool split by placement (4-team uses first 3 entries). */

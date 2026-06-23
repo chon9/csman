@@ -103,9 +103,7 @@ export default function ChatWidget() {
                 setDmPickerOpen(false);
               }}
             >
-              {t.logoDataUrl
-                ? <img src={t.logoDataUrl} alt="" className="team-logo team-logo-sm" />
-                : <span className="team-logo team-logo-sm team-logo-placeholder" style={{ fontSize: 9 }}>{t.tag.slice(0, 2)}</span>}
+              <span className="team-logo team-logo-sm team-logo-placeholder" style={{ fontSize: 9 }}>{t.tag.slice(0, 2)}</span>
               <strong>{t.tag}</strong> <span className="muted small">{t.name}</span>
             </button>
           ))}

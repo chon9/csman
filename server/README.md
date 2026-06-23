@@ -309,19 +309,17 @@ Client → Server:
 - `set-player-goal { playerId, attr, target }` — pin a development target (1-20) on one of your players
 - `clear-player-goal { playerId, attr }`
 - `list-player-goals`
-- `set-team-logo { dataUrl }` — upload a data:image URL (max 80 KB) as your team logo
 
 Server → Client:
 - `player-goals { goals }` — refreshed on every set/clear/list
 - `goal-reached { playerId, nickname, attr, target }` — pushed to your team's sockets when a goal target is crossed
-- `team-logo-saved { teamId, dataUrl }` — broadcast so all clients update their team-tag chips
 - `live-match-feed { entry }` — broadcast every duel (AI / PvP / tournament round) to all sockets; clients show a Live Feed widget
 
 ### Schema additions (Phase 6)
 
-New tables `chat_messages` (channelled) + `player_goals`. Existing `teams`
-gains a `logo_data` TEXT column via the idempotent ALTER pattern — running
-against a Phase 5 DB is a no-op on the column add.
+New tables `chat_messages` (channelled) + `player_goals`. (A `logo_data`
+column was added on `teams` for an earlier upload-logo feature that has
+since been removed; the column is kept dormant for backward compat.)
 
 ### Recurring tournaments
 
@@ -351,13 +349,6 @@ Server tracks attribute targets in the `player_goals` table. `skipTime`
 now snapshots targeted attrs before each weekly tick and surfaces any that
 crossed their target via the per-team `goal-reached` push. Cap of 5 open
 goals per team enforced server-side.
-
-### Team logos
-
-Owner uploads any image; client converts to data URI via FileReader and
-sends `set-team-logo`. Server enforces size (80 KB after base64) and
-broadcasts `team-logo-saved` to all sockets, so opponents' rosters and
-team-tag chips render with the new logo too.
 
 ### Phase 7 message kinds
 
@@ -459,7 +450,7 @@ replay page in a new tab.
 | ten_wins / fifty_wins | 10 / 50 wins in the current season |
 | first_tournament | Win your first tournament |
 | first_fa_sign / first_market_sale | First FA signing / market sale |
-| first_logo / first_goal_reached | First logo upload / first development goal hit |
+| first_goal_reached | First development goal hit |
 | bankroll_100k | Cross +$100,000 net duel earnings |
 | underdog_win | Beat an opponent with ≥8 higher avg CA in a PvP |
 

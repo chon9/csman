@@ -2,7 +2,7 @@
 // button), a time-skip control, and routes to the marketplace. Duel results
 // arrive as a modal overlay; toasts cover time-skip + market success.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import {
   MAX_DUEL_STAKE,
@@ -51,10 +51,8 @@ export default function OnlineHomeScreen() {
   const [profileOpen, setProfileOpen] = useState(false);
   const goals = useOnline((s) => s.playerGoals);
   const refreshGoals = useOnline((s) => s.refreshGoals);
-  const setTeamLogo = useOnline((s) => s.setTeamLogo);
   const exportTeam = useOnline((s) => s.exportTeam);
   const onlineTeams = useOnline((s) => s.onlineTeams);
-  const logoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const id = setInterval(() => refresh(), 8000);
@@ -62,18 +60,6 @@ export default function OnlineHomeScreen() {
   }, [refresh]);
 
   useEffect(() => { refreshGoals(); }, [refreshGoals]);
-
-  function handleLogoPick(e: React.ChangeEvent<HTMLInputElement>): void {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    // Use FileReader for the data URI conversion; server enforces size cap.
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') setTeamLogo(reader.result);
-    };
-    reader.readAsDataURL(file);
-    e.target.value = ''; // allow re-picking the same file later
-  }
 
   if (!team) {
     return (
@@ -111,27 +97,13 @@ export default function OnlineHomeScreen() {
       <NewsTicker />
       <div className="panel" style={{ padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {team.logoDataUrl ? (
-            <img src={team.logoDataUrl} alt={`${team.tag} logo`} className="team-logo team-logo-lg" />
-          ) : (
-            <div className="team-logo team-logo-lg team-logo-placeholder">{team.tag.slice(0, 2)}</div>
-          )}
-          <input
-            ref={logoInputRef}
-            type="file"
-            accept="image/*"
-            style={{ display: 'none' }}
-            onChange={handleLogoPick}
-          />
+          <div className="team-logo team-logo-lg team-logo-placeholder">{team.tag.slice(0, 2)}</div>
           <div>
             <h2 style={{ margin: '0 0 4px' }}>
               <span style={{ color: 'var(--accent)' }}>{team.tag}</span> · {team.name}
             </h2>
             <div className="muted small">
-              {team.region} · owner <strong>{team.ownerNick}</strong> · day {team.day} ·{' '}
-              <button className="link-btn" onClick={() => logoInputRef.current?.click()}>
-                {team.logoDataUrl ? 'change logo' : 'upload logo'}
-              </button>
+              {team.region} · owner <strong>{team.ownerNick}</strong> · day {team.day}
             </div>
           </div>
         </div>

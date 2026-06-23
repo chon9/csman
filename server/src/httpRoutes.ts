@@ -54,9 +54,7 @@ function renderTeamPage(db: DB, teamId: string): { status: number; body: string;
   }
   const players = db.loadTeamPlayers(team.id);
   const accent = team.primaryColor && /^#[0-9a-fA-F]{6}$/.test(team.primaryColor) ? team.primaryColor : '#de9b35';
-  const logo = team.logoDataUrl
-    ? `<img class="logo" src="${team.logoDataUrl}" alt="" style="object-fit:contain" />`
-    : `<div class="logo" style="color:${accent}">${escapeHtml(team.tag.slice(0, 3))}</div>`;
+  const logo = `<div class="logo" style="color:${accent}">${escapeHtml(team.tag.slice(0, 3))}</div>`;
   const playerRows = players.map((p) => `
     <tr>
       <td><strong>${escapeHtml(p.nickname)}</strong> <span style="color:#8b93a3">${escapeHtml(p.firstName)} ${escapeHtml(p.lastName)}</span></td>

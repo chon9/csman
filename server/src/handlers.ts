@@ -24,7 +24,6 @@ import {
   MAX_LOAN_DAYS,
   MAX_OPEN_GOALS,
   MAX_TACTICS_PRESETS,
-  MAX_TEAM_LOGO_BYTES,
   MAX_TIME_SKIP_DAYS,
   MIN_DUEL_STAKE,
   MINT_TIERS,
@@ -95,13 +94,12 @@ function tryUnlock(
  *  and any future "team directory" view. Pulls straight from SQLite, no
  *  caching — small servers, this is cheap. */
 function listAllTeamsCompact(db: DB): TeamDirectoryEntry[] {
-  const rows = db.raw.prepare(`SELECT id, tag, name, owner_nick, region, logo_data FROM teams ORDER BY tag ASC LIMIT 200`).all() as Array<{
+  const rows = db.raw.prepare(`SELECT id, tag, name, owner_nick, region FROM teams ORDER BY tag ASC LIMIT 200`).all() as Array<{
     id: string;
     tag: string;
     name: string;
     owner_nick: string;
     region: string;
-    logo_data: string | null;
   }>;
   return rows.map((r) => ({
     id: r.id,
@@ -109,7 +107,6 @@ function listAllTeamsCompact(db: DB): TeamDirectoryEntry[] {
     name: r.name,
     ownerNick: r.owner_nick,
     region: r.region,
-    logoDataUrl: r.logo_data || undefined,
   }));
 }
 import { DEFAULT_TACTICS } from '../../src/types.ts';
@@ -189,7 +186,6 @@ function teamRowToOnline(row: TeamRow): OnlineTeam {
     createdAt: row.createdAt,
     playerIds: row.playerIds,
     tactics: row.tactics ?? {},
-    logoDataUrl: row.logoDataUrl || undefined,
   };
 }
 
@@ -252,7 +248,6 @@ export function handle(
         createdAt: Date.now(),
         playerIds: [],
         tactics: {},
-        logoDataUrl: '',
         bio: '',
         primaryColor: '#de9b35',
         twitchUrl: '',
@@ -964,22 +959,6 @@ export function handle(
       return { kind: 'player-goals', goals: db.loadGoalsForTeam(conn.teamId) as PlayerGoal[] };
     }
 
-    case 'set-team-logo': {
-      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
-      const dataUrl = msg.dataUrl;
-      if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
-        return { kind: 'error', code: 'bad-logo', message: 'Logo must be a data:image URL.' };
-      }
-      if (dataUrl.length > MAX_TEAM_LOGO_BYTES) {
-        return { kind: 'error', code: 'logo-too-large', message: `Logo too large (limit ${MAX_TEAM_LOGO_BYTES.toLocaleString()} bytes).` };
-      }
-      db.setTeamLogo(conn.teamId, dataUrl);
-      // Broadcast so opponents' team-tag chips render with the new logo too.
-      broadcast({ kind: 'team-logo-saved', teamId: conn.teamId, dataUrl });
-      tryUnlock(db, notifyTeam, conn.teamId, 'first_logo', ACHIEVEMENT_LABELS.first_logo);
-      return { kind: 'team-logo-saved', teamId: conn.teamId, dataUrl };
-    }
-
     // ---------- Phase 7: tactics presets ----------
 
     case 'save-tactics-preset': {
@@ -1048,7 +1027,6 @@ export function handle(
           tag: team.tag,
           region: team.region,
           tactics: team.tactics,
-          logoDataUrl: team.logoDataUrl,
         },
         players, // includes contract, attributes, etc.
         exportedAt: Date.now(),
@@ -1059,7 +1037,7 @@ export function handle(
     case 'import-team': {
       if (!conn.nickname) return { kind: 'error', code: 'no-session', message: 'Authenticate first.' };
       if (conn.teamId) return { kind: 'error', code: 'has-team', message: 'You already own a team.' };
-      let parsed: { version?: number; team?: { name: string; tag: string; region: string; tactics?: object; logoDataUrl?: string }; players?: Player[] };
+      let parsed: { version?: number; team?: { name: string; tag: string; region: string; tactics?: object }; players?: Player[] };
       try { parsed = JSON.parse(msg.payload); }
       catch { return { kind: 'error', code: 'bad-payload', message: 'Invalid JSON.' }; }
       if (!parsed.team || !Array.isArray(parsed.players)) {
@@ -1077,7 +1055,6 @@ export function handle(
         createdAt: Date.now(),
         playerIds: [],
         tactics: (parsed.team.tactics ?? {}) as TeamRow['tactics'],
-        logoDataUrl: typeof parsed.team.logoDataUrl === 'string' ? parsed.team.logoDataUrl : '',
         bio: '',
         primaryColor: '#de9b35',
         twitchUrl: '',

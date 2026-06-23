@@ -110,8 +110,6 @@ interface OnlineState {
   liveFeedOpen: boolean;
   /** Player goals — open + completed, refreshed from server. */
   playerGoals: PlayerGoal[];
-  /** Logos of other teams keyed by teamId — fed by `team-logo-saved` broadcasts. */
-  teamLogos: Record<string, string>;
 
   // ----- Phase 7 -----
   tacticsPresets: TacticsPreset[];
@@ -193,7 +191,6 @@ interface OnlineState {
   setPlayerGoal: (playerId: string, attr: string, target: number) => void;
   clearPlayerGoal: (playerId: string, attr: string) => void;
   refreshGoals: () => void;
-  setTeamLogo: (dataUrl: string) => void;
   // Phase 7 actions
   saveTacticsPreset: (name: string) => void;
   listTacticsPresets: () => void;
@@ -256,7 +253,6 @@ export const useOnline = create<OnlineState>((set, get) => ({
   liveFeed: [],
   liveFeedOpen: false,
   playerGoals: [],
-  teamLogos: {},
   tacticsPresets: [],
   news: [],
   directory: [],
@@ -613,15 +609,6 @@ export const useOnline = create<OnlineState>((set, get) => ({
           }
           break;
         }
-        case 'team-logo-saved': {
-          set({ teamLogos: { ...get().teamLogos, [msg.teamId]: msg.dataUrl } });
-          // If it was our own team, update the local team object too.
-          const team = get().team;
-          if (team && team.id === msg.teamId) {
-            set({ team: { ...team, logoDataUrl: msg.dataUrl } });
-          }
-          break;
-        }
         case 'live-match-feed': {
           // Prepend so newest is first, cap at 30 entries client-side.
           const feed = [msg.entry, ...get().liveFeed].slice(0, 30);
@@ -915,10 +902,6 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   refreshGoals() {
     get().client?.send({ kind: 'list-player-goals' });
-  },
-
-  setTeamLogo(dataUrl) {
-    get().client?.send({ kind: 'set-team-logo', dataUrl });
   },
 
   saveTacticsPreset(name) {

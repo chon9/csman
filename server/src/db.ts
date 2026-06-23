@@ -20,8 +20,6 @@ export interface TeamRow {
   playerIds: string[];
   /** Persisted Tactics object — empty `{}` until the owner first edits. */
   tactics: Partial<Tactics>;
-  /** Owner-uploaded logo as a data URI ('' = none). */
-  logoDataUrl: string;
   /** Free-form bio shown on the public team profile page. */
   bio: string;
   /** Primary team color (CSS hex) — drives accents on the profile page. */
@@ -414,7 +412,6 @@ export function openDb(path: string) {
   const updateTeamPlayers = db.prepare(`UPDATE teams SET player_ids = ? WHERE id = ?`);
   const updateTeamMoneyDay = db.prepare(`UPDATE teams SET money = ?, day = ? WHERE id = ?`);
   const updateTeamTactics = db.prepare(`UPDATE teams SET tactics_json = ? WHERE id = ?`);
-  const updateTeamLogo = db.prepare(`UPDATE teams SET logo_data = ? WHERE id = ?`);
   const updatePlayerJson = db.prepare(`UPDATE players SET json = ?, team_id = ? WHERE id = ?`);
   // Admin-only: targeted field edits on the teams row.
   const updateTeamName = db.prepare(`UPDATE teams SET name = ? WHERE id = ?`);
@@ -447,7 +444,6 @@ export function openDb(path: string) {
       createdAt: row.created_at as number,
       playerIds: JSON.parse(row.player_ids as string),
       tactics,
-      logoDataUrl: (row.logo_data as string | null) ?? '',
       bio: (row.bio as string | null) ?? '',
       primaryColor: (row.primary_color as string | null) ?? '#de9b35',
       twitchUrl: (row.twitch_url as string | null) ?? '',
@@ -474,10 +470,6 @@ export function openDb(path: string) {
 
   function setTeamTactics(teamId: string, tactics: Partial<Tactics>): void {
     updateTeamTactics.run(JSON.stringify(tactics), teamId);
-  }
-
-  function setTeamLogo(teamId: string, dataUrl: string): void {
-    updateTeamLogo.run(dataUrl, teamId);
   }
 
   // Profile customization update — sparse, each field optional.
@@ -1461,7 +1453,6 @@ export function openDb(path: string) {
     setTeamPlayers,
     setTeamMoneyDay,
     setTeamTactics,
-    setTeamLogo,
     updateTeamProfile,
     unlockAchievement,
     loadAchievements,
