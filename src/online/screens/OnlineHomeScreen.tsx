@@ -189,9 +189,9 @@ export default function OnlineHomeScreen() {
 
         {/* ===== Time-skip ===== */}
         <div className="panel" style={{ padding: 14 }}>
-          <div className="panel-title">Advance Time <span className="muted small">— skip = the only way time passes</span></div>
+          <div className="panel-title">Advance Time <span className="muted small">— optional fast-forward</span></div>
           <p className="muted small" style={{ marginTop: 2 }}>
-            Online mode has no automatic clock — duels alone don't move days. Use this to advance.
+            Time auto-advances <strong>+1 day every 4 hours UTC</strong> (00 / 04 / 08 / 12 / 16 / 20 UTC, i.e. 6 days per real day) — see the sidebar countdown. Pay here if you want to skip ahead of the global pace.
             ${TIME_SKIP_COST_PER_DAY}/day · max {MAX_TIME_SKIP_DAYS} days/skip.
           </p>
           <div style={{ display: 'grid', gap: 10, marginTop: 8 }}>

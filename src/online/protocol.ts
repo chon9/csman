@@ -576,7 +576,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { kind: 'hello-ok'; sessionToken: string; hasTeam: boolean; isAdmin: boolean }
   | { kind: 'hello-bad-pin' }
-  | { kind: 'state'; team: OnlineTeam; players: Player[]; dailyBonusAvailable: boolean; freeCaseAvailable: boolean; duelsUsed: number; duelsExtra: number }
+  | { kind: 'state'; team: OnlineTeam; players: Player[]; dailyBonusAvailable: boolean; freeCaseAvailable: boolean; duelsUsed: number; duelsExtra: number; nextTickUtcMs: number }
   | { kind: 'team-created'; team: OnlineTeam }
   | { kind: 'players-spawned'; players: Player[] }
   | { kind: 'error'; code: string; message: string }
@@ -666,7 +666,12 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 14;
+
+/** Length of one in-game day in real-world ms. The wall-clock auto-tick
+ *  advances every team's day by 1 at each multiple of this duration past
+ *  the UTC epoch — i.e. at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC. */
+export const AUTO_TICK_MS = 4 * 3600 * 1000;
 /** Age past which players have a non-zero chance to retire each time-skip week. */
 export const RETIREMENT_AGE_THRESHOLD = 32;
 /** Sponsor payment cadence — auto-credit once per 30 real days while active. */

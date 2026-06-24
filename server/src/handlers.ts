@@ -127,6 +127,7 @@ import { BOOST_CARD_LIBRARY, BOOST_PACK_COST, BOOST_PACK_ODDS } from '../../src/
 import type { PlayerAttributes } from '../../src/types.ts';
 import type { SkinInstance } from '../../src/types.ts';
 import { cacheLiveReplay, getLiveReplay } from './liveState.ts';
+import { applyAutoTicks, nextAutoTickUtcMs } from './autoTick.ts';
 import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorPayouts } from './serverTick.ts';
 import {
   buildTournamentDetail,
@@ -282,6 +283,10 @@ function teamRowToOnline(row: TeamRow): OnlineTeam {
 }
 
 function buildState(db: DB, teamId: string): ServerMessage | null {
+  // Wall-clock auto-advance: bring the team forward to the current UTC
+  // tick boundary (every 4 hours = 1 in-game day). Lazy + idempotent —
+  // costs nothing if no boundary has crossed since the last call.
+  applyAutoTicks(db, teamId);
   const team = db.loadTeam(teamId);
   if (!team) return null;
   const players: Player[] = db.loadTeamPlayers(teamId);
@@ -295,6 +300,7 @@ function buildState(db: DB, teamId: string): ServerMessage | null {
     freeCaseAvailable: db.getFreeCaseDate(teamId) !== today,
     duelsUsed: duelStats.used,
     duelsExtra: duelStats.extra,
+    nextTickUtcMs: nextAutoTickUtcMs(),
   };
 }
 

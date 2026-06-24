@@ -2,6 +2,7 @@
 // dense top-bar button row on OnlineHomeScreen — moves every "go to" link
 // here, leaves the top of each screen for status + screen-specific actions.
 
+import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import type { OnlineScreen } from '../onlineStore';
 import { publicOrigin } from '../serverUrl';
@@ -35,8 +36,22 @@ export default function OnlineSidebar(): React.ReactElement {
   const onlineTeams = useOnline((s) => s.onlineTeams);
   const dailyBonusAvailable = useOnline((s) => s.dailyBonusAvailable);
   const claimDailyBonus = useOnline((s) => s.claimDailyBonus);
+  const nextTickUtcMs = useOnline((s) => s.nextTickUtcMs);
+  const refresh = useOnline((s) => s.refreshState);
   const disconnect = useOnline((s) => s.disconnect);
   const exportTeam = useOnline((s) => s.exportTeam);
+
+  // 1Hz heartbeat for the countdown display + auto-refresh when a tick lands.
+  const [tickClock, setTickClock] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setTickClock(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  // When the boundary has crossed (countdown went negative) and we still
+  // have a stale nextTickUtcMs, fire a refresh so the server re-anchors us.
+  useEffect(() => {
+    if (nextTickUtcMs > 0 && Date.now() >= nextTickUtcMs + 1000) refresh();
+  }, [tickClock, nextTickUtcMs, refresh]);
 
   const profileUrl = team ? `${publicOrigin()}/team/${team.id}` : '';
 
@@ -64,6 +79,22 @@ export default function OnlineSidebar(): React.ReactElement {
               🎁 Claim daily $10k
             </button>
           )}
+        </div>
+      )}
+
+      {/* ===== Game clock + next-tick countdown ===== */}
+      {team && nextTickUtcMs > 0 && (
+        <div className="osb-tick">
+          <div className="osb-tick-row">
+            <span className="osb-tick-label">Game day</span>
+            <span className="osb-tick-value">{team.day}</span>
+          </div>
+          <div className="osb-tick-row">
+            <span className="osb-tick-label">Next tick</span>
+            <span className="osb-tick-value osb-tick-countdown" title="Time auto-advances 6 in-game days per real day (every 4 hours UTC)">
+              {formatCountdown(Math.max(0, nextTickUtcMs - tickClock))}
+            </span>
+          </div>
         </div>
       )}
 
@@ -121,4 +152,16 @@ export default function OnlineSidebar(): React.ReactElement {
       </div>
     </aside>
   );
+}
+
+/** Format ms remaining as HH:MM:SS, dropping leading zeros for hours. */
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return '00:00';
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const mm = m.toString().padStart(2, '0');
+  const ss = s.toString().padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }

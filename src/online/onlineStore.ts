@@ -134,6 +134,10 @@ interface OnlineState {
   /** Extra slots purchased today. Total cap = DAILY_DUEL_CAP + duelsExtra. */
   duelsExtra: number;
 
+  // ----- Wall-clock auto-advance -----
+  /** UTC ms of the next 4-hour boundary, when team.day will auto-tick +1. */
+  nextTickUtcMs: number;
+
   // ----- Boosters -----
   /** Unapplied booster cards in inventory. */
   boosts: BoostCard[];
@@ -307,6 +311,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   caseOpening: null,
   duelsUsed: 0,
   duelsExtra: 0,
+  nextTickUtcMs: 0,
   boosts: [],
   activeBoosts: {},
   boostReveal: null,
@@ -399,6 +404,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
             freeCaseAvailable: msg.freeCaseAvailable,
             duelsUsed: msg.duelsUsed,
             duelsExtra: msg.duelsExtra,
+            nextTickUtcMs: msg.nextTickUtcMs,
           });
           break;
         }

@@ -329,6 +329,10 @@ export function openDb(path: string) {
   tryAddColumn('teams', 'duels_date', 'TEXT', "''");
   tryAddColumn('teams', 'duels_used', 'INTEGER', '0');
   tryAddColumn('teams', 'duels_extra', 'INTEGER', '0');
+  // UTC ms of the last wall-clock auto-advance tick applied. 0 = never;
+  // the first auto-tick call after migration uses 'now' as the anchor so
+  // existing teams don't fast-forward retroactively.
+  tryAddColumn('teams', 'last_auto_tick_at', 'INTEGER', '0');
   // Skin inventory rows owned by this team — JSON-blob per skin instance.
   db.exec(`
     CREATE TABLE IF NOT EXISTS skin_inventory (
@@ -516,6 +520,18 @@ export function openDb(path: string) {
     const next = { used: cur.used, extra: cur.extra + 1 };
     setDuelCounters.run(today, next.used, next.extra, teamId);
     return next;
+  }
+
+  // -------- Wall-clock auto-advance --------
+
+  const getLastAutoTick = db.prepare(`SELECT last_auto_tick_at FROM teams WHERE id = ?`);
+  const setLastAutoTick = db.prepare(`UPDATE teams SET last_auto_tick_at = ? WHERE id = ?`);
+  function getAutoTickAnchor(teamId: string): number {
+    const r = getLastAutoTick.get(teamId) as { last_auto_tick_at: number | null } | undefined;
+    return r?.last_auto_tick_at ?? 0;
+  }
+  function setAutoTickAnchor(teamId: string, atMs: number): void {
+    setLastAutoTick.run(atMs, teamId);
   }
 
   // -------- Skin inventory --------
@@ -1589,6 +1605,8 @@ export function openDb(path: string) {
     getDuelStats,
     recordDuelUsed,
     recordDuelExtraPurchased,
+    getAutoTickAnchor,
+    setAutoTickAnchor,
     addSkin,
     loadSkins,
     loadSkin,
