@@ -17,6 +17,12 @@ export interface OnlineClientHooks {
   onMessage: (msg: ServerMessage) => void;
   onStatus?: (s: ConnectionStatus) => void;
   onLog?: (line: string) => void;
+  /** Fired EVERY time the socket comes up — including reconnects after a
+   *  network blip. Used by the store to re-send `hello` + `refresh-state`
+   *  so the server-side session for this socket is restored automatically.
+   *  Without this, a reconnect leaves the server with no session for the
+   *  new socket and every action fails with no-team / no-session errors. */
+  onReopen?: (send: (msg: ClientMessage) => void) => void;
 }
 
 const RECONNECT_DELAY_MS = 1500;
@@ -49,6 +55,10 @@ export function connect(url: string, hooks: OnlineClientHooks): OnlineClient {
     ws.onopen = () => {
       setStatus('open');
       log('socket open');
+      // Re-auth FIRST so subsequent messages (including any in the outbox)
+      // hit a server connection that's already gone through `hello`. WS
+      // guarantees in-order delivery and the server processes serially.
+      hooks.onReopen?.((msg) => ws!.send(JSON.stringify(msg)));
       while (outbox.length > 0) {
         const msg = outbox.shift()!;
         ws!.send(JSON.stringify(msg));

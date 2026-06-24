@@ -369,12 +369,19 @@ export const useOnline = create<OnlineState>((set, get) => ({
       onMessage(msg) {
         handleMessage(msg);
       },
+      onReopen(send) {
+        // Fires on EVERY socket open (initial connect AND every reconnect
+        // after a network blip). Re-authenticating here is what prevents
+        // the silent "auto sign-out" — without this re-send, the server
+        // has no session on the new socket and every subsequent message
+        // toasts a no-team / no-session error.
+        send({ kind: 'hello', nickname, pin });
+        // If we already had a team mid-session, refresh state to re-hydrate
+        // anything that changed during the disconnected window.
+        if (get().team) send({ kind: 'refresh-state' });
+      },
     });
     set({ client });
-
-    // Send hello as soon as the socket opens — wsClient buffers messages
-    // queued before that point, so this is safe to call immediately.
-    client.send({ kind: 'hello', nickname, pin });
 
     function handleMessage(msg: ServerMessage): void {
       switch (msg.kind) {
