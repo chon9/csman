@@ -85,7 +85,6 @@ export function applyAutoTicks(db: DB, teamId: string, now: number = Date.now())
   const hiredCoach = db.loadHiredCoachFor(teamId);
   const coachSkill = hiredCoach?.skill ?? 12;
   const engineTeam = teamForEngine(team, coachSkill);
-  const training: TrainingSetup = { focus: 'aim', intensity: 2, mapPrep: null };
 
   for (let i = 0; i < daysAdvanced; i++) {
     team.day += 1;
@@ -93,6 +92,17 @@ export function applyAutoTicks(db: DB, teamId: string, now: number = Date.now())
     const dayRng = new RNG(hashSeed(dayStr));
     dailyPlayerTick(playerLookup, dayStr, dayRng);
     if (team.day % 7 === 0) {
+      // Smart focus: if the squad is exhausted, run a rest week (flat -18
+      // fatigue + small morale lift) instead of stacking +4 fatigue from a
+      // normal training intensity. Otherwise low-intensity training so the
+      // weekly tick doesn't fight the daily recovery.
+      const starters = team.playerIds.slice(0, 5).map((id) => playerLookup[id]).filter(Boolean);
+      const avgFatigue = starters.length
+        ? starters.reduce((s, p) => s + p.fatigue, 0) / starters.length
+        : 0;
+      const training: TrainingSetup = avgFatigue >= 60
+        ? { focus: 'rest', intensity: 1, mapPrep: null }
+        : { focus: 'aim', intensity: 1, mapPrep: null };
       const weekRng = new RNG(hashSeed(`autoweek-${team.id}-${team.day}`));
       applyWeeklyTraining(engineTeam, playerLookup, training, weekRng);
     }

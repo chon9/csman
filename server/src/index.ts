@@ -14,7 +14,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { openDb } from './db.ts';
 import { handle, newConnSession, type ConnSession } from './handlers.ts';
 import { handleHttp } from './httpRoutes.ts';
-import { backfillLegacyContracts, seedRealNamePool } from './freeAgents.ts';
+import { backfillLegacyContracts, sanitizePlayerAges, seedRealNamePool } from './freeAgents.ts';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../src/online/protocol.ts';
 
 const PORT = Number(process.env.CSM_PORT ?? 8787);
@@ -37,6 +37,12 @@ if (seedResult.added > 0) {
 const backfillResult = backfillLegacyContracts(db);
 if (backfillResult.updated > 0) {
   console.log(`[csm] backfilled duelsRemaining on ${backfillResult.updated} legacy contracts`);
+}
+
+// Round any player ages that accumulated float garbage from past += 0.02.
+const ageCleanup = sanitizePlayerAges(db);
+if (ageCleanup.cleaned > 0) {
+  console.log(`[csm] sanitized ${ageCleanup.cleaned} player ages with float drift`);
 }
 
 // Shared http.Server: serves /team/:id HTML profiles + upgrades to WebSocket

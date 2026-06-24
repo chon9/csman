@@ -85,16 +85,22 @@ export function skipTime(
   };
   const playerLookup: Record<string, Player> = Object.fromEntries(players.map((p) => [p.id, p]));
 
-  // Default training: balanced aim focus, normal intensity. Phase 2 doesn't
-  // expose training controls yet — Phase 3 will add the existing Training
-  // screen against this same engine call.
-  const training: TrainingSetup = { focus: 'aim', intensity: 2, mapPrep: null };
-
   // Iterate week-by-week. A "week" in skip is every 7 days from startDay.
+  // Training focus is auto-picked per week: if the squad is exhausted, do
+  // a rest week (-18 fatigue + small morale lift) instead of stacking +4
+  // fatigue from a normal intensity. Otherwise low-intensity aim training
+  // so the weekly tick doesn't fight the daily recovery.
   let cursor = startDay;
   while (cursor < endDay) {
     cursor += 7;
     if (cursor > endDay) break;
+    const starters = team.playerIds.slice(0, 5).map((id) => playerLookup[id]).filter(Boolean);
+    const avgFatigue = starters.length
+      ? starters.reduce((s, p) => s + p.fatigue, 0) / starters.length
+      : 0;
+    const training: TrainingSetup = avgFatigue >= 60
+      ? { focus: 'rest', intensity: 1, mapPrep: null }
+      : { focus: 'aim', intensity: 1, mapPrep: null };
     const rng = new RNG(hashSeed(`timeskip-${team.id}-${cursor}`));
     const result = applyWeeklyTraining(engineTeam, playerLookup, training, rng);
     if (result.gains > 0 || result.regressions > 0) {

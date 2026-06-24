@@ -292,7 +292,7 @@ export default function OnlineHomeScreen() {
                     <td><strong>{p.nickname}</strong> <span className="muted small">{p.firstName} {p.lastName}</span></td>
                     <td>{p.role}</td>
                     <td className="muted">{p.nationality}</td>
-                    <td>{p.age}</td>
+                    <td>{p.age.toFixed(2)}</td>
                     <td className="num">{p.currentAbility}</td>
                     <td className="num">{p.potentialAbility}</td>
                     <td className="num">{p.form.toFixed(1)}</td>

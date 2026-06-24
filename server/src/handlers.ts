@@ -721,7 +721,9 @@ export function handle(
       // Age + retirement roll once per real week skipped.
       const weeks = Math.floor(days / 7);
       if (weeks > 0) {
-        for (const p of players) p.age += weeks * 0.02; // ~1 year per 50 weeks of game-day skip
+        // Round to 2 decimals every step — 0.02 isn't exactly representable
+        // in IEEE 754, so naive += accumulates float garbage like 26.339999..
+        for (const p of players) p.age = Math.round((p.age + weeks * 0.02) * 100) / 100;
       }
       const ret = processRetirements(db, team, players, weeks);
       for (const r of ret.retired) {

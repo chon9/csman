@@ -186,3 +186,27 @@ export function backfillLegacyContracts(db: DB): { updated: number } {
   }
   return { updated };
 }
+
+/**
+ * One-shot cleanup for players whose stored age picked up float garbage
+ * (e.g. 26.339999999999993) from past += 0.02 increments. Rounds to 2
+ * decimals in place. Cheap, idempotent — re-running finds nothing.
+ */
+export function sanitizePlayerAges(db: DB): { cleaned: number } {
+  const rows = db.raw
+    .prepare(`SELECT id, json FROM players`)
+    .all() as { id: string; json: string }[];
+  let cleaned = 0;
+  for (const r of rows) {
+    let p: Player;
+    try { p = JSON.parse(r.json) as Player; }
+    catch { continue; }
+    const rounded = Math.round(p.age * 100) / 100;
+    if (rounded !== p.age) {
+      p.age = rounded;
+      db.persistPlayer(p);
+      cleaned++;
+    }
+  }
+  return { cleaned };
+}
