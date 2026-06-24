@@ -122,8 +122,9 @@ import { buildWageMap, ensureFreeAgentPool, mintWonderkid, suggestedWage } from 
 import { CASES, DAILY_FREE_CASE_ID } from '../../src/data/cs2Cases.ts';
 import { openCase as rollCaseOpen } from '../../src/sim/caseOpening.ts';
 import { RNG } from '../../src/engine/rng.ts';
-import type { ActiveBoostWire, BoostCard, BoostRarity, CaseSummary, SkinInstanceWire } from '../../src/online/protocol.ts';
-import { BOOST_PACK_COST, BOOST_PACK_ODDS, BOOST_RARITY_META } from '../../src/online/protocol.ts';
+import type { ActiveBoostWire, BoostAttrKey, BoostCard, BoostRarity, CaseSummary, SkinInstanceWire } from '../../src/online/protocol.ts';
+import { BOOST_CARD_LIBRARY, BOOST_PACK_COST, BOOST_PACK_ODDS } from '../../src/online/protocol.ts';
+import type { PlayerAttributes } from '../../src/types.ts';
 import type { SkinInstance } from '../../src/types.ts';
 import { cacheLiveReplay, getLiveReplay } from './liveState.ts';
 import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorPayouts } from './serverTick.ts';
@@ -145,19 +146,21 @@ function nextUtcMidnight(): string {
   return d.toISOString();
 }
 
-/** Combat attributes that absorb a booster's attrBonus. Picked so the boost
- *  hits the engine's most-read fields. Attributes can exceed 20 during the
- *  boost — the engine math doesn't hard-cap them. */
-const BOOST_TARGET_ATTRS = ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'] as const;
+/** Default targets for legacy boosts persisted before BOOST_CARD_LIBRARY
+ *  existed — those carry attrBonus but no attrTargets. */
+const LEGACY_BOOST_TARGETS: BoostAttrKey[] = ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'];
 
 /** Mutate a player's attributes in-place to include any active boost.
  *  Returns the snapshot needed to restore the un-boosted values. Idempotent
  *  for boost-less players (no-op snapshot). */
-function applyBoostToPlayer(player: Player): Partial<Player['attributes']> | null {
+function applyBoostToPlayer(player: Player): Partial<PlayerAttributes> | null {
   const boost = player.activeBoost;
   if (!boost || boost.duelsLeft <= 0) return null;
-  const snapshot: Partial<Player['attributes']> = {};
-  for (const k of BOOST_TARGET_ATTRS) {
+  const targets = (boost.attrTargets && boost.attrTargets.length > 0)
+    ? boost.attrTargets
+    : LEGACY_BOOST_TARGETS;
+  const snapshot: Partial<PlayerAttributes> = {};
+  for (const k of targets) {
     snapshot[k] = player.attributes[k];
     // Cap at 25 — engine still scales smoothly there, but stops boosts from
     // stacking to absurd values if anyone ever wires up double-cards.
@@ -165,9 +168,9 @@ function applyBoostToPlayer(player: Player): Partial<Player['attributes']> | nul
   }
   return snapshot;
 }
-function restoreBoostSnapshot(player: Player, snapshot: Partial<Player['attributes']> | null): void {
+function restoreBoostSnapshot(player: Player, snapshot: Partial<PlayerAttributes> | null): void {
   if (!snapshot) return;
-  for (const k of BOOST_TARGET_ATTRS) {
+  for (const k of Object.keys(snapshot) as (keyof PlayerAttributes)[]) {
     if (snapshot[k] !== undefined) player.attributes[k] = snapshot[k]!;
   }
 }
@@ -187,9 +190,8 @@ function tickBoostsAfterDuel(
   }
 }
 
-/** Roll a single booster card per BOOST_PACK_ODDS. Uses Math.random — the
- *  packs aren't deterministic-seeded (unlike map vetoes), they're consumable
- *  cosmetics so a per-pull RNG is fine. */
+/** Roll a single booster card: pick rarity by BOOST_PACK_ODDS, then pick a
+ *  template uniformly from BOOST_CARD_LIBRARY entries at that rarity. */
 function rollBoostCard(): BoostCard {
   const r = Math.random();
   let acc = 0;
@@ -199,13 +201,20 @@ function rollBoostCard(): BoostCard {
     acc += BOOST_PACK_ODDS[rarity];
     if (r <= acc) { chosen = rarity; break; }
   }
-  const meta = BOOST_RARITY_META[chosen];
+  const pool = BOOST_CARD_LIBRARY.filter((t) => t.rarity === chosen);
+  // Defensive — if a rarity tier ever ends up empty, fall back to commons.
+  const tmpl = pool.length > 0
+    ? pool[Math.floor(Math.random() * pool.length)]
+    : BOOST_CARD_LIBRARY.find((t) => t.rarity === 'common')!;
   return {
     id: `boost-${randomBytes(5).toString('hex')}`,
-    rarity: chosen,
-    name: meta.name,
-    attrBonus: meta.attrBonus,
-    duels: meta.duels,
+    templateId: tmpl.id,
+    rarity: tmpl.rarity,
+    name: tmpl.name,
+    attrTargets: tmpl.attrTargets,
+    attrBonus: tmpl.attrBonus,
+    duels: tmpl.duels,
+    flavor: tmpl.flavor,
     acquiredAt: Date.now(),
   };
 }
@@ -1094,6 +1103,7 @@ export function handle(
           activeByPlayer[p.id] = {
             rarity: p.activeBoost.rarity,
             name: p.activeBoost.name,
+            attrTargets: (p.activeBoost.attrTargets ?? LEGACY_BOOST_TARGETS) as BoostAttrKey[],
             attrBonus: p.activeBoost.attrBonus,
             duelsLeft: p.activeBoost.duelsLeft,
             appliedAt: p.activeBoost.appliedAt,
@@ -1134,13 +1144,14 @@ export function handle(
       player.activeBoost = {
         rarity: card.rarity,
         name: card.name,
+        attrTargets: card.attrTargets,
         attrBonus: card.attrBonus,
         duelsLeft: card.duels,
         appliedAt: Date.now(),
       };
       db.persistPlayer(player);
       db.removeBoost(conn.teamId, msg.cardId);
-      log(`boost applied: ${team.tag} ${player.nickname} ← ${card.rarity} ${card.name} (+${card.attrBonus}, ${card.duels} duels)`);
+      log(`boost applied: ${team.tag} ${player.nickname} ← ${card.rarity} ${card.name} (+${card.attrBonus} on ${card.attrTargets.join('+')}, ${card.duels} duels)`);
       return {
         kind: 'boost-applied',
         cardId: msg.cardId,
@@ -1148,6 +1159,7 @@ export function handle(
         active: {
           rarity: card.rarity,
           name: card.name,
+          attrTargets: card.attrTargets,
           attrBonus: card.attrBonus,
           duelsLeft: card.duels,
           appliedAt: player.activeBoost.appliedAt,

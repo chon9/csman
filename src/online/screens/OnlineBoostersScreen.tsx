@@ -2,9 +2,10 @@
 // until applied to a player; once applied they bump combat attributes for
 // N ranked duels (server-validated), then auto-expire.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import {
+  BOOST_CARD_LIBRARY,
   BOOST_PACK_COST,
   BOOST_PACK_ODDS,
   BOOST_RARITY_META,
@@ -15,6 +16,13 @@ import type { Player } from '../../types';
 import ToastStack from './ToastStack';
 
 const RARITY_ORDER: BoostRarity[] = ['legendary', 'epic', 'rare', 'common'];
+
+/** Compact attr-target list — collapses the all-round 5-stat set into "All-round". */
+function attrTargetSummary(targets: readonly string[]): string {
+  const ALL_ROUND = ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'];
+  if (targets.length === 5 && ALL_ROUND.every((a) => targets.includes(a))) return 'All-round';
+  return targets.join(' · ');
+}
 
 export default function OnlineBoostersScreen(): React.ReactElement | null {
   const team = useOnline((s) => s.team);
@@ -30,6 +38,14 @@ export default function OnlineBoostersScreen(): React.ReactElement | null {
   const go = useOnline((s) => s.go);
 
   const [pickCardId, setPickCardId] = useState<string | null>(null);
+  const [showLibrary, setShowLibrary] = useState(false);
+
+  // Pre-grouped library for the "What can drop?" toggle.
+  const libraryByRarity = useMemo(() => {
+    const out: Record<BoostRarity, typeof BOOST_CARD_LIBRARY> = { common: [], rare: [], epic: [], legendary: [] };
+    for (const t of BOOST_CARD_LIBRARY) out[t.rarity].push(t);
+    return out;
+  }, []);
 
   useEffect(() => {
     listBoosts();
@@ -68,17 +84,47 @@ export default function OnlineBoostersScreen(): React.ReactElement | null {
           >
             🎴 Open pack · ${BOOST_PACK_COST.toLocaleString()}
           </button>
-          <div className="muted small" style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <div className="muted small" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
             {RARITY_ORDER.map((r) => {
               const meta = BOOST_RARITY_META[r];
               return (
                 <span key={r} style={{ color: meta.color }}>
-                  <strong>{(BOOST_PACK_ODDS[r] * 100).toFixed(BOOST_PACK_ODDS[r] < 0.05 ? 1 : 0)}%</strong> {meta.name} (+{meta.attrBonus}, {meta.duels}d)
+                  <strong>{(BOOST_PACK_ODDS[r] * 100).toFixed(BOOST_PACK_ODDS[r] < 0.05 ? 1 : 0)}%</strong> {meta.label} ({libraryByRarity[r].length} card{libraryByRarity[r].length === 1 ? '' : 's'})
                 </span>
               );
             })}
+            <button className="link-btn" onClick={() => setShowLibrary((s) => !s)} style={{ fontSize: 11 }}>
+              {showLibrary ? 'hide' : 'show'} all cards
+            </button>
           </div>
         </div>
+
+        {showLibrary && (
+          <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+            {RARITY_ORDER.flatMap((r) => libraryByRarity[r]).map((t) => {
+              const meta = BOOST_RARITY_META[t.rarity];
+              return (
+                <div
+                  key={t.id}
+                  style={{
+                    border: `1px solid ${meta.color}55`,
+                    borderLeft: `3px solid ${meta.color}`,
+                    borderRadius: 6,
+                    padding: 8,
+                    background: 'rgba(255,255,255,0.02)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                    <strong style={{ color: meta.color, fontSize: 12 }}>{t.name}</strong>
+                    <span className="muted small" style={{ fontSize: 10 }}>+{t.attrBonus} · {t.duels}d</span>
+                  </div>
+                  <div className="muted small" style={{ fontSize: 10, marginTop: 2 }}>{attrTargetSummary(t.attrTargets)}</div>
+                  <div className="muted small" style={{ fontSize: 10, marginTop: 4, fontStyle: 'italic', opacity: 0.7 }}>{t.flavor}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* ===== Inventory ===== */}
@@ -117,7 +163,7 @@ export default function OnlineBoostersScreen(): React.ReactElement | null {
                   <tr key={pid}>
                     <td><strong>{player?.nickname ?? pid}</strong></td>
                     <td style={{ color: BOOST_RARITY_META[b.rarity].color }}>{b.name}</td>
-                    <td>+{b.attrBonus} aim/reflexes/positioning/gameSense/clutch</td>
+                    <td>+{b.attrBonus} <span className="muted small">{attrTargetSummary(b.attrTargets)}</span></td>
                     <td className="num">{b.duelsLeft}</td>
                   </tr>
                 );
@@ -139,7 +185,7 @@ export default function OnlineBoostersScreen(): React.ReactElement | null {
             </div>
             <div className="modal-body">
               <div className="muted small" style={{ marginBottom: 10 }}>
-                +{pickCard.attrBonus} to aim, reflexes, positioning, gameSense, clutch for {pickCard.duels} ranked duel{pickCard.duels === 1 ? '' : 's'}.
+                +{pickCard.attrBonus} to <strong>{attrTargetSummary(pickCard.attrTargets)}</strong> for {pickCard.duels} ranked duel{pickCard.duels === 1 ? '' : 's'}.
                 Scrims don't consume duels.
               </div>
               <div style={{ display: 'grid', gap: 6 }}>
@@ -189,11 +235,16 @@ export default function OnlineBoostersScreen(): React.ReactElement | null {
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4 }}>{boostReveal.name}</div>
                 <div className="muted small" style={{ marginTop: 8 }}>
-                  +{boostReveal.attrBonus} to aim · reflexes · positioning · gameSense · clutch
+                  +{boostReveal.attrBonus} to <strong>{attrTargetSummary(boostReveal.attrTargets)}</strong>
                 </div>
                 <div className="muted small">
                   Lasts {boostReveal.duels} ranked duel{boostReveal.duels === 1 ? '' : 's'}
                 </div>
+                {boostReveal.flavor && (
+                  <div className="muted small" style={{ marginTop: 8, fontStyle: 'italic', opacity: 0.75 }}>
+                    "{boostReveal.flavor}"
+                  </div>
+                )}
               </div>
               <button className="btn btn-accent" onClick={dismissBoostReveal} style={{ marginTop: 14 }}>
                 Add to inventory
@@ -226,7 +277,8 @@ function CardTile({ card, onApply, onDiscard }: { card: BoostCard; onApply: () =
         <strong style={{ color: meta.color }}>{card.name}</strong>
         <span className="muted small" style={{ textTransform: 'uppercase' }}>{card.rarity}</span>
       </div>
-      <div className="muted small">+{card.attrBonus} attr · {card.duels} duel{card.duels === 1 ? '' : 's'}</div>
+      <div className="muted small">+{card.attrBonus} · {card.duels} duel{card.duels === 1 ? '' : 's'}</div>
+      <div className="muted small" style={{ fontSize: 10, opacity: 0.75 }}>{attrTargetSummary(card.attrTargets)}</div>
       <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
         <button className="btn btn-tiny btn-accent" style={{ flex: 1 }} onClick={onApply}>Apply</button>
         <button className="btn btn-tiny" onClick={onDiscard} title="Throw away (no refund)">🗑</button>

@@ -3,7 +3,7 @@
 // directly (server's tsconfig.json adds it to its include list) so the type
 // system catches mismatched payloads at compile time.
 
-import type { MatchFormat, MatchResult, Player, PlayerRole, Region, Tactics } from '../types';
+import type { MatchFormat, MatchResult, Player, PlayerAttributes, PlayerRole, Region, Tactics } from '../types';
 
 // ============ Server-authoritative view of a team ============
 
@@ -62,23 +62,35 @@ export const DAILY_BONUS_AMOUNT = 10_000;
 
 // ============ Booster packs (gacha) ============
 
-/** Card rarities — drives drop odds, attribute delta, and duel count. */
+/** Card rarities — drives drop odds + per-rarity colour. Attribute deltas
+ *  and duel counts now live on individual card templates, not the rarity. */
 export type BoostRarity = 'common' | 'rare' | 'epic' | 'legendary';
 
+/** Attribute keys a card can target. Subset of PlayerAttributes — keeps the
+ *  card UI focused on stats players actually look at. */
+export type BoostAttrKey = keyof PlayerAttributes;
+
 export interface BoostCard {
+  /** Unique instance id (one per pull). */
   id: string;
+  /** Template id from BOOST_CARD_LIBRARY — e.g. 'coffee-buzz', 'awper-eye'. */
+  templateId: string;
   rarity: BoostRarity;
-  /** Flavour name. */
   name: string;
-  /** Bonus added to each of {aim, reflexes, positioning, gameSense, clutch}. */
+  /** Which attributes the bonus applies to. */
+  attrTargets: BoostAttrKey[];
+  /** Bonus added to each targeted attr (caps at 25 in engine). */
   attrBonus: number;
-  /** How many ranked duels the card lasts once applied. Scrims don't tick. */
+  /** Ranked duels the card lasts once applied. Scrims don't tick. */
   duels: number;
+  /** Short flavour blurb shown on the card tile + reveal modal. */
+  flavor: string;
   acquiredAt: number;
 }
 
-/** Drop odds (must sum to 1). Tuned so most pulls feel meaningful but
- *  legendary stays a real moment. */
+/** Drop odds by rarity (must sum to 1). Inside a rarity, templates are
+ *  picked uniformly. Tuned so most pulls feel meaningful but legendary
+ *  stays a real moment. */
 export const BOOST_PACK_ODDS: Record<BoostRarity, number> = {
   common: 0.70,
   rare: 0.20,
@@ -86,20 +98,59 @@ export const BOOST_PACK_ODDS: Record<BoostRarity, number> = {
   legendary: 0.01,
 };
 
-/** Per-rarity attribute bonus + duel count + display name. */
-export const BOOST_RARITY_META: Record<BoostRarity, { name: string; attrBonus: number; duels: number; color: string }> = {
-  common: { name: 'Coffee Buzz', attrBonus: 1, duels: 1, color: '#9aa0aa' },
-  rare: { name: 'Adrenaline Rush', attrBonus: 2, duels: 2, color: '#4b69ff' },
-  epic: { name: 'In The Zone', attrBonus: 3, duels: 3, color: '#d32ce6' },
-  legendary: { name: 'God Mode', attrBonus: 5, duels: 3, color: '#ffd700' },
+/** Per-rarity display metadata. Card-specific stats live in the library. */
+export const BOOST_RARITY_META: Record<BoostRarity, { label: string; color: string }> = {
+  common: { label: 'Common', color: '#9aa0aa' },
+  rare: { label: 'Rare', color: '#4b69ff' },
+  epic: { label: 'Epic', color: '#d32ce6' },
+  legendary: { label: 'Legendary', color: '#ffd700' },
 };
 
 /** Cost in $ to open one pack. One card per pack. */
 export const BOOST_PACK_COST = 5_000;
 
+export interface BoostCardTemplate {
+  id: string;
+  name: string;
+  rarity: BoostRarity;
+  attrTargets: BoostAttrKey[];
+  attrBonus: number;
+  duels: number;
+  flavor: string;
+}
+
+/** All cards that can drop from a pack. Roll = pick rarity by odds, then
+ *  pick a template uniformly within that rarity. */
+export const BOOST_CARD_LIBRARY: BoostCardTemplate[] = [
+  // ----- Common (70% combined) -----
+  { id: 'coffee-buzz', name: 'Coffee Buzz', rarity: 'common', attrTargets: ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'], attrBonus: 1, duels: 1, flavor: 'A solid jolt. Carries the whole kit, just barely.' },
+  { id: 'quick-sip', name: 'Quick Sip', rarity: 'common', attrTargets: ['aim', 'reflexes'], attrBonus: 2, duels: 1, flavor: 'Sharper first shots. Nothing else moved.' },
+  { id: 'light-stretch', name: 'Light Stretch', rarity: 'common', attrTargets: ['positioning', 'endurance'], attrBonus: 2, duels: 1, flavor: 'Loosened up. Reads the angle a touch better.' },
+  { id: 'comms-tune', name: 'Comms Tune', rarity: 'common', attrTargets: ['communication', 'teamwork'], attrBonus: 2, duels: 1, flavor: 'Cleaner callouts. Trades land.' },
+
+  // ----- Rare (20% combined) -----
+  { id: 'adrenaline-rush', name: 'Adrenaline Rush', rarity: 'rare', attrTargets: ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'], attrBonus: 2, duels: 2, flavor: 'All-round edge for a couple of maps.' },
+  { id: 'tactical-brief', name: 'Tactical Brief', rarity: 'rare', attrTargets: ['gameSense', 'leadership', 'communication'], attrBonus: 3, duels: 2, flavor: 'Coach pulled out the whiteboard. IGL is dialed in.' },
+  { id: 'sharpshooter', name: 'Sharpshooter', rarity: 'rare', attrTargets: ['aim', 'reflexes'], attrBonus: 3, duels: 2, flavor: 'Heads pop. Refrags arrive on time.' },
+  { id: 'marathon-runner', name: 'Marathon Runner', rarity: 'rare', attrTargets: ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'], attrBonus: 1, duels: 4, flavor: 'Small edge, but it lasts the whole event.' },
+
+  // ----- Epic (9% combined) -----
+  { id: 'in-the-zone', name: 'In The Zone', rarity: 'epic', attrTargets: ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'], attrBonus: 3, duels: 3, flavor: 'Everything clicks. Three maps of locked-in play.' },
+  { id: 'aim-lock', name: 'Aim Lock', rarity: 'epic', attrTargets: ['aim', 'reflexes', 'positioning'], attrBonus: 5, duels: 2, flavor: 'Crosshair feels stitched to the head model.' },
+  { id: 'clutch-master', name: 'Clutch Master', rarity: 'epic', attrTargets: ['clutch', 'composure', 'resilience'], attrBonus: 6, duels: 3, flavor: 'Built different in the 1vX. Doesn\'t flinch.' },
+  { id: 'popflash-god', name: 'Pop-Flash God', rarity: 'epic', attrTargets: ['utility', 'teamwork'], attrBonus: 5, duels: 3, flavor: 'Every flash blinds. Every execute lands.' },
+
+  // ----- Legendary (1% combined) -----
+  { id: 'god-mode', name: 'God Mode', rarity: 'legendary', attrTargets: ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'], attrBonus: 5, duels: 3, flavor: 'Above their PA. Pure, transcendent. Three maps of cinema.' },
+  { id: 'anchor', name: 'Anchor of the World', rarity: 'legendary', attrTargets: ['positioning', 'clutch', 'composure', 'discipline'], attrBonus: 8, duels: 3, flavor: 'Holds the site against the apocalypse. Three rounds of solo D.' },
+  { id: 'awper-eye', name: 'AWPer\'s Eye', rarity: 'legendary', attrTargets: ['aim', 'reflexes'], attrBonus: 10, duels: 2, flavor: 'Sees through smokes. Wins every peek. Two maps.' },
+  { id: 'game-changer', name: 'Game-Changer', rarity: 'legendary', attrTargets: ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'], attrBonus: 3, duels: 5, flavor: 'Solid edge across five duels. Run a tournament with it.' },
+];
+
 export interface ActiveBoostWire {
   rarity: BoostRarity;
   name: string;
+  attrTargets: BoostAttrKey[];
   attrBonus: number;
   duelsLeft: number;
   appliedAt: number;

@@ -203,11 +203,14 @@ export interface Player {
   stats: PlayerSeasonStats;
   transferListed: boolean;
   askingPrice: number;
-  /** Online-mode booster card applied to this player. Bumps combat attrs
-   *  for a fixed number of ranked duels, then auto-removes. Persists in JSON. */
+  /** Online-mode booster card applied to this player. Bumps the targeted
+   *  attributes for a fixed number of ranked duels, then auto-removes.
+   *  attrTargets is optional for backward-compat — pre-library cards
+   *  default to {aim, reflexes, positioning, gameSense, clutch}. */
   activeBoost?: {
     rarity: 'common' | 'rare' | 'epic' | 'legendary';
     name: string;
+    attrTargets?: (keyof PlayerAttributes)[];
     attrBonus: number;
     duelsLeft: number;
     appliedAt: number;
