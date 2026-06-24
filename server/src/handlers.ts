@@ -213,7 +213,13 @@ function tickContractsAfterDuel(
   const expired: Player[] = [];
   for (const p of rosterStarters) {
     const c = p.contract;
-    if (!c || typeof c.duelsRemaining !== 'number') continue;
+    if (!c) continue;
+    // Backfill legacy contracts on first play: any contract that's missing
+    // duelsRemaining gets a fresh FA-length counter (40), then decrements
+    // by 1 for this match — so it ends at 39 instead of staying unlimited.
+    if (typeof c.duelsRemaining !== 'number') {
+      c.duelsRemaining = CONTRACT_DUELS_INITIAL_FA;
+    }
     c.duelsRemaining -= 1;
     if (c.duelsRemaining <= 0) {
       // Contract done — flip to free agent, drop from roster.
