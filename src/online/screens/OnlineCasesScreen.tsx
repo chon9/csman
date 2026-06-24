@@ -195,8 +195,11 @@ function CaseOpenModal({ strip, winnerIndex, instance, onReveal, onClose }: Case
     el.style.transition = 'none';
     el.style.transform = 'translateX(0)';
     void el.offsetWidth;
+    // Measure the actual viewport width at runtime so the reel lands
+    // centered on phones (where CSS clamps the viewport to the screen).
+    const liveViewport = el.parentElement?.clientWidth ?? VIEWPORT_WIDTH;
     const jitter = (Math.random() - 0.5) * (TILE_WIDTH * 0.45);
-    const target = winnerIndex * TILE_WIDTH - (VIEWPORT_WIDTH / 2 - TILE_WIDTH / 2) + jitter;
+    const target = winnerIndex * TILE_WIDTH - (liveViewport / 2 - TILE_WIDTH / 2) + jitter;
     el.style.transition = `transform ${ANIM_MS}ms cubic-bezier(0.05, 0.65, 0.15, 1)`;
     el.style.transform = `translateX(-${target}px)`;
 
@@ -217,6 +220,7 @@ function CaseOpenModal({ strip, winnerIndex, instance, onReveal, onClose }: Case
         </div>
 
         <div
+          className="case-opener-viewport"
           style={{
             width: VIEWPORT_WIDTH,
             maxWidth: '100%',

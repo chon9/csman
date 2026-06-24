@@ -128,7 +128,7 @@ export default function OnlineHomeScreen() {
         <StatCard label="Avg age" value={avgAge} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      <div className="home-action-grid">
         {/* ===== Duel pad ===== */}
         <div className="panel" style={{ padding: 14 }}>
           <div className="panel-title">Register Duel <span className="muted small">— vs scaled AI</span></div>
@@ -249,6 +249,7 @@ export default function OnlineHomeScreen() {
             </button>
           </div>
         ) : (
+          <div className="table-scroll">
           <table className="table table-dense">
             <thead>
               <tr>
@@ -348,6 +349,7 @@ export default function OnlineHomeScreen() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
