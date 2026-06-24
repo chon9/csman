@@ -137,19 +137,22 @@ export default function OnlineCasesScreen() {
               </tr>
             </thead>
             <tbody>
-              {inventory.map((s) => (
-                <tr key={s.id}>
-                  <td><strong>{s.weapon}</strong></td>
-                  <td>{s.name}</td>
-                  <td style={{ color: RARITY_COLOR[s.rarity] }}>{RARITY_LABEL[s.rarity]}</td>
-                  <td className="muted">{s.wear}</td>
-                  <td>{s.statTrak ? <span style={{ color: '#ff8a00' }}>StatTrak™</span> : <span className="muted">—</span>}</td>
-                  <td className="num">${s.marketValue.toLocaleString()}</td>
-                  <td>
-                    <button className="btn btn-tiny" onClick={() => sellSkin(s.id)}>Sell</button>
-                  </td>
-                </tr>
-              ))}
+              {inventory.map((s) => {
+                const color = RARITY_COLOR[s.rarity];
+                return (
+                  <tr key={s.id} style={{ boxShadow: `inset 4px 0 0 ${color}` }}>
+                    <td style={{ paddingLeft: 12 }}><strong>{s.weapon}</strong></td>
+                    <td>{s.name}</td>
+                    <td><RarityBadge rarity={s.rarity} /></td>
+                    <td className="muted">{s.wear}</td>
+                    <td>{s.statTrak ? <span style={{ color: '#ff8a00' }}>StatTrak™</span> : <span className="muted">—</span>}</td>
+                    <td className="num">${s.marketValue.toLocaleString()}</td>
+                    <td>
+                      <button className="btn btn-tiny" onClick={() => sellSkin(s.id)}>Sell</button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
@@ -253,30 +256,7 @@ function CaseOpenModal({ strip, winnerIndex, instance, onReveal, onClose }: Case
               willChange: 'transform',
             }}
           >
-            {strip.map((s, i) => (
-              <div
-                key={i}
-                style={{
-                  width: TILE_WIDTH,
-                  flex: '0 0 auto',
-                  padding: 8,
-                  boxSizing: 'border-box',
-                  borderRight: '1px solid rgba(255,255,255,0.05)',
-                  borderLeft: `3px solid ${RARITY_COLOR[s.rarity]}`,
-                  fontSize: 11,
-                  textAlign: 'center',
-                  height: 120,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: 4,
-                }}
-              >
-                <div style={{ fontWeight: 600 }}>{s.weapon}</div>
-                <div className="muted">{s.name}</div>
-              </div>
-            ))}
+            {strip.map((s, i) => <ReelTile key={i} weapon={s.weapon} name={s.name} rarity={s.rarity} />)}
           </div>
         </div>
 
@@ -307,5 +287,96 @@ function CaseOpenModal({ strip, winnerIndex, instance, onReveal, onClose }: Case
         )}
       </div>
     </div>
+  );
+}
+
+/** Single skin tile on the spinning reel. CS:GO-style: full border in
+ *  the rarity colour + bottom rarity bar + tinted background gradient,
+ *  so the rarity is unmistakable from any angle of the strip. */
+function ReelTile({ weapon, name, rarity }: { weapon: string; name: string; rarity: SkinInstanceWire['rarity'] }): React.ReactElement {
+  const color = RARITY_COLOR[rarity];
+  return (
+    <div
+      style={{
+        width: TILE_WIDTH,
+        flex: '0 0 auto',
+        boxSizing: 'border-box',
+        height: 120,
+        margin: '0 2px',
+        borderRadius: 8,
+        border: `2px solid ${color}`,
+        background: `linear-gradient(180deg, rgba(255,255,255,0.04) 0%, ${color}1f 55%, ${color}3f 100%)`,
+        boxShadow: `inset 0 -3px 0 ${color}, 0 0 12px ${color}33`,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        position: 'relative',
+      }}
+    >
+      {/* Top stripe — slight darker band so the weapon text reads well. */}
+      <div
+        style={{
+          padding: '6px 8px',
+          textAlign: 'center',
+          fontSize: 12,
+          fontWeight: 700,
+          color: '#f3f4f7',
+          background: 'rgba(0,0,0,0.25)',
+          textShadow: '0 1px 2px rgba(0,0,0,0.6)',
+          letterSpacing: 0.2,
+        }}
+      >{weapon}</div>
+      {/* Skin name — wraps if long, centred. */}
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '4px 8px',
+          fontSize: 11,
+          textAlign: 'center',
+          color: '#d4d8e1',
+          lineHeight: 1.25,
+        }}
+      >{name}</div>
+      {/* Bottom rarity strip — the unmistakable colour signal. */}
+      <div
+        style={{
+          height: 18,
+          background: color,
+          color: '#0a0d12',
+          fontSize: 9,
+          fontWeight: 800,
+          letterSpacing: 1,
+          textTransform: 'uppercase',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >{RARITY_LABEL[rarity]}</div>
+    </div>
+  );
+}
+
+/** Rarity badge for the inventory + market tables. */
+export function RarityBadge({ rarity }: { rarity: SkinInstanceWire['rarity'] }): React.ReactElement {
+  const color = RARITY_COLOR[rarity];
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        padding: '2px 8px',
+        borderRadius: 4,
+        background: `${color}22`,
+        border: `1px solid ${color}66`,
+        color,
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+        whiteSpace: 'nowrap',
+      }}
+    >{RARITY_LABEL[rarity]}</span>
   );
 }
