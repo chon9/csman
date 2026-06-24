@@ -73,9 +73,10 @@ function synthAiTeam(rng: RNG, region: Region): Team {
   };
 }
 
-/** Generate an AI opponent scaled to the user's avg CA. Tilted to favor the
- *  player — the AI averages about -5 CA versus the user across the swing
- *  range, so players win ≈60-65% of duels without being trivially easy. */
+/** Generate an AI opponent scaled to the user's avg CA. Tilted hard in the
+ *  player's favour — the AI averages about -12 CA across the swing range so
+ *  most ranked duels are winnable. Occasional curveballs (+3 tilt + per-
+ *  player jitter) keep it from being a foregone conclusion. */
 export function generateAiOpponent(userPlayers: Player[], seed: number): { team: Team; players: Player[] } {
   const rng = new RNG(seed);
   const region = rng.pick(REGIONS);
@@ -87,11 +88,11 @@ export function generateAiOpponent(userPlayers: Player[], seed: number): { team:
   const userAvgCA = userPlayers.length
     ? userPlayers.reduce((s, p) => s + p.currentAbility, 0) / userPlayers.length
     : 110;
-  // Range -15..+5 → mean -5 CA. Occasional tougher opponent (+5) keeps it
-  // honest; most matches the player has the edge.
-  const tilt = rng.int(-15, 5);
+  // Range -25..+3 → mean -11 CA. Per-player jitter narrowed to ±4 so wins
+  // feel less swingy. Players should win the clear majority of ranked duels.
+  const tilt = rng.int(-25, 3);
   for (const p of spawned) {
-    const target = Math.max(60, Math.min(190, Math.round(userAvgCA + tilt + rng.int(-6, 6))));
+    const target = Math.max(60, Math.min(190, Math.round(userAvgCA + tilt + rng.int(-4, 4))));
     const delta = target - p.currentAbility;
     p.currentAbility = target;
     // Spread the delta across aim/reflexes/positioning so engine numbers reflect it.

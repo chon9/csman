@@ -298,11 +298,13 @@ function ReelTile({ weapon, name, rarity }: { weapon: string; name: string; rari
   return (
     <div
       style={{
+        // No outer margin — TILE_WIDTH must match exact tile pitch or the
+        // animation's translateX math (winnerIndex * TILE_WIDTH) lands on
+        // the wrong tile and the reveal won't sync with the strip.
         width: TILE_WIDTH,
         flex: '0 0 auto',
         boxSizing: 'border-box',
         height: 120,
-        margin: '0 2px',
         borderRadius: 8,
         border: `2px solid ${color}`,
         background: `linear-gradient(180deg, rgba(255,255,255,0.04) 0%, ${color}1f 55%, ${color}3f 100%)`,
