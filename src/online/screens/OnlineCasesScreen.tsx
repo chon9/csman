@@ -181,7 +181,14 @@ interface CaseOpenModalProps {
 function CaseOpenModal({ strip, winnerIndex, instance, onReveal, onClose }: CaseOpenModalProps): React.ReactElement {
   const stripRef = useRef<HTMLDivElement | null>(null);
   const [revealed, setRevealed] = useState(false);
+  // Latest onReveal stays accessible without putting it in the effect deps —
+  // otherwise the parent recreating its callback re-fires the animation.
+  const onRevealRef = useRef(onReveal);
+  onRevealRef.current = onReveal;
 
+  // Empty deps: run the spin animation exactly once per modal mount.
+  // Re-renders from the parent (e.g. when the new skin lands in inventory)
+  // would otherwise reset the strip transform and retrigger the reel.
   useEffect(() => {
     const el = stripRef.current;
     if (!el) return;
@@ -195,10 +202,11 @@ function CaseOpenModal({ strip, winnerIndex, instance, onReveal, onClose }: Case
 
     const revealTimer = window.setTimeout(() => {
       setRevealed(true);
-      onReveal();
+      onRevealRef.current();
     }, ANIM_MS + 200);
     return () => window.clearTimeout(revealTimer);
-  }, [winnerIndex, onReveal]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="modal-backdrop" onClick={revealed ? onClose : undefined}>

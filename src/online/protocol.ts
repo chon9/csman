@@ -60,6 +60,14 @@ export interface TeamProfileFields {
 /** Fixed daily login bonus credited to the team's money on claim. */
 export const DAILY_BONUS_AMOUNT = 10_000;
 
+/** Base daily duel cap (PvP + AI). Resets at 00:00 UTC. */
+export const DAILY_DUEL_CAP = 15;
+/** Cost to purchase one extra duel slot for today. */
+export const EXTRA_DUEL_COST = 5_000;
+/** Hard ceiling on extra slots a single team can buy in one day. Guards
+ *  against typos / runaway scripts more than abuse. */
+export const MAX_EXTRA_DUELS_PER_DAY = 30;
+
 /** Slim case-card data sent to clients to render the case picker. The skin
  *  pool itself isn't sent — clients receive the opened skin in `case-opened`. */
 export interface CaseSummary {
@@ -447,6 +455,8 @@ export type ClientMessage =
   | { kind: 'mint-free-agent'; tier: MintTier }
   // ----- Daily login bonus -----
   | { kind: 'claim-daily-bonus' }
+  // ----- Duel cap: buy an extra slot for today -----
+  | { kind: 'buy-extra-duel' }
   // ----- Case opening (skins → team.money on resale) -----
   | { kind: 'list-cases' }
   | { kind: 'open-case'; caseId: string }
@@ -465,7 +475,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { kind: 'hello-ok'; sessionToken: string; hasTeam: boolean; isAdmin: boolean }
   | { kind: 'hello-bad-pin' }
-  | { kind: 'state'; team: OnlineTeam; players: Player[]; dailyBonusAvailable: boolean; freeCaseAvailable: boolean }
+  | { kind: 'state'; team: OnlineTeam; players: Player[]; dailyBonusAvailable: boolean; freeCaseAvailable: boolean; duelsUsed: number; duelsExtra: number }
   | { kind: 'team-created'; team: OnlineTeam }
   | { kind: 'players-spawned'; players: Player[] }
   | { kind: 'error'; code: string; message: string }
@@ -527,6 +537,8 @@ export type ServerMessage =
   | { kind: 'free-agent-minted'; player: Player; cost: number; tier: MintTier }
   // ----- Daily bonus + cases -----
   | { kind: 'daily-bonus-claimed'; amount: number; newMoney: number; nextClaimUtc: string }
+  | { kind: 'duel-stats'; used: number; extra: number; cap: number; remaining: number }
+  | { kind: 'extra-duel-purchased'; cost: number; newMoney: number; remaining: number; extra: number }
   | { kind: 'case-list'; cases: CaseSummary[]; freeCaseId: string; freeCaseAvailable: boolean }
   | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }

@@ -6155,3 +6155,248 @@ input[type='range'] {
   border-left-width: 3px;
   color: var(--text);
 }
+
+/* ============ Online sidebar layout ============ */
+
+.online-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #0e1218 0%, #0a0d12 100%);
+}
+
+.online-layout-body {
+  min-width: 0;          /* prevent grid overflow from wide tables */
+  overflow-x: auto;
+}
+
+.osb {
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #14181f 0%, #10141a 100%);
+  border-right: 1px solid rgba(255,255,255,0.05);
+  padding: 16px 12px;
+  gap: 14px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.osb-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.osb-brand-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #de9b35, #b87a1d);
+  color: #0a0d12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.osb-brand-text { min-width: 0; }
+.osb-brand-name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.osb-brand-meta {
+  font-size: 10.5px;
+  color: #8b93a3;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.osb-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6aa7ec;
+}
+.osb-dot-open    { background: #4caf75; box-shadow: 0 0 6px rgba(76,175,117,0.7); }
+.osb-dot-closed,
+.osb-dot-error   { background: #d8595b; }
+.osb-dot-connecting,
+.osb-dot-reconnecting { background: #f2c443; }
+
+.osb-cash {
+  background: linear-gradient(135deg, rgba(76,175,117,0.10), rgba(76,175,117,0.04));
+  border: 1px solid rgba(76,175,117,0.20);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.osb-cash-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #8b93a3;
+}
+.osb-cash-amount {
+  font-size: 18px;
+  font-weight: 700;
+  color: #d4f0d8;
+}
+.osb-daily {
+  margin-top: 6px;
+  background: linear-gradient(135deg, #2a7d4f, #4caf75);
+  border: none;
+  color: white;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  box-shadow: 0 2px 6px rgba(76,175,117,0.25);
+}
+.osb-daily:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(76,175,117,0.35); }
+
+.osb-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.osb-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: none;
+  background: transparent;
+  color: #b8c0cd;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+  position: relative;
+}
+.osb-nav-item:hover {
+  background: rgba(255,255,255,0.04);
+  color: #e8eaf0;
+}
+.osb-nav-item-active {
+  background: rgba(222,155,53,0.10);
+  color: #f2c443;
+  box-shadow: inset 3px 0 0 #de9b35;
+}
+.osb-nav-item-active:hover {
+  background: rgba(222,155,53,0.16);
+  color: #f2c443;
+}
+.osb-nav-icon {
+  font-size: 15px;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.osb-nav-label { flex: 1; }
+.osb-nav-badge {
+  background: #de9b35;
+  color: #0a0d12;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+.osb-nav-admin {
+  margin-top: 6px;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  padding-top: 12px;
+  border-radius: 0 8px 8px 0;
+}
+
+.osb-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.05);
+}
+.osb-footer-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  background: transparent;
+  border: none;
+  color: #8b93a3;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11.5px;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.osb-footer-btn:hover:not(:disabled) { background: rgba(255,255,255,0.04); color: #e8eaf0; }
+.osb-footer-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.osb-footer-disconnect:hover { color: #ff9b9d; background: rgba(216,89,91,0.08); }
+
+/* Collapse sidebar on small screens — push it to a sticky top strip. */
+@media (max-width: 720px) {
+  .online-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  .osb {
+    height: auto;
+    position: relative;
+    border-right: none;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    padding: 12px;
+  }
+  .osb-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .osb-nav-item { flex: 0 0 auto; padding: 7px 10px; }
+  .osb-nav-item-active { box-shadow: inset 0 -2px 0 #de9b35; }
+  .osb-footer { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+}
+
+/* Duel-cap chip + buy-extra-slot affordance on the home screen. */
+.duel-cap-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: #d4d8e1;
+}
+.duel-cap-chip-low { color: #f2c443; border-color: rgba(242,196,67,0.30); background: rgba(242,196,67,0.08); }
+.duel-cap-chip-out { color: #ff9b9d; border-color: rgba(216,89,91,0.30); background: rgba(216,89,91,0.08); }
+.duel-cap-buy {
+  background: rgba(222,155,53,0.14);
+  border: 1px solid rgba(222,155,53,0.30);
+  color: #f2c443;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.duel-cap-buy:hover:not(:disabled) { background: rgba(222,155,53,0.22); }
+.duel-cap-buy:disabled { opacity: 0.4; cursor: not-allowed; }

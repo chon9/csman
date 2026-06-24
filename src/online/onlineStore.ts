@@ -126,6 +126,12 @@ interface OnlineState {
   /** Set while a case-opening animation is in flight (modal active). */
   caseOpening: { caseId: string; strip: SkinStripEntry[]; winnerIndex: number; instance: SkinInstanceWire } | null;
 
+  // ----- Daily duel cap -----
+  /** Duels used today (resets at 00:00 UTC). */
+  duelsUsed: number;
+  /** Extra slots purchased today. Total cap = DAILY_DUEL_CAP + duelsExtra. */
+  duelsExtra: number;
+
   // ----- Phase 7 -----
   tacticsPresets: TacticsPreset[];
   news: NewsItem[];
@@ -159,6 +165,7 @@ interface OnlineState {
   go: (screen: OnlineScreen) => void;
   // Daily bonus + cases.
   claimDailyBonus: () => void;
+  buyExtraDuel: () => void;
   listCases: () => void;
   openCase: (caseId: string) => void;
   openFreeCase: () => void;
@@ -282,6 +289,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   freeCaseAvailable: false,
   skins: [],
   caseOpening: null,
+  duelsUsed: 0,
+  duelsExtra: 0,
   tacticsPresets: [],
   news: [],
   directory: [],
@@ -369,6 +378,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
             players,
             dailyBonusAvailable: msg.dailyBonusAvailable,
             freeCaseAvailable: msg.freeCaseAvailable,
+            duelsUsed: msg.duelsUsed,
+            duelsExtra: msg.duelsExtra,
           });
           break;
         }
@@ -698,6 +709,19 @@ export const useOnline = create<OnlineState>((set, get) => ({
           pushToast('success', `Daily bonus: +$${msg.amount.toLocaleString()}.`);
           break;
         }
+        case 'extra-duel-purchased': {
+          const t = get().team;
+          set({
+            team: t ? { ...t, money: msg.newMoney } : t,
+            duelsExtra: msg.extra,
+          });
+          pushToast('success', `Bought an extra duel slot ($${msg.cost.toLocaleString()}). ${msg.remaining} duel${msg.remaining === 1 ? '' : 's'} left today.`);
+          break;
+        }
+        case 'duel-stats': {
+          set({ duelsUsed: msg.used, duelsExtra: msg.extra });
+          break;
+        }
         case 'case-list': {
           set({ cases: msg.cases, freeCaseId: msg.freeCaseId, freeCaseAvailable: msg.freeCaseAvailable });
           break;
@@ -802,6 +826,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   // ----- Daily bonus + cases -----
   claimDailyBonus() {
     get().client?.send({ kind: 'claim-daily-bonus' });
+  },
+  buyExtraDuel() {
+    get().client?.send({ kind: 'buy-extra-duel' });
   },
   listCases() {
     get().client?.send({ kind: 'list-cases' });

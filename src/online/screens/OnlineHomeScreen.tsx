@@ -5,6 +5,8 @@
 import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import {
+  DAILY_DUEL_CAP,
+  EXTRA_DUEL_COST,
   MAX_DUEL_STAKE,
   MAX_TIME_SKIP_DAYS,
   MIN_DUEL_STAKE,
@@ -24,25 +26,21 @@ import ProfileEditorModal from './ProfileEditorModal';
 import LoanOfferModal from './LoanOfferModal';
 import CoachesPanel from './CoachesPanel';
 import SponsorsPanel from './SponsorsPanel';
-import { publicOrigin } from '../serverUrl';
 import type { Player } from '../../types';
 
 export default function OnlineHomeScreen() {
   const team = useOnline((s) => s.team);
   const players = useOnline((s) => s.players);
-  const status = useOnline((s) => s.status);
   const duelPending = useOnline((s) => s.duelPending);
   const skipPending = useOnline((s) => s.skipPending);
   const duelResult = useOnline((s) => s.duelResult);
   const refresh = useOnline((s) => s.refreshState);
-  const disconnect = useOnline((s) => s.disconnect);
   const spawnInitialRoster = useOnline((s) => s.spawnInitialRoster);
-  const isAdmin = useOnline((s) => s.isAdmin);
-  const dailyBonusAvailable = useOnline((s) => s.dailyBonusAvailable);
-  const claimDailyBonus = useOnline((s) => s.claimDailyBonus);
+  const duelsUsed = useOnline((s) => s.duelsUsed);
+  const duelsExtra = useOnline((s) => s.duelsExtra);
+  const buyExtraDuel = useOnline((s) => s.buyExtraDuel);
   const registerAiDuel = useOnline((s) => s.registerAiDuel);
   const timeSkip = useOnline((s) => s.timeSkip);
-  const go = useOnline((s) => s.go);
 
   const [stake, setStake] = useState(5_000);
   const [format, setFormat] = useState<MatchFormat>('BO1');
@@ -53,8 +51,6 @@ export default function OnlineHomeScreen() {
   const [profileOpen, setProfileOpen] = useState(false);
   const goals = useOnline((s) => s.playerGoals);
   const refreshGoals = useOnline((s) => s.refreshGoals);
-  const exportTeam = useOnline((s) => s.exportTeam);
-  const onlineTeams = useOnline((s) => s.onlineTeams);
 
   useEffect(() => {
     const id = setInterval(() => refresh(), 8000);
@@ -90,10 +86,6 @@ export default function OnlineHomeScreen() {
   const canDuel = !duelPending && roster.length >= 5 && (scrimMode || team.money >= stake);
   const canSkip = !skipPending && team.money >= skipCost;
 
-  // Public profile URL resolved via the shared origin helper so it works
-  // both for HTTPS-behind-Caddy deploys and raw-IP dev setups.
-  const profileUrl = `${publicOrigin()}/team/${team.id}`;
-
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <NewsTicker />
@@ -109,61 +101,17 @@ export default function OnlineHomeScreen() {
             </div>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <span className={`status-chip status-${status}`}>{status}</span>
-          <span
-            className="status-chip status-open"
-            title={`${onlineTeams} team${onlineTeams === 1 ? '' : 's'} currently connected to this server`}
-            style={{ background: 'rgba(76,175,125,0.18)' }}
-          >
-            👥 {onlineTeams} online
-          </span>
-          <button className="btn" onClick={refresh}>Refresh</button>
-          <button className="btn" onClick={() => { go('tactics'); }}>Tactics</button>
-          <button className="btn" onClick={() => { go('challenges'); }}>PvP Lobby</button>
-          <button className="btn" onClick={() => { go('tournaments'); }}>Tournaments</button>
-          <button className="btn" onClick={() => { go('market'); }}>Market</button>
-          <button className="btn" onClick={() => { go('leaderboard'); }}>Leaderboard</button>
-          <button className="btn" onClick={() => { go('history'); }}>History</button>
-          <button className="btn" onClick={() => { go('cases'); }} title="Open CS2-style cases for cash">📦 Cases</button>
-          {dailyBonusAvailable && (
-            <button
-              className="btn btn-accent"
-              onClick={claimDailyBonus}
-              title="Claim $10,000 daily login bonus"
-              style={{ background: 'linear-gradient(135deg, #2a7d4f, #4caf75)' }}
-            >
-              🎁 Claim daily $10k
-            </button>
-          )}
-          {isAdmin && (
-            <button
-              className="btn"
-              onClick={() => { go('admin'); }}
-              title="Admin console — manage users, reset PINs, edit teams"
-              style={{ background: 'rgba(242,161,60,0.18)' }}
-            >
-              🛠 Admin
-            </button>
-          )}
-          <button className="btn" onClick={exportTeam} title="Download your team as a portable JSON file">Export</button>
-          <button className="btn" onClick={() => setProfileOpen(true)} title="Edit bio, color, social links">Edit Profile</button>
-          <button
-            className="btn"
-            onClick={() => { navigator.clipboard?.writeText(profileUrl); }}
-            title={`Copy public team page URL: ${profileUrl}`}
-          >🔗 Profile</button>
-          <button
-            className="btn"
-            title="Open server-wide Hall of Fame in a new tab"
-            onClick={() => { if (typeof window !== 'undefined') window.open(`${publicOrigin()}/hof`, '_blank'); }}
-          >🏛 HoF</button>
-          <button
-            className="btn"
-            title="Open server-wide stats in a new tab"
-            onClick={() => { if (typeof window !== 'undefined') window.open(`${publicOrigin()}/stats`, '_blank'); }}
-          >📊 Stats</button>
-          <button className="btn btn-danger" onClick={disconnect}>Disconnect</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <DuelCapChip
+            used={duelsUsed}
+            extra={duelsExtra}
+            money={team.money}
+            onBuyExtra={buyExtraDuel}
+          />
+          <button className="btn btn-tiny" onClick={refresh} title="Refresh state">↻</button>
+          <button className="btn btn-tiny" onClick={() => setProfileOpen(true)} title="Edit bio, color, social links">
+            Edit profile
+          </button>
         </div>
       </div>
 
@@ -371,5 +319,39 @@ function StatCard({ label, value }: { label: string; value: string }) {
       <div className="muted small" style={{ textTransform: 'uppercase', letterSpacing: 1 }}>{label}</div>
       <div style={{ fontSize: 18, fontWeight: 800 }}>{value}</div>
     </div>
+  );
+}
+
+interface DuelCapChipProps {
+  used: number;
+  extra: number;
+  money: number;
+  onBuyExtra: () => void;
+}
+
+function DuelCapChip({ used, extra, money, onBuyExtra }: DuelCapChipProps): React.ReactElement {
+  const cap = DAILY_DUEL_CAP + extra;
+  const remaining = Math.max(0, cap - used);
+  const chipClass =
+    remaining === 0 ? 'duel-cap-chip-out' :
+    remaining <= 3 ? 'duel-cap-chip-low' : '';
+  const canBuy = money >= EXTRA_DUEL_COST;
+  const title = remaining === 0
+    ? `Daily duel cap hit. Buy extra slot for $${EXTRA_DUEL_COST.toLocaleString()} or wait until 00:00 UTC.`
+    : `${remaining}/${cap} duels left today (resets at 00:00 UTC)`;
+  return (
+    <>
+      <span className={`duel-cap-chip ${chipClass}`} title={title}>
+        ⚔ {remaining}/{cap} left today
+      </span>
+      <button
+        className="duel-cap-buy"
+        onClick={onBuyExtra}
+        disabled={!canBuy}
+        title={canBuy ? `Buy +1 duel slot for $${EXTRA_DUEL_COST.toLocaleString()}` : `Need $${EXTRA_DUEL_COST.toLocaleString()}`}
+      >
+        + slot · ${EXTRA_DUEL_COST.toLocaleString()}
+      </button>
+    </>
   );
 }

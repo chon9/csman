@@ -19,7 +19,10 @@ import type {
 import {
   ACHIEVEMENT_LABELS,
   DAILY_BONUS_AMOUNT,
+  DAILY_DUEL_CAP,
+  EXTRA_DUEL_COST,
   FREE_AGENT_POOL_SIZE,
+  MAX_EXTRA_DUELS_PER_DAY,
   INITIAL_ROSTER_SIZE,
   MAX_DUEL_STAKE,
   MAX_LOAN_DAYS,
@@ -208,12 +211,15 @@ function buildState(db: DB, teamId: string): ServerMessage | null {
   if (!team) return null;
   const players: Player[] = db.loadTeamPlayers(teamId);
   const today = new Date().toISOString().slice(0, 10);
+  const duelStats = db.getDuelStats(teamId, today);
   return {
     kind: 'state',
     team: teamRowToOnline(team),
     players,
     dailyBonusAvailable: db.getDailyClaimDate(teamId) !== today,
     freeCaseAvailable: db.getFreeCaseDate(teamId) !== today,
+    duelsUsed: duelStats.used,
+    duelsExtra: duelStats.extra,
   };
 }
 
@@ -363,9 +369,21 @@ export function handle(
       if (team.playerIds.length < 5) {
         return { kind: 'error', code: 'roster-incomplete', message: 'Need 5 players to duel.' };
       }
-      // stake === 0 → scrim mode (no money, no leaderboard, soft aftermath).
-      // Anything else clamps to [MIN, MAX] and is a real duel.
+      // Daily duel cap — counts both AI and PvP duels. Scrims (stake=0)
+      // skip the check so unranked practice stays unlimited.
       const isScrim = msg.stake === 0;
+      const today = new Date().toISOString().slice(0, 10);
+      if (!isScrim) {
+        const stats = db.getDuelStats(team.id, today);
+        const cap = DAILY_DUEL_CAP + stats.extra;
+        if (stats.used >= cap) {
+          return {
+            kind: 'error',
+            code: 'duel-cap',
+            message: `Daily duel cap (${cap}) reached. Buy an extra slot ($${EXTRA_DUEL_COST.toLocaleString()}) or wait until 00:00 UTC.`,
+          };
+        }
+      }
       const stake = isScrim ? 0 : Math.max(MIN_DUEL_STAKE, Math.min(MAX_DUEL_STAKE, Math.round(msg.stake)));
       if (!isScrim && team.money < stake) {
         return { kind: 'error', code: 'insufficient-funds', message: `Need $${stake.toLocaleString()} stake — you have $${team.money.toLocaleString()}.` };
@@ -378,6 +396,8 @@ export function handle(
       const duel = runAiDuel(engineTeam, players, stake, msg.format ?? 'BO1', matchId, team.tactics);
       team.money = Math.max(0, team.money + duel.moneyDelta);
       db.setTeamMoneyDay(team.id, team.money, team.day);
+      // Tick the daily duel counter — scrims don't count toward the cap.
+      if (!isScrim) db.recordDuelUsed(team.id, today);
       // Persist the mutated players (form/morale/fatigue + match stats).
       for (const p of players) db.persistPlayer(p);
       // Persist a stripped copy to match history so the History screen can
@@ -620,6 +640,25 @@ export function handle(
         db.removeChallenge(challenge.id);
         return { kind: 'error', code: 'challenger-broke', message: 'Challenger can no longer cover the stake.' };
       }
+      // Both sides have to have a duel slot available — PvP counts for both.
+      const pvpToday = new Date().toISOString().slice(0, 10);
+      const accepterStats = db.getDuelStats(accepter.id, pvpToday);
+      const challengerStats = db.getDuelStats(challenger.id, pvpToday);
+      if (accepterStats.used >= DAILY_DUEL_CAP + accepterStats.extra) {
+        return {
+          kind: 'error',
+          code: 'duel-cap',
+          message: `You've hit your daily duel cap (${DAILY_DUEL_CAP + accepterStats.extra}). Buy an extra slot or wait until 00:00 UTC.`,
+        };
+      }
+      if (challengerStats.used >= DAILY_DUEL_CAP + challengerStats.extra) {
+        db.removeChallenge(challenge.id);
+        return {
+          kind: 'error',
+          code: 'challenger-capped',
+          message: 'Challenger has hit their daily duel cap — challenge auto-cancelled.',
+        };
+      }
 
       const challengerPlayers = db.loadTeamPlayers(challenger.id);
       const accepterPlayers = db.loadTeamPlayers(accepter.id);
@@ -646,6 +685,9 @@ export function handle(
       }
       db.setTeamMoneyDay(challenger.id, challenger.money, challenger.day);
       db.setTeamMoneyDay(accepter.id, accepter.money, accepter.day);
+      // PvP counts toward both teams' daily caps.
+      db.recordDuelUsed(challenger.id, pvpToday);
+      db.recordDuelUsed(accepter.id, pvpToday);
       for (const p of challengerPlayers) db.persistPlayer(p);
       for (const p of accepterPlayers) db.persistPlayer(p);
       db.recordMatch({
@@ -835,6 +877,40 @@ export function handle(
         amount: DAILY_BONUS_AMOUNT,
         newMoney,
         nextClaimUtc: nextUtcMidnight(),
+      };
+    }
+
+    case 'buy-extra-duel': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const today = new Date().toISOString().slice(0, 10);
+      const stats = db.getDuelStats(team.id, today);
+      if (stats.extra >= MAX_EXTRA_DUELS_PER_DAY) {
+        return {
+          kind: 'error',
+          code: 'extra-cap',
+          message: `You've already bought ${stats.extra} extra duel slots today — that's the daily ceiling.`,
+        };
+      }
+      if (team.money < EXTRA_DUEL_COST) {
+        return {
+          kind: 'error',
+          code: 'insufficient-funds',
+          message: `Need $${EXTRA_DUEL_COST.toLocaleString()} for an extra slot — you have $${team.money.toLocaleString()}.`,
+        };
+      }
+      team.money -= EXTRA_DUEL_COST;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      const next = db.recordDuelExtraPurchased(team.id, today);
+      const remaining = DAILY_DUEL_CAP + next.extra - next.used;
+      log(`duel-cap: ${team.tag} bought slot #${next.extra} ($${EXTRA_DUEL_COST}) → ${remaining} left today`);
+      return {
+        kind: 'extra-duel-purchased',
+        cost: EXTRA_DUEL_COST,
+        newMoney: team.money,
+        remaining,
+        extra: next.extra,
       };
     }
 

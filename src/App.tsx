@@ -14,6 +14,7 @@ import OnlineTournamentsScreen from './online/screens/OnlineTournamentsScreen';
 import OnlineLiveReplayScreen from './online/screens/OnlineLiveReplayScreen';
 import OnlineAdminScreen from './online/screens/OnlineAdminScreen';
 import OnlineCasesScreen from './online/screens/OnlineCasesScreen';
+import OnlineSidebar from './online/screens/OnlineSidebar';
 import ChatWidget from './online/screens/ChatWidget';
 import DevReportModal from './online/screens/DevReportModal';
 import LiveFeedWidget from './online/screens/LiveFeedWidget';
@@ -135,13 +136,16 @@ export default function App() {
     else if (onlineScreen === 'cases') body = <OnlineCasesScreen />;
     else body = <OnlineHomeScreen />;
     return (
-      <>
-        {body}
+      <div className="online-layout">
+        <OnlineSidebar />
+        <div className="online-layout-body">
+          {body}
+        </div>
         {/* OnlineHomeScreen renders these locally — these cover the other screens. */}
         {onlineScreen !== 'home' && <ChatWidget />}
         {onlineScreen !== 'home' && <DevReportModal />}
         {onlineScreen !== 'home' && <LiveFeedWidget />}
-      </>
+      </div>
     );
   }
 

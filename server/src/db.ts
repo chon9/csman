@@ -324,6 +324,11 @@ export function openDb(path: string) {
   tryAddColumn('teams', 'last_daily_claim', 'TEXT', "''");
   // ISO date of the last free case claim — daily, mirrors the SP perk.
   tryAddColumn('teams', 'last_free_case', 'TEXT', "''");
+  // Daily duel cap tracking. duels_date is the UTC date the counters
+  // belong to; if it doesn't match today, the server treats both as 0.
+  tryAddColumn('teams', 'duels_date', 'TEXT', "''");
+  tryAddColumn('teams', 'duels_used', 'INTEGER', '0');
+  tryAddColumn('teams', 'duels_extra', 'INTEGER', '0');
   // Skin inventory rows owned by this team — JSON-blob per skin instance.
   db.exec(`
     CREATE TABLE IF NOT EXISTS skin_inventory (
@@ -465,6 +470,37 @@ export function openDb(path: string) {
   }
   function markFreeCaseClaim(teamId: string, isoDate: string): void {
     setLastFreeCase.run(isoDate, teamId);
+  }
+
+  // -------- Daily duel cap --------
+
+  const getDuelCounters = db.prepare(
+    `SELECT duels_date, duels_used, duels_extra FROM teams WHERE id = ?`,
+  );
+  const setDuelCounters = db.prepare(
+    `UPDATE teams SET duels_date = ?, duels_used = ?, duels_extra = ? WHERE id = ?`,
+  );
+  /** Read the team's duel counters, auto-resetting them if the stored date
+   *  is not today (UTC). Always returns today's values. */
+  function getDuelStats(teamId: string, today: string): { used: number; extra: number } {
+    const r = getDuelCounters.get(teamId) as
+      | { duels_date: string | null; duels_used: number | null; duels_extra: number | null }
+      | undefined;
+    if (!r) return { used: 0, extra: 0 };
+    if ((r.duels_date ?? '') !== today) return { used: 0, extra: 0 };
+    return { used: r.duels_used ?? 0, extra: r.duels_extra ?? 0 };
+  }
+  function recordDuelUsed(teamId: string, today: string): { used: number; extra: number } {
+    const cur = getDuelStats(teamId, today);
+    const next = { used: cur.used + 1, extra: cur.extra };
+    setDuelCounters.run(today, next.used, next.extra, teamId);
+    return next;
+  }
+  function recordDuelExtraPurchased(teamId: string, today: string): { used: number; extra: number } {
+    const cur = getDuelStats(teamId, today);
+    const next = { used: cur.used, extra: cur.extra + 1 };
+    setDuelCounters.run(today, next.used, next.extra, teamId);
+    return next;
   }
 
   // -------- Skin inventory --------
@@ -1514,6 +1550,9 @@ export function openDb(path: string) {
     markDailyClaim,
     getFreeCaseDate,
     markFreeCaseClaim,
+    getDuelStats,
+    recordDuelUsed,
+    recordDuelExtraPurchased,
     addSkin,
     loadSkins,
     loadSkin,
