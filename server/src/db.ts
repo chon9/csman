@@ -710,7 +710,20 @@ export function openDb(path: string) {
 
   function loadTeamPlayers(teamId: string): Player[] {
     const rows = loadPlayersByTeam.all(teamId) as { json: string }[];
-    return rows.map((r) => JSON.parse(r.json) as Player);
+    const players = rows.map((r) => JSON.parse(r.json) as Player);
+    // Re-order to match the team's saved lineup (the JSON column on teams).
+    // Without this, SQLite returns rows in rowid order — `players.slice(0,5)`
+    // in the duel engine would then pick the FIRST FIVE PLAYERS EVER SAVED,
+    // not the 5 the user dragged to the top of their lineup. That's a quiet
+    // way to lose matches because your bench is playing instead of starters.
+    const team = loadTeam(teamId);
+    if (!team) return players;
+    const indexById = new Map(team.playerIds.map((id, i) => [id, i] as const));
+    return players.sort((a, b) => {
+      const ai = indexById.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const bi = indexById.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      return ai - bi;
+    });
   }
 
   // Used by every newgen-spawning code path (initial roster, FA pool refill,
