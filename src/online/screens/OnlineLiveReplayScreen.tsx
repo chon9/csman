@@ -115,6 +115,81 @@ export default function OnlineLiveReplayScreen() {
     return curRound.kills.filter((k) => k.tick <= cur).slice(-6);
   }, [curRound, frame]);
 
+  // Live K/D/A from revealed kills — same pattern as the SP MatchDayScreen.
+  // Past rounds count fully; current round counts kills with tick ≤ frame.tick.
+  const liveStats = useMemo(() => {
+    const stats: Record<string, { k: number; d: number; a: number }> = {};
+    if (!curMap) return stats;
+    const curTick = frame?.tick ?? 0;
+    curMap.rounds.forEach((rd, rIdx) => {
+      if (rIdx > roundIdx) return;
+      for (const k of rd.kills) {
+        if (rIdx === roundIdx && k.tick > curTick) continue;
+        stats[k.killerId] = stats[k.killerId] ?? { k: 0, d: 0, a: 0 };
+        stats[k.victimId] = stats[k.victimId] ?? { k: 0, d: 0, a: 0 };
+        stats[k.killerId].k++;
+        stats[k.victimId].d++;
+        if (k.assistId) {
+          stats[k.assistId] = stats[k.assistId] ?? { k: 0, d: 0, a: 0 };
+          stats[k.assistId].a++;
+        }
+      }
+    });
+    return stats;
+  }, [curMap, roundIdx, frame]);
+
+  // Revealed map score (only rounds the playhead has crossed).
+  const mapScore = useMemo(() => {
+    if (!curMap) return { a: 0, b: 0 };
+    let a = 0, b = 0;
+    // During the current round, the score is what it was at the START — we
+    // haven't seen the winning hit yet. Once we cross into the next round
+    // (or hit the final frame of the last one) the last round's result lands.
+    const lastFrameOfRound = curRound && frameIdx >= curRound.frames.length - 1;
+    const upTo = lastFrameOfRound ? roundIdx : roundIdx - 1;
+    curMap.rounds.forEach((rd, i) => {
+      if (i > upTo) return;
+      if (rd.winnerTeamId === r.teamAId) a++; else b++;
+    });
+    return { a, b };
+  }, [curMap, curRound, roundIdx, frameIdx, r.teamAId]);
+
+  // Bomb-planted countdown. Per the SP engine: 40s fuse, 1 tick = 2 sec.
+  // Pre-plant: 115s round timer. ≤10s → low-alert styling.
+  const roundClock = useMemo(() => {
+    if (!curRound || !frame) return null;
+    const bombPlantTick = curRound.bombPlanted
+      ? curRound.frames.find((f) => f.bombPlanted)?.tick
+      : undefined;
+    const planted = frame.bombPlanted && bombPlantTick !== undefined;
+    const secs = planted
+      ? Math.max(0, 40 - (frame.tick - bombPlantTick!) * 2)
+      : Math.max(0, 115 - frame.tick * 2);
+    return {
+      planted,
+      secs,
+      low: secs <= 10,
+      label: `${Math.floor(secs / 60)}:${String(Math.floor(secs) % 60).padStart(2, '0')}`,
+    };
+  }, [curRound, frame]);
+
+  // Scoreboard rosters: for each side, the 5 playerIds derived from this
+  // map's playerStats (matches who actually walked onto the map this game).
+  const teamABoard = useMemo(() => {
+    if (!curMap) return [];
+    return Object.values(curMap.playerStats)
+      .map((s) => s.playerId)
+      .filter((pid) => teamAPlayerIds.has(pid))
+      .slice(0, 5);
+  }, [curMap, teamAPlayerIds]);
+  const teamBBoard = useMemo(() => {
+    if (!curMap) return [];
+    return Object.values(curMap.playerStats)
+      .map((s) => s.playerId)
+      .filter((pid) => !teamAPlayerIds.has(pid))
+      .slice(0, 5);
+  }, [curMap, teamAPlayerIds]);
+
   // Commentary — reveal proportionally as the round progresses, plus every
   // line from already-completed rounds. Cap to last 9 to fit the overlay.
   const commentary = useMemo(() => {
@@ -178,10 +253,22 @@ export default function OnlineLiveReplayScreen() {
           <h2 style={{ margin: '0 0 4px' }}>
             Replay — {team.tag} {userIsA ? r.mapsA : r.mapsB} — {userIsA ? r.mapsB : r.mapsA} opp
           </h2>
-          <div className="muted small">
-            Map {mapIdx + 1}/{r.maps.length} · {curMap?.map} · R{roundIdx + 1}/{curMap?.rounds.length}
-            · Frame {frameIdx + 1}/{curRound?.frames.length ?? 0}
-            {teamASide && <> · <span className={`side-badge ${teamASide.toLowerCase()}`}>{userIsA ? teamASide : teamBSide}</span></>}
+          <div className="muted small" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>Map {mapIdx + 1}/{r.maps.length} · {curMap?.map}</span>
+            {/* Live map round score, colour-coded by current side. */}
+            <span>
+              <span style={{ color: teamASide === 'T' ? T_COLOR : teamASide === 'CT' ? CT_COLOR : undefined, fontWeight: 700 }}>{mapScore.a}</span>
+              <span style={{ opacity: 0.5 }}> : </span>
+              <span style={{ color: teamBSide === 'T' ? T_COLOR : teamBSide === 'CT' ? CT_COLOR : undefined, fontWeight: 700 }}>{mapScore.b}</span>
+            </span>
+            <span>R{roundIdx + 1}/{curMap?.rounds.length}</span>
+            {/* Bomb-planted timer or pre-plant round clock. */}
+            {roundClock && (
+              <span className={`round-clock ${roundClock.planted ? 'planted' : ''} ${roundClock.low ? 'low' : ''}`}>
+                {roundClock.planted ? '💣 ' : '⏱ '}{roundClock.label}
+              </span>
+            )}
+            {teamASide && <span className={`side-badge ${teamASide.toLowerCase()}`}>{userIsA ? teamASide : teamBSide}</span>}
           </div>
         </div>
         <button className="btn" onClick={close}>← Back</button>
@@ -241,6 +328,51 @@ export default function OnlineLiveReplayScreen() {
                 </div>
               ))
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ===== Dual scoreboard — K / D / A / +- per player, alive dimming ===== */}
+      {curMap && (teamABoard.length > 0 || teamBBoard.length > 0) && (
+        <div className="panel" style={{ padding: 10 }}>
+          <div className="md-bottom-scoreboards">
+            {[
+              { rosterIds: teamABoard, tag: userIsA ? team.tag : 'OPP', side: teamASide },
+              { rosterIds: teamBBoard, tag: userIsA ? 'OPP' : team.tag, side: teamBSide },
+            ].map((board, bi) => (
+              <table key={bi} className="sb-table md-bottom-sb">
+                <thead>
+                  <tr>
+                    <th>
+                      {board.tag}{' '}
+                      {board.side && <span className={`side-badge ${board.side.toLowerCase()}`}>{board.side}</span>}
+                    </th>
+                    <th className="num">K</th>
+                    <th className="num">D</th>
+                    <th className="num">A</th>
+                    <th className="num">+/-</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {board.rosterIds.map((pid) => {
+                    const s = liveStats[pid] ?? { k: 0, d: 0, a: 0 };
+                    const aliveNow = frame?.dots.find((d) => d.playerId === pid)?.alive ?? true;
+                    const diff = s.k - s.d;
+                    return (
+                      <tr key={pid} style={{ opacity: aliveNow ? 1 : 0.45 }}>
+                        <td><span className="sb-nick">{nicknames[pid] ?? pid}</span></td>
+                        <td className="num">{s.k}</td>
+                        <td className="num">{s.d}</td>
+                        <td className="num">{s.a}</td>
+                        <td className="num" style={{ color: diff > 0 ? '#4caf7d' : diff < 0 ? '#e25555' : '#5d6678' }}>
+                          {diff > 0 ? `+${diff}` : diff}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ))}
           </div>
         </div>
       )}
