@@ -156,6 +156,46 @@ export interface ActiveBoostWire {
   appliedAt: number;
 }
 
+// ============ Massage center (gacha-style spa visit) ============
+
+/** Cost per spa visit. Random class 1-10 masseuse, always reduces fatigue;
+ *  morale swings ±depending on class. One visit per in-game day. */
+export const MASSAGE_COST = 10_000;
+/** Min real game-days that must pass between visits (1 = once per day). */
+export const MASSAGE_COOLDOWN_GAME_DAYS = 1;
+
+/** Class 1-10. Higher = nicer experience. */
+export interface MassageMasseuse {
+  /** Display name pulled from a per-class-tier pool. */
+  name: string;
+  /** 1-10. Drives the morale + fatigue formulas in massageEffects(). */
+  rating: number;
+  /** Single emoji used as a placeholder portrait. */
+  emoji: string;
+  /** Short flavour blurb the modal renders under the card. */
+  flavor: string;
+}
+
+export interface MassageOutcome {
+  masseuse: MassageMasseuse;
+  /** Negative (always — even the worst class still gives some recovery). */
+  fatigueDelta: number;
+  /** Negative for class 1-5, positive for 6-10. */
+  moraleDelta: number;
+  /** Starter IDs the effects landed on. */
+  affectedPlayerIds: string[];
+}
+
+/** Closed-form effects per class. Caller scales by … nothing (team-wide flat). */
+export function massageEffects(rating: number): { fatigueDelta: number; moraleDelta: number } {
+  const r = Math.max(1, Math.min(10, Math.round(rating)));
+  // Fatigue: -10 at class 1 → -35 at class 10. Higher class = better recovery.
+  const fatigueDelta = -(10 + Math.round((r - 1) * (25 / 9)));
+  // Morale: -3 at class 1 → +3 at class 10, linear through zero around 5/6.
+  const moraleDelta = Math.round(((r - 5.5) / 4.5) * 3);
+  return { fatigueDelta, moraleDelta };
+}
+
 // ============ Player contract pacing ============
 
 /** Initial duels remaining when a newgen is spawned for a newly created team. */
@@ -596,6 +636,8 @@ export type ClientMessage =
   | { kind: 'claim-daily-bonus' }
   // ----- Duel cap: refill ALL missing duels for today (capped per day) -----
   | { kind: 'refill-duels' }
+  // ----- Massage center: book a random-class spa session for the starters -----
+  | { kind: 'book-massage' }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
@@ -687,6 +729,7 @@ export type ServerMessage =
   | { kind: 'duels-refilled'; cost: number; newMoney: number; refillsUsed: number; refillsLeft: number }
   | { kind: 'contract-renewed'; playerId: string; cost: number; newMoney: number; duelsRemaining: number }
   | { kind: 'player-expired'; playerId: string; nickname: string }
+  | { kind: 'massage-booked'; outcome: MassageOutcome; cost: number; newMoney: number; nextEligibleGameDay: number }
   | { kind: 'case-list'; cases: CaseSummary[]; freeCaseId: string; freeCaseAvailable: boolean }
   | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
@@ -713,7 +756,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 19;
+export const PROTOCOL_VERSION = 20;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

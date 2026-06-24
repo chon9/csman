@@ -26,9 +26,13 @@ import {
   DAILY_BONUS_AMOUNT,
   DAILY_DUEL_CAP,
   FREE_AGENT_POOL_SIZE,
+  MASSAGE_COOLDOWN_GAME_DAYS,
+  MASSAGE_COST,
   MAX_REFILLS_PER_DAY,
   MIN_REFILL_COST,
   REFILL_COST_PER_DUEL,
+  massageEffects,
+  type MassageMasseuse,
   INITIAL_ROSTER_SIZE,
   MAX_DUEL_STAKE,
   MAX_LOAN_DAYS,
@@ -151,6 +155,29 @@ function nextUtcMidnight(): string {
   const d = new Date();
   d.setUTCHours(24, 0, 0, 0);
   return d.toISOString();
+}
+
+// ============ Massage center ============
+
+/** Name pool + flavour per class tier — uniformly picked once class rolled. */
+const MASSEUSE_TIERS: Record<number, { names: string[]; emoji: string; flavor: string }> = {
+  1:  { names: ['Mrs. Ng', 'Auntie Lim'],          emoji: '😐', flavor: 'A walk-in clinic on the second floor. The chair is old.' },
+  2:  { names: ['Daisy', 'Lily'],                  emoji: '😶', flavor: 'Got the job last week. Means well, technique is rough.' },
+  3:  { names: ['Sage', 'Plum'],                   emoji: '🙂', flavor: 'Pleasant enough. Fast hands but the music is bad.' },
+  4:  { names: ['Maya', 'Joon'],                   emoji: '😊', flavor: 'Solid mid-tier session. The candle was nice.' },
+  5:  { names: ['Yuki', 'Hana'],                   emoji: '😌', flavor: 'Quiet and professional. The towel was warm.' },
+  6:  { names: ['Aria', 'Ivy'],                    emoji: '😍', flavor: 'Knows the trigger points. Players left smiling.' },
+  7:  { names: ['Luna', 'Sienna'],                 emoji: '🥰', flavor: 'High-end clinic. The whole squad came back beaming.' },
+  8:  { names: ['Selene', 'Naomi'],                emoji: '💖', flavor: 'Award-winning therapist. The team is buzzing for days.' },
+  9:  { names: ['Aurora', 'Celeste'],              emoji: '🌟', flavor: 'Books out three months in advance. Worth every cent.' },
+  10: { names: ['Athena', 'Saoirse', 'Valentina'], emoji: '👑', flavor: 'Legendary spa visit. The lobby has paparazzi outside.' },
+};
+
+function rollMasseuse(): MassageMasseuse {
+  const rating = 1 + Math.floor(Math.random() * 10); // uniform 1-10
+  const tier = MASSEUSE_TIERS[rating]!;
+  const name = tier.names[Math.floor(Math.random() * tier.names.length)];
+  return { name, rating, emoji: tier.emoji, flavor: tier.flavor };
 }
 
 /** Default targets for legacy boosts persisted before BOOST_CARD_LIBRARY
@@ -1199,6 +1226,56 @@ export function handle(
         newMoney: team.money,
         refillsUsed: next.refillsUsed,
         refillsLeft,
+      };
+    }
+
+    case 'book-massage': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      if (team.playerIds.length < 5) {
+        return { kind: 'error', code: 'roster-incomplete', message: 'Need 5 players on the roster to book a session.' };
+      }
+      const lastDay = db.getLastMassageDay(team.id);
+      const nextEligible = lastDay + MASSAGE_COOLDOWN_GAME_DAYS;
+      if (lastDay > 0 && team.day < nextEligible) {
+        return {
+          kind: 'error',
+          code: 'massage-cooldown',
+          message: `Already booked this in-game day. Next session available on day ${nextEligible} (wait for the auto-tick).`,
+        };
+      }
+      if (team.money < MASSAGE_COST) {
+        return {
+          kind: 'error',
+          code: 'insufficient-funds',
+          message: `Massage costs $${MASSAGE_COST.toLocaleString()} — you have $${team.money.toLocaleString()}.`,
+        };
+      }
+      team.money -= MASSAGE_COST;
+      const masseuse = rollMasseuse();
+      const { fatigueDelta, moraleDelta } = massageEffects(masseuse.rating);
+      const players = db.loadTeamPlayers(team.id);
+      const starters = players.slice(0, 5);
+      for (const p of starters) {
+        p.fatigue = Math.max(0, Math.min(100, p.fatigue + fatigueDelta));
+        p.morale = Math.max(1, Math.min(20, Math.round((p.morale + moraleDelta) * 10) / 10));
+        db.persistPlayer(p);
+      }
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      db.setLastMassageDay(team.id, team.day);
+      log(`massage: ${team.tag} -$${MASSAGE_COST} → ${masseuse.name} (class ${masseuse.rating}) · fatigue ${fatigueDelta} · morale ${moraleDelta > 0 ? '+' : ''}${moraleDelta}`);
+      return {
+        kind: 'massage-booked',
+        outcome: {
+          masseuse,
+          fatigueDelta,
+          moraleDelta,
+          affectedPlayerIds: starters.map((p) => p.id),
+        },
+        cost: MASSAGE_COST,
+        newMoney: team.money,
+        nextEligibleGameDay: team.day + MASSAGE_COOLDOWN_GAME_DAYS,
       };
     }
 

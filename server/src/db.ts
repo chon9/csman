@@ -333,6 +333,8 @@ export function openDb(path: string) {
   // the first auto-tick call after migration uses 'now' as the anchor so
   // existing teams don't fast-forward retroactively.
   tryAddColumn('teams', 'last_auto_tick_at', 'INTEGER', '0');
+  // In-game day of the most recent massage. 0 = never booked.
+  tryAddColumn('teams', 'last_massage_day', 'INTEGER', '0');
   // Skin inventory rows owned by this team — JSON-blob per skin instance.
   db.exec(`
     CREATE TABLE IF NOT EXISTS skin_inventory (
@@ -539,6 +541,18 @@ export function openDb(path: string) {
   }
   function setAutoTickAnchor(teamId: string, atMs: number): void {
     setLastAutoTick.run(atMs, teamId);
+  }
+
+  // -------- Massage center --------
+
+  const getLastMassageDayStmt = db.prepare(`SELECT last_massage_day FROM teams WHERE id = ?`);
+  const setLastMassageDayStmt = db.prepare(`UPDATE teams SET last_massage_day = ? WHERE id = ?`);
+  function getLastMassageDay(teamId: string): number {
+    const r = getLastMassageDayStmt.get(teamId) as { last_massage_day: number | null } | undefined;
+    return r?.last_massage_day ?? 0;
+  }
+  function setLastMassageDay(teamId: string, day: number): void {
+    setLastMassageDayStmt.run(day, teamId);
   }
 
   // -------- Skin inventory --------
@@ -1627,6 +1641,8 @@ export function openDb(path: string) {
     recordDuelRefill,
     getAutoTickAnchor,
     setAutoTickAnchor,
+    getLastMassageDay,
+    setLastMassageDay,
     addSkin,
     loadSkins,
     loadSkin,

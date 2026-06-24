@@ -19,6 +19,7 @@ import type {
   AdminUserRow,
   BoostCard,
   CaseSummary,
+  MassageOutcome,
   MarketListing,
   MatchHistoryEntry,
   MintTier,
@@ -41,7 +42,7 @@ import type {
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -138,6 +139,12 @@ interface OnlineState {
   /** UTC ms of the next 4-hour boundary, when team.day will auto-tick +1. */
   nextTickUtcMs: number;
 
+  // ----- Massage center -----
+  /** Last massage outcome — pops a reveal modal when set, cleared on dismiss. */
+  massageReveal: MassageOutcome | null;
+  /** In-game day after which a new massage can be booked. */
+  massageNextEligibleDay: number;
+
   // ----- Boosters -----
   /** Unapplied booster cards in inventory. */
   boosts: BoostCard[];
@@ -181,6 +188,8 @@ interface OnlineState {
   claimDailyBonus: () => void;
   refillDuels: () => void;
   renewContract: (playerId: string) => void;
+  bookMassage: () => void;
+  dismissMassageReveal: () => void;
   listCases: () => void;
   openCase: (caseId: string) => void;
   openFreeCase: () => void;
@@ -317,6 +326,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   boosts: [],
   activeBoosts: {},
   boostReveal: null,
+  massageReveal: null,
+  massageNextEligibleDay: 0,
   tacticsPresets: [],
   news: [],
   directory: [],
@@ -749,6 +760,17 @@ export const useOnline = create<OnlineState>((set, get) => ({
           );
           break;
         }
+        case 'massage-booked': {
+          const t = get().team;
+          set({
+            team: t ? { ...t, money: msg.newMoney } : t,
+            massageReveal: msg.outcome,
+            massageNextEligibleDay: msg.nextEligibleGameDay,
+          });
+          // Refresh so the roster table shows the new fatigue/morale values.
+          client.send({ kind: 'refresh-state' });
+          break;
+        }
         case 'contract-renewed': {
           const t = get().team;
           const ps = { ...get().players };
@@ -929,6 +951,12 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   renewContract(playerId) {
     get().client?.send({ kind: 'renew-contract', playerId });
+  },
+  bookMassage() {
+    get().client?.send({ kind: 'book-massage' });
+  },
+  dismissMassageReveal() {
+    set({ massageReveal: null });
   },
   listCases() {
     get().client?.send({ kind: 'list-cases' });

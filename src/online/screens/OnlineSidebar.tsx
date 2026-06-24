@@ -23,6 +23,7 @@ const PRIMARY: NavItem[] = [
   { id: 'market', label: 'Market', icon: '💱' },
   { id: 'cases', label: 'Cases', icon: '📦' },
   { id: 'boosters', label: 'Boosters', icon: '🎴' },
+  { id: 'massage', label: 'Massage', icon: '💆' },
   { id: 'history', label: 'History', icon: '📜' },
   { id: 'leaderboard', label: 'Leaderboard', icon: '📈' },
 ];

@@ -15,6 +15,7 @@ import OnlineLiveReplayScreen from './online/screens/OnlineLiveReplayScreen';
 import OnlineAdminScreen from './online/screens/OnlineAdminScreen';
 import OnlineCasesScreen from './online/screens/OnlineCasesScreen';
 import OnlineBoostersScreen from './online/screens/OnlineBoostersScreen';
+import OnlineMassageScreen from './online/screens/OnlineMassageScreen';
 import OnlineSidebar from './online/screens/OnlineSidebar';
 import ChatWidget from './online/screens/ChatWidget';
 import DevReportModal from './online/screens/DevReportModal';
@@ -136,6 +137,7 @@ export default function App() {
     else if (onlineScreen === 'admin') body = <OnlineAdminScreen />;
     else if (onlineScreen === 'cases') body = <OnlineCasesScreen />;
     else if (onlineScreen === 'boosters') body = <OnlineBoostersScreen />;
+    else if (onlineScreen === 'massage') body = <OnlineMassageScreen />;
     else body = <OnlineHomeScreen />;
     return (
       <div className="online-layout">
