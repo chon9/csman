@@ -157,6 +157,50 @@ function nextUtcMidnight(): string {
  *  existed — those carry attrBonus but no attrTargets. */
 const LEGACY_BOOST_TARGETS: BoostAttrKey[] = ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'];
 
+/** Build the post-match diagnostics block shipped inside DuelOutcome.
+ *  Caller passes the BASELINE (un-boosted) starter slices so the panel
+ *  reflects actual player condition, not boost-inflated numbers. */
+function buildDuelDiagnostics(
+  userStarters: Player[],
+  oppStarters: Player[],
+): import('../../src/online/protocol.ts').DuelDiagnostics {
+  const avg = (xs: number[]): number => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0);
+  const userAvgCA = avg(userStarters.map((p) => p.currentAbility));
+  const oppAvgCA = avg(oppStarters.map((p) => p.currentAbility));
+  const userAvgForm = avg(userStarters.map((p) => p.form));
+  const userAvgMorale = avg(userStarters.map((p) => p.morale));
+  const userAvgFatigue = avg(userStarters.map((p) => p.fatigue));
+  const warnings: string[] = [];
+  const fatigued = userStarters.filter((p) => p.fatigue >= 60);
+  if (fatigued.length >= 3) {
+    warnings.push(`${fatigued.length}/5 starters were exhausted (≥60% fatigue) — Skip days to recover.`);
+  } else if (fatigued.length >= 1) {
+    warnings.push(`${fatigued.length} starter${fatigued.length === 1 ? ' was' : 's were'} fatigued (≥60%) — performance suffered.`);
+  }
+  const lowForm = userStarters.filter((p) => p.form <= 7);
+  if (lowForm.length >= 2) {
+    warnings.push(`${lowForm.length} starters in poor form (≤7) — Skip a week to let the slump pass.`);
+  }
+  const lowMorale = userStarters.filter((p) => p.morale <= 7);
+  if (lowMorale.length >= 2) {
+    warnings.push(`${lowMorale.length} starters had low morale (≤7) — wins help, losses sting.`);
+  }
+  if (userAvgCA + 6 < oppAvgCA) {
+    warnings.push(`Opponent was much stronger on paper (their avg CA ${Math.round(oppAvgCA)} vs your ${Math.round(userAvgCA)}). Sign higher-tier players.`);
+  }
+  if (warnings.length === 0 && userAvgCA >= oppAvgCA + 6) {
+    warnings.push(`On paper you were favoured (avg CA ${Math.round(userAvgCA)} vs ${Math.round(oppAvgCA)}). Unlucky variance this match.`);
+  }
+  return {
+    userAvgCA: Math.round(userAvgCA * 10) / 10,
+    oppAvgCA: Math.round(oppAvgCA * 10) / 10,
+    userAvgForm: Math.round(userAvgForm * 10) / 10,
+    userAvgMorale: Math.round(userAvgMorale * 10) / 10,
+    userAvgFatigue: Math.round(userAvgFatigue),
+    warnings,
+  };
+}
+
 /** Mutate a player's attributes in-place to include any active boost.
  *  Returns the snapshot needed to restore the un-boosted values. Idempotent
  *  for boost-less players (no-op snapshot). */
@@ -528,6 +572,14 @@ export function handle(
         return { kind: 'error', code: 'insufficient-funds', message: `Need $${stake.toLocaleString()} stake — you have $${team.money.toLocaleString()}.` };
       }
       const players = db.loadTeamPlayers(team.id);
+      // Snapshot the user's starter condition BEFORE boost/aftermath mutations
+      // so the post-match diagnostics report what they actually walked in with.
+      const userStartersBaseline = players.slice(0, 5).map((p) => ({
+        currentAbility: p.currentAbility,
+        form: p.form,
+        morale: p.morale,
+        fatigue: p.fatigue,
+      }));
       // Build Team-shaped object for the engine (mirror of buildEngineTeam in
       // duels.ts but using TeamRow's fields). Reuse mapPool default.
       const engineTeam: Team = teamRowToEngineTeam(team);
@@ -606,6 +658,17 @@ export function handle(
         if (standings.netMoney >= 100_000) tryUnlock(db, notifyTeam, team.id, 'bankroll_100k', ACHIEVEMENT_LABELS.bankroll_100k, standings.netMoney);
       }
       log(`${isScrim ? 'Scrim' : 'AI duel'}: ${team.tag} vs ${duel.opponentTag} → ${duel.moneyDelta > 0 ? 'WIN' : duel.moneyDelta < 0 ? 'LOSS' : 'NEUTRAL'} ($${duel.moneyDelta})`);
+      // Build diagnostics from the baseline snapshot — what the user fielded
+      // before boosts/match-aftermath touched the records.
+      const userStartersForDiag = userStartersBaseline.map((b, i) => ({
+        ...players[i],
+        currentAbility: b.currentAbility,
+        form: b.form,
+        morale: b.morale,
+        fatigue: b.fatigue,
+      })) as Player[];
+      const diagnostics = isScrim ? undefined : buildDuelDiagnostics(userStartersForDiag, duel.opponentPlayers.slice(0, 5));
+
       return {
         kind: 'duel-result',
         outcome: {
@@ -622,6 +685,7 @@ export function handle(
           // post-duel contract expiry that pulled them off team.playerIds.
           // The result modal uses this to colour the scoreboard correctly.
           userLineupIds: players.slice(0, 5).map((p) => p.id),
+          diagnostics,
         },
       };
     }
@@ -828,6 +892,13 @@ export function handle(
 
       const challengerPlayers = db.loadTeamPlayers(challenger.id);
       const accepterPlayers = db.loadTeamPlayers(accepter.id);
+      // Baseline snapshots BEFORE boost + match-aftermath mutations, so the
+      // per-side diagnostics reflect the condition they walked in with.
+      const snapshotStarter = (p: Player) => ({
+        currentAbility: p.currentAbility, form: p.form, morale: p.morale, fatigue: p.fatigue,
+      });
+      const challengerBaseline = challengerPlayers.slice(0, 5).map(snapshotStarter);
+      const accepterBaseline = accepterPlayers.slice(0, 5).map(snapshotStarter);
       const matchId = `pvp-${challenge.id}`;
       // Boost integration on both sides — apply before engine reads, restore after.
       const pvpBoostSnaps: Array<[Player, Partial<Player['attributes']> | null]> = [];
@@ -936,6 +1007,15 @@ export function handle(
       // contract tick can drop expired players off team.playerIds.
       const challengerLineupIds = challengerPlayers.slice(0, 5).map((p) => p.id);
       const accepterLineupIds = accepterPlayers.slice(0, 5).map((p) => p.id);
+      // Build per-side diagnostics. Each side sees themselves as "user", the
+      // other side as "opponent" — so the avg CA labels read correctly.
+      const buildSide = (own: typeof challengerBaseline, opp: typeof accepterBaseline, ownPlayers: Player[]) =>
+        buildDuelDiagnostics(
+          own.map((b, i) => ({ ...ownPlayers[i], ...b })) as Player[],
+          opp.map((b, i) => ({ ...ownPlayers[i], ...b })) as Player[], // shape-only — only CA is read for opponent
+        );
+      const challengerDiag = buildSide(challengerBaseline, accepterBaseline, challengerPlayers);
+      const accepterDiag = buildSide(accepterBaseline, challengerBaseline, accepterPlayers);
       const challengerOutcome = {
         result: duel.result,
         opponentName: accepter.name,
@@ -946,6 +1026,7 @@ export function handle(
           ? `Lost to ${accepter.tag} ${duel.result.mapsA}-${duel.result.mapsB}. -$${challenge.stake.toLocaleString()}.`
           : `Beat ${accepter.tag} ${duel.result.mapsA}-${duel.result.mapsB}. +$${challenge.stake.toLocaleString()}.`,
         userLineupIds: challengerLineupIds,
+        diagnostics: challengerDiag,
       };
       const accepterOutcome = {
         result: duel.result,
@@ -957,6 +1038,7 @@ export function handle(
           ? `Beat ${challenger.tag} ${duel.result.mapsB}-${duel.result.mapsA}. +$${challenge.stake.toLocaleString()}.`
           : `Lost to ${challenger.tag} ${duel.result.mapsB}-${duel.result.mapsA}. -$${challenge.stake.toLocaleString()}.`,
         userLineupIds: accepterLineupIds,
+        diagnostics: accepterDiag,
       };
       notifyTeam(challenger.id, { kind: 'duel-result', outcome: challengerOutcome });
       // Also tell the challenger their challenge resolved (so any list-challenges UI clears).

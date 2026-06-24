@@ -506,6 +506,25 @@ export interface DuelOutcome {
    *  the contract tick. Without this, the result modal can't tell who was
    *  on our side once expired players have been removed from team.playerIds. */
   userLineupIds: string[];
+  /** Optional post-match analysis the client renders to help the user
+   *  understand WHY they won/lost. Avg CA delta = baseline strength gap;
+   *  fatigue/form/morale snapshots capture condition-induced losses. */
+  diagnostics?: DuelDiagnostics;
+}
+
+export interface DuelDiagnostics {
+  /** Average current ability of the user's starting 5 (pre-boost). */
+  userAvgCA: number;
+  /** Average CA of the opponent's starting 5. */
+  oppAvgCA: number;
+  /** User-side mean form (1-20). Anything < 8 hurts. */
+  userAvgForm: number;
+  /** User-side mean morale (1-20). 12 is neutral. */
+  userAvgMorale: number;
+  /** User-side mean fatigue (0-100). >50 is a real drag. */
+  userAvgFatigue: number;
+  /** Plain-language warnings about condition issues. Empty = nothing flagged. */
+  warnings: string[];
 }
 
 // ============ Client → Server messages ============
@@ -694,7 +713,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

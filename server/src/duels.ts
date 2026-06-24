@@ -145,6 +145,7 @@ export function runAiDuel(
   result: MatchResult;
   opponentName: string;
   opponentTag: string;
+  opponentPlayers: Player[];
   moneyDelta: number;
   summary: string;
   isScrim: boolean;
@@ -177,6 +178,7 @@ export function runAiDuel(
     result,
     opponentName: aiTeam.name,
     opponentTag: aiTeam.tag,
+    opponentPlayers: aiPlayers,
     moneyDelta,
     summary,
     isScrim,

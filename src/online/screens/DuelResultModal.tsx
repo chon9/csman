@@ -58,6 +58,35 @@ export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
             <SidePanel title={team.tag} rows={ourSide} resolveName={(id) => players[id]?.nickname ?? id} />
             <SidePanel title={outcome.opponentTag} rows={theirSide} resolveName={(id, fallback) => fallback} />
           </div>
+
+          {/* ===== Why did this match go this way? ===== */}
+          {outcome.diagnostics && (
+            <div
+              style={{
+                marginTop: 14,
+                padding: 12,
+                borderRadius: 8,
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.06)',
+              }}
+            >
+              <div className="muted small" style={{ textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                Match diagnostics
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8, marginBottom: outcome.diagnostics.warnings.length > 0 ? 10 : 0 }}>
+                <DiagStat label="Your avg CA" value={outcome.diagnostics.userAvgCA.toFixed(1)} />
+                <DiagStat label="Opp avg CA" value={outcome.diagnostics.oppAvgCA.toFixed(1)} highlight={outcome.diagnostics.oppAvgCA > outcome.diagnostics.userAvgCA + 4 ? 'loss' : 'win'} />
+                <DiagStat label="Avg form" value={outcome.diagnostics.userAvgForm.toFixed(1)} highlight={outcome.diagnostics.userAvgForm <= 7 ? 'loss' : outcome.diagnostics.userAvgForm >= 13 ? 'win' : undefined} />
+                <DiagStat label="Avg morale" value={outcome.diagnostics.userAvgMorale.toFixed(1)} highlight={outcome.diagnostics.userAvgMorale <= 7 ? 'loss' : outcome.diagnostics.userAvgMorale >= 14 ? 'win' : undefined} />
+                <DiagStat label="Avg fatigue" value={`${outcome.diagnostics.userAvgFatigue}%`} highlight={outcome.diagnostics.userAvgFatigue >= 60 ? 'loss' : outcome.diagnostics.userAvgFatigue <= 25 ? 'win' : undefined} />
+              </div>
+              {outcome.diagnostics.warnings.length > 0 && (
+                <ul style={{ margin: 0, paddingLeft: 18, color: '#f2c443', fontSize: 12, lineHeight: 1.5 }}>
+                  {outcome.diagnostics.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
         <div className="modal-foot" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
           <button
@@ -80,6 +109,16 @@ interface SideRow {
   assists: number;
   rating: number;
   n: number;
+}
+
+function DiagStat({ label, value, highlight }: { label: string; value: string; highlight?: 'win' | 'loss' }): React.ReactElement {
+  const color = highlight === 'win' ? '#6ed09a' : highlight === 'loss' ? '#e25555' : '#d4d8e1';
+  return (
+    <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px 8px', borderRadius: 6 }}>
+      <div className="muted small" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 700, color }}>{value}</div>
+    </div>
+  );
 }
 
 function SidePanel({
