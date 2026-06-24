@@ -878,7 +878,13 @@ export const useOnline = create<OnlineState>((set, get) => ({
           break;
         }
         case 'error':
+          // errorBanner is only rendered on the connect / create-team screens.
+          // For in-app errors (duel cap, refill cap, insufficient funds, etc.)
+          // also push a toast so the user actually sees what went wrong.
           set({ errorBanner: msg.message, duelPending: false, skipPending: false });
+          if (get().screen !== 'connect' && get().screen !== 'create-team') {
+            pushToast('error', msg.message);
+          }
           break;
         case 'pong':
           break;

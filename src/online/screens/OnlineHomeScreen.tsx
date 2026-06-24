@@ -90,8 +90,19 @@ export default function OnlineHomeScreen() {
 
   const skipCost = skipDays * TIME_SKIP_COST_PER_DAY;
   const effectiveStake = scrimMode ? 0 : stake;
-  const canDuel = !duelPending && roster.length >= 5 && (scrimMode || team.money >= stake);
+  // Cap only applies to ranked duels — scrims stay free + unlimited.
+  const duelsLeft = Math.max(0, DAILY_DUEL_CAP - duelsUsed);
+  const cappedOut = !scrimMode && duelsLeft <= 0;
+  const canDuel = !duelPending && roster.length >= 5 && !cappedOut && (scrimMode || team.money >= stake);
   const canSkip = !skipPending && team.money >= skipCost;
+
+  // Human-readable reason the duel button is locked — used as both the
+  // button tooltip and the body of the warning toast on click attempts.
+  const duelBlockedReason =
+    roster.length < 5 ? `Need 5 players in the lineup (have ${roster.length}).` :
+    cappedOut ? `No duels left this in-game day. Refill from the chip above or wait for the next tick.` :
+    !scrimMode && team.money < stake ? `Insufficient funds — need $${stake.toLocaleString()}, have $${team.money.toLocaleString()}.` :
+    '';
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -182,7 +193,7 @@ export default function OnlineHomeScreen() {
               className="btn btn-accent"
               disabled={!canDuel}
               onClick={() => registerAiDuel(effectiveStake, format)}
-              title={roster.length < 5 ? 'Need 5 players' : !canDuel ? 'Insufficient funds' : ''}
+              title={duelBlockedReason || (scrimMode ? 'Run a free scrim' : `Register a $${stake.toLocaleString()} duel`)}
             >
               {duelPending
                 ? 'Simulating…'
