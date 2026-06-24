@@ -57,6 +57,48 @@ export default function OnlineTacticsScreen() {
   const [order, setOrder] = useState<string[]>(team?.playerIds ?? []);
   useEffect(() => setOrder(team?.playerIds ?? []), [team?.playerIds]);
 
+  // ---- Lineup drag-and-drop state ----
+  // dragId = the player id currently being dragged; dropAtIdx = the index the
+  // dragged row would land at if dropped now (between rows visually). Both
+  // null when nothing's being dragged.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropAtIdx, setDropAtIdx] = useState<number | null>(null);
+  function handleDragStart(e: React.DragEvent, id: string): void {
+    setDragId(id);
+    // Required for Firefox to actually start a drag.
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+  }
+  function handleDragOver(e: React.DragEvent, overIdx: number): void {
+    if (!dragId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    // Drop ABOVE if cursor in top half of row, BELOW if bottom half. Maps to
+    // an insertion index in [0..order.length].
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const above = e.clientY < rect.top + rect.height / 2;
+    setDropAtIdx(above ? overIdx : overIdx + 1);
+  }
+  function handleDrop(e: React.DragEvent): void {
+    e.preventDefault();
+    if (!dragId || dropAtIdx === null) { clearDrag(); return; }
+    setOrder((arr) => {
+      const fromIdx = arr.indexOf(dragId);
+      if (fromIdx === -1) return arr;
+      const next = [...arr];
+      next.splice(fromIdx, 1);
+      // Account for the index shift when the source is above the drop target.
+      const insertAt = fromIdx < dropAtIdx ? dropAtIdx - 1 : dropAtIdx;
+      next.splice(insertAt, 0, dragId);
+      return next;
+    });
+    clearDrag();
+  }
+  function clearDrag(): void {
+    setDragId(null);
+    setDropAtIdx(null);
+  }
+
   // Presets — refresh once on mount.
   useEffect(() => { listPresets(); }, [listPresets]);
   const [newPresetName, setNewPresetName] = useState('');
@@ -334,47 +376,61 @@ export default function OnlineTacticsScreen() {
         })}
       </div>
 
-      {/* ===== Lineup ===== */}
+      {/* ===== Lineup (drag-and-drop) ===== */}
       <div className="panel" style={{ padding: 14 }}>
-        <div className="panel-title">Lineup <span className="muted small">— first 5 start every duel</span></div>
-        <table className="table table-dense">
-          <thead>
-            <tr>
-              <th></th>
-              <th>Player</th>
-              <th>Role</th>
-              <th>Nat</th>
-              <th>Age</th>
-              <th className="num">CA</th>
-              <th className="num">PA</th>
-              <th>Slot</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {order.map((id, idx) => {
-              const p = players[id];
-              if (!p) return null;
-              const isStarter = idx < 5;
-              return (
-                <tr key={id} style={{ background: isStarter ? 'rgba(76, 175, 125, 0.06)' : undefined }}>
-                  <td className="muted small">{isStarter ? '★' : ''}</td>
-                  <td><strong>{p.nickname}</strong></td>
-                  <td>{p.role}</td>
-                  <td className="muted">{p.nationality}</td>
-                  <td>{p.age}</td>
-                  <td className="num">{p.currentAbility}</td>
-                  <td className="num">{p.potentialAbility}</td>
-                  <td className="muted small">{isStarter ? `#${idx + 1} starter` : 'bench'}</td>
-                  <td>
-                    <button className="btn btn-tiny" disabled={idx === 0} onClick={() => move(idx, -1)}>↑</button>{' '}
-                    <button className="btn btn-tiny" disabled={idx === order.length - 1} onClick={() => move(idx, 1)}>↓</button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="panel-title">
+          Lineup
+          <span className="muted small"> — drag rows to reorder · top 5 start every duel</span>
+        </div>
+        <div
+          className="lineup-list"
+          onDragOver={(e) => { if (dragId) e.preventDefault(); }}
+          onDrop={handleDrop}
+        >
+          {order.map((id, idx) => {
+            const p = players[id];
+            if (!p) return null;
+            const isStarter = idx < 5;
+            const isDragging = id === dragId;
+            const showDropAbove = dropAtIdx === idx && dragId !== null;
+            const showDropBelow = dropAtIdx === idx + 1 && idx === order.length - 1 && dragId !== null;
+            // Insert a "BENCH" divider above row 5 (the first bench player)
+            // when nothing's being dragged — avoids drop-zone confusion.
+            const showBenchDivider = idx === 5 && dragId === null;
+            return (
+              <div key={id}>
+                {showBenchDivider && <div className="lineup-divider">— Bench —</div>}
+                {showDropAbove && <div className="lineup-drop-line" />}
+                <div
+                  className={`lineup-row ${isStarter ? 'lineup-row-starter' : 'lineup-row-bench'} ${isDragging ? 'lineup-row-dragging' : ''}`}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, id)}
+                  onDragOver={(e) => handleDragOver(e, idx)}
+                  onDragEnd={clearDrag}
+                  onDrop={handleDrop}
+                >
+                  <div className="lineup-handle" title="Drag to reorder">⠿</div>
+                  <div className="lineup-slot">
+                    {isStarter ? <span className="lineup-slot-num">#{idx + 1}</span> : <span className="muted small">bench</span>}
+                  </div>
+                  <div className="lineup-main">
+                    <strong>{p.nickname}</strong>
+                    <span className="muted small" style={{ marginLeft: 6 }}>{p.role} · {p.nationality} · age {p.age}</span>
+                  </div>
+                  <div className="lineup-stats">
+                    <span className="lineup-stat" title="Current Ability"><span className="muted small">CA</span> {p.currentAbility}</span>
+                    <span className="lineup-stat" title="Potential Ability"><span className="muted small">PA</span> {p.potentialAbility}</span>
+                  </div>
+                  <div className="lineup-arrows">
+                    <button className="btn btn-tiny" disabled={idx === 0} onClick={() => move(idx, -1)} title="Move up">↑</button>
+                    <button className="btn btn-tiny" disabled={idx === order.length - 1} onClick={() => move(idx, 1)} title="Move down">↓</button>
+                  </div>
+                </div>
+                {showDropBelow && <div className="lineup-drop-line" />}
+              </div>
+            );
+          })}
+        </div>
         <button
           className="btn btn-accent"
           disabled={!lineupDirty}
