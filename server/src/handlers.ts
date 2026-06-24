@@ -18,6 +18,11 @@ import type {
 } from '../../src/online/protocol.ts';
 import {
   ACHIEVEMENT_LABELS,
+  CONTRACT_DUELS_INITIAL_BUY,
+  CONTRACT_DUELS_INITIAL_FA,
+  CONTRACT_DUELS_INITIAL_SPAWN,
+  CONTRACT_RENEWAL_DUELS,
+  CONTRACT_RENEWAL_WAGE_MULT,
   DAILY_BONUS_AMOUNT,
   DAILY_DUEL_CAP,
   EXTRA_DUEL_COST,
@@ -189,6 +194,41 @@ function tickBoostsAfterDuel(
       notify(p);
     }
   }
+}
+
+/**
+ * Decrement contract duels-remaining for each starter (top 5) of the team
+ * roster, and free-agent any player whose counter hits 0. Mutates player
+ * records + the team's playerIds list. Returns the list of expired players
+ * so the caller can publish news + push notifications.
+ *
+ * Legacy contracts (no duelsRemaining field) are skipped — they're treated
+ * as unlimited until the owner does something that re-issues the contract.
+ */
+function tickContractsAfterDuel(
+  db: DB,
+  team: TeamRow,
+  rosterStarters: Player[],
+): Player[] {
+  const expired: Player[] = [];
+  for (const p of rosterStarters) {
+    const c = p.contract;
+    if (!c || typeof c.duelsRemaining !== 'number') continue;
+    c.duelsRemaining -= 1;
+    if (c.duelsRemaining <= 0) {
+      // Contract done — flip to free agent, drop from roster.
+      p.teamId = null;
+      p.contract = null;
+      p.squadTier = 'reserve';
+      expired.push(p);
+    }
+  }
+  if (expired.length > 0) {
+    const expiredIds = new Set(expired.map((p) => p.id));
+    team.playerIds = team.playerIds.filter((id) => !expiredIds.has(id));
+    db.setTeamPlayers(team.id, team.playerIds);
+  }
+  return expired;
 }
 
 /** Roll a single booster card: pick rarity by BOOST_PACK_ODDS, then pick a
@@ -390,7 +430,12 @@ export function handle(
       // hard-crashed the whole spawn under plain INSERT before that).
       const { ids: usedIds, nicks: usedNicks } = db.loadAllPlayerKeys();
       const players = spawnInitialRoster(team.id, team.region, startDate, roles, usedIds, usedNicks);
-      for (const p of players) db.savePlayer(p);
+      // Seed every newgen's contract with a fresh duels-remaining counter so
+      // the contract pacing system can decrement it after each ranked duel.
+      for (const p of players) {
+        if (p.contract) p.contract.duelsRemaining = CONTRACT_DUELS_INITIAL_SPAWN;
+        db.savePlayer(p);
+      }
       db.setTeamPlayers(
         team.id,
         players.map((p) => p.id),
@@ -490,8 +535,16 @@ export function handle(
         tickBoostsAfterDuel(players, (p) => {
           notifyTeam(team.id, { kind: 'boost-expired', playerId: p.id });
         });
+        // Contract pacing — only the 5 starters paid match wages here.
+        const expired = tickContractsAfterDuel(db, team, players.slice(0, 5));
+        for (const exp of expired) {
+          log(`contract expired: ${team.tag} ← ${exp.nickname} now FA`);
+          const item = db.publishNews('transfer', `${exp.nickname} ran out of contract at ${team.tag} and walked to free agency.`);
+          broadcast({ kind: 'news-item', item: item as NewsItem });
+          notifyTeam(team.id, { kind: 'player-expired', playerId: exp.id, nickname: exp.nickname });
+        }
       }
-      // Persist the mutated players (form/morale/fatigue + match stats + boost tick).
+      // Persist the mutated players (form/morale/fatigue + match stats + boost tick + contract).
       for (const p of players) db.persistPlayer(p);
       // Persist a stripped copy to match history so the History screen can
       // show this duel and the user can replay it later.
@@ -789,6 +842,21 @@ export function handle(
       // Tick boost duels-left for both sides; push expiry notices per team.
       tickBoostsAfterDuel(challengerPlayers, (p) => notifyTeam(challenger.id, { kind: 'boost-expired', playerId: p.id }));
       tickBoostsAfterDuel(accepterPlayers, (p) => notifyTeam(accepter.id, { kind: 'boost-expired', playerId: p.id }));
+      // Contract pacing for both sides' starters.
+      const expiredCh = tickContractsAfterDuel(db, challenger, challengerPlayers.slice(0, 5));
+      const expiredAc = tickContractsAfterDuel(db, accepter, accepterPlayers.slice(0, 5));
+      for (const exp of expiredCh) {
+        log(`contract expired: ${challenger.tag} ← ${exp.nickname} now FA`);
+        const item = db.publishNews('transfer', `${exp.nickname} ran out of contract at ${challenger.tag} and walked to free agency.`);
+        broadcast({ kind: 'news-item', item: item as NewsItem });
+        notifyTeam(challenger.id, { kind: 'player-expired', playerId: exp.id, nickname: exp.nickname });
+      }
+      for (const exp of expiredAc) {
+        log(`contract expired: ${accepter.tag} ← ${exp.nickname} now FA`);
+        const item = db.publishNews('transfer', `${exp.nickname} ran out of contract at ${accepter.tag} and walked to free agency.`);
+        broadcast({ kind: 'news-item', item: item as NewsItem });
+        notifyTeam(accepter.id, { kind: 'player-expired', playerId: exp.id, nickname: exp.nickname });
+      }
       for (const p of challengerPlayers) db.persistPlayer(p);
       for (const p of accepterPlayers) db.persistPlayer(p);
       db.recordMatch({
@@ -910,6 +978,7 @@ export function handle(
         wage,
         expires: new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().slice(0, 10),
         buyout: Math.round(player.askingPrice * 1.2),
+        duelsRemaining: CONTRACT_DUELS_INITIAL_FA,
       };
       team.playerIds = [...team.playerIds, player.id];
       db.setTeamMoneyDay(team.id, team.money, team.day);
@@ -1012,6 +1081,41 @@ export function handle(
         newMoney: team.money,
         remaining,
         extra: next.extra,
+      };
+    }
+
+    case 'renew-contract': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const player = db.loadPlayer(msg.playerId);
+      if (!player || player.teamId !== team.id) {
+        return { kind: 'error', code: 'not-your-player', message: 'Player not on your roster.' };
+      }
+      if (!player.contract) {
+        return { kind: 'error', code: 'no-contract', message: 'Player has no contract to renew.' };
+      }
+      const cost = Math.max(1000, Math.round(player.contract.wage * CONTRACT_RENEWAL_WAGE_MULT));
+      if (team.money < cost) {
+        return {
+          kind: 'error',
+          code: 'insufficient-funds',
+          message: `Renewal costs $${cost.toLocaleString()} — you have $${team.money.toLocaleString()}.`,
+        };
+      }
+      team.money -= cost;
+      const prevDuels = player.contract.duelsRemaining ?? 0;
+      const newDuels = prevDuels + CONTRACT_RENEWAL_DUELS;
+      player.contract.duelsRemaining = newDuels;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      db.persistPlayer(player);
+      log(`contract renewed: ${team.tag} ${player.nickname} -$${cost} → ${newDuels} duels`);
+      return {
+        kind: 'contract-renewed',
+        playerId: msg.playerId,
+        cost,
+        newMoney: team.money,
+        duelsRemaining: newDuels,
       };
     }
 
@@ -1486,7 +1590,9 @@ export function handle(
           ...original,
           id: `${original.id}-${randomBytes(3).toString('hex')}`,
           teamId: newTeam.id,
-          contract: original.contract ? { ...original.contract } : null,
+          contract: original.contract
+            ? { ...original.contract, duelsRemaining: CONTRACT_DUELS_INITIAL_FA }
+            : null,
         };
         db.savePlayer(fresh);
         remappedIds.push(fresh.id);
@@ -1732,6 +1838,9 @@ export function handle(
       sellerTeam.playerIds = sellerTeam.playerIds.filter((id) => id !== player.id);
       buyerTeam.playerIds = [...buyerTeam.playerIds, player.id];
       player.teamId = buyerTeam.id;
+      // Buyer signs a fresh deal — reset duels-remaining so the new owner
+      // gets a clean contract window regardless of how worn the player was.
+      if (player.contract) player.contract.duelsRemaining = CONTRACT_DUELS_INITIAL_BUY;
       db.setTeamMoneyDay(buyerTeam.id, buyerTeam.money, buyerTeam.day);
       db.setTeamMoneyDay(sellerTeam.id, sellerTeam.money, sellerTeam.day);
       db.setTeamPlayers(buyerTeam.id, buyerTeam.playerIds);

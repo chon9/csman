@@ -84,6 +84,11 @@ export interface Contract {
   expires: string; // ISO date
   /** Release clause / buyout. Bidders meeting this auto-trigger sale. */
   buyout: number;
+  /** Online-mode pacing field: ranked duels remaining on this contract.
+   *  Decrements per duel for starters who played; player becomes a FA when
+   *  it hits 0. Owner can renew before expiry for a fee. Optional for
+   *  backward-compat — undefined = treated as unlimited (legacy contracts). */
+  duelsRemaining?: number;
   /** Bonuses paid to the player (per event). Optional, only set when negotiated. */
   bonuses?: {
     /** One-time signing bonus paid at deal completion. */

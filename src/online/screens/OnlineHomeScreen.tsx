@@ -5,6 +5,9 @@
 import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import {
+  CONTRACT_DUELS_WARN_AT,
+  CONTRACT_RENEWAL_DUELS,
+  CONTRACT_RENEWAL_WAGE_MULT,
   DAILY_DUEL_CAP,
   EXTRA_DUEL_COST,
   MAX_DUEL_STAKE,
@@ -40,6 +43,7 @@ export default function OnlineHomeScreen() {
   const duelsUsed = useOnline((s) => s.duelsUsed);
   const duelsExtra = useOnline((s) => s.duelsExtra);
   const buyExtraDuel = useOnline((s) => s.buyExtraDuel);
+  const renewContract = useOnline((s) => s.renewContract);
   const registerAiDuel = useOnline((s) => s.registerAiDuel);
   const timeSkip = useOnline((s) => s.timeSkip);
 
@@ -257,13 +261,18 @@ export default function OnlineHomeScreen() {
                 <th className="num">Form</th>
                 <th className="num">Morale</th>
                 <th className="num">Fatigue</th>
+                <th className="num" title="Ranked duels left on this contract before the player walks to free agency">Contract</th>
                 <th>Goals</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {roster.map((p) => {
+              {roster.map((p, rosterIdx) => {
                 const myGoals = goals.filter((g) => g.playerId === p.id);
+                const duelsLeft = p.contract?.duelsRemaining;
+                const isStarter = rosterIdx < 5;
+                const renewCost = p.contract ? Math.max(1000, Math.round(p.contract.wage * CONTRACT_RENEWAL_WAGE_MULT)) : 0;
+                const lowContract = typeof duelsLeft === 'number' && duelsLeft <= CONTRACT_DUELS_WARN_AT;
                 return (
                   <tr key={p.id}>
                     <td><strong>{p.nickname}</strong> <span className="muted small">{p.firstName} {p.lastName}</span></td>
@@ -283,6 +292,19 @@ export default function OnlineHomeScreen() {
                       title={fatigueTooltip(p)}
                       style={{ cursor: 'help' }}
                     >{p.fatigue.toFixed(0)}%</td>
+                    <td
+                      className={`num ${typeof duelsLeft !== 'number' ? 'muted' : lowContract ? 'text-loss' : ''}`}
+                      title={
+                        typeof duelsLeft !== 'number'
+                          ? 'No contract counter (legacy player — will get one on next renewal).'
+                          : `${duelsLeft} ranked duel${duelsLeft === 1 ? '' : 's'} until ${p.nickname} walks. Only starters consume duels. Renew for $${renewCost.toLocaleString()} → +${CONTRACT_RENEWAL_DUELS} duels.`
+                      }
+                    >
+                      {typeof duelsLeft === 'number' ? duelsLeft : '—'}
+                      {isStarter && typeof duelsLeft === 'number' && (
+                        <span className="muted small" style={{ marginLeft: 4, fontSize: 9 }}>★</span>
+                      )}
+                    </td>
                     <td>
                       {myGoals.length === 0 ? (
                         <span className="muted small">—</span>
@@ -300,7 +322,7 @@ export default function OnlineHomeScreen() {
                         })
                       )}
                     </td>
-                    <td style={{ display: 'flex', gap: 4 }}>
+                    <td style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                       <button className="btn btn-tiny" onClick={() => setGoalPlayer(p)}>+ Goal</button>
                       <button
                         className="btn btn-tiny"
@@ -308,6 +330,18 @@ export default function OnlineHomeScreen() {
                         disabled={roster.length <= 5}
                         onClick={() => setLoanPlayer(p)}
                       >Loan</button>
+                      {p.contract && (
+                        <button
+                          className={`btn btn-tiny ${lowContract ? 'btn-accent' : ''}`}
+                          title={`Renew contract: -$${renewCost.toLocaleString()} for +${CONTRACT_RENEWAL_DUELS} duels`}
+                          disabled={!team || team.money < renewCost}
+                          onClick={() => {
+                            if (window.confirm(`Renew ${p.nickname}'s contract for $${renewCost.toLocaleString()}? (+${CONTRACT_RENEWAL_DUELS} duels)`)) {
+                              renewContract(p.id);
+                            }
+                          }}
+                        >Renew · ${renewCost.toLocaleString()}</button>
+                      )}
                     </td>
                   </tr>
                 );

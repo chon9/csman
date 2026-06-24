@@ -180,6 +180,7 @@ interface OnlineState {
   // Daily bonus + cases.
   claimDailyBonus: () => void;
   buyExtraDuel: () => void;
+  renewContract: (playerId: string) => void;
   listCases: () => void;
   openCase: (caseId: string) => void;
   openFreeCase: () => void;
@@ -744,6 +745,33 @@ export const useOnline = create<OnlineState>((set, get) => ({
           pushToast('success', `Bought an extra duel slot ($${msg.cost.toLocaleString()}). ${msg.remaining} duel${msg.remaining === 1 ? '' : 's'} left today.`);
           break;
         }
+        case 'contract-renewed': {
+          const t = get().team;
+          const ps = { ...get().players };
+          const p = ps[msg.playerId];
+          if (p && p.contract) {
+            ps[msg.playerId] = { ...p, contract: { ...p.contract, duelsRemaining: msg.duelsRemaining } };
+          }
+          set({
+            team: t ? { ...t, money: msg.newMoney } : t,
+            players: ps,
+          });
+          pushToast('success', `Renewed ${p?.nickname ?? 'player'} (+30 duels) for $${msg.cost.toLocaleString()}.`);
+          break;
+        }
+        case 'player-expired': {
+          // Drop from local team + players cache immediately; refresh-state
+          // will re-confirm but the UI shouldn't show a stale starter.
+          const t = get().team;
+          const ps = { ...get().players };
+          delete ps[msg.playerId];
+          set({
+            team: t ? { ...t, playerIds: t.playerIds.filter((id) => id !== msg.playerId) } : t,
+            players: ps,
+          });
+          pushToast('warn', `${msg.nickname}'s contract expired — now a free agent.`);
+          break;
+        }
         case 'duel-stats': {
           set({ duelsUsed: msg.used, duelsExtra: msg.extra });
           break;
@@ -888,6 +916,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   buyExtraDuel() {
     get().client?.send({ kind: 'buy-extra-duel' });
+  },
+  renewContract(playerId) {
+    get().client?.send({ kind: 'renew-contract', playerId });
   },
   listCases() {
     get().client?.send({ kind: 'list-cases' });

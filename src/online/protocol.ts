@@ -156,6 +156,21 @@ export interface ActiveBoostWire {
   appliedAt: number;
 }
 
+// ============ Player contract pacing ============
+
+/** Initial duels remaining when a newgen is spawned for a newly created team. */
+export const CONTRACT_DUELS_INITIAL_SPAWN = 60;
+/** Initial duels for free-agent signs + mints (older players, shorter deal). */
+export const CONTRACT_DUELS_INITIAL_FA = 40;
+/** Initial duels for transfer-market buys (fresh contract on transfer). */
+export const CONTRACT_DUELS_INITIAL_BUY = 30;
+/** Duels added per renewal click. */
+export const CONTRACT_RENEWAL_DUELS = 30;
+/** Cost multiplier on top of monthly wage to renew. (4× wage = $40k for a $10k/mo player.) */
+export const CONTRACT_RENEWAL_WAGE_MULT = 4;
+/** Threshold at which the UI starts warning the user a contract is running out. */
+export const CONTRACT_DUELS_WARN_AT = 8;
+
 /** Base daily duel cap (PvP + AI). Resets at 00:00 UTC. */
 export const DAILY_DUEL_CAP = 15;
 /** Cost to purchase one extra duel slot for today. */
@@ -554,6 +569,8 @@ export type ClientMessage =
   | { kind: 'claim-daily-bonus' }
   // ----- Duel cap: buy an extra slot for today -----
   | { kind: 'buy-extra-duel' }
+  // ----- Contract renewal: extend a starter's duels-remaining -----
+  | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
   | { kind: 'list-cases' }
   | { kind: 'open-case'; caseId: string }
@@ -641,6 +658,8 @@ export type ServerMessage =
   | { kind: 'daily-bonus-claimed'; amount: number; newMoney: number; nextClaimUtc: string }
   | { kind: 'duel-stats'; used: number; extra: number; cap: number; remaining: number }
   | { kind: 'extra-duel-purchased'; cost: number; newMoney: number; remaining: number; extra: number }
+  | { kind: 'contract-renewed'; playerId: string; cost: number; newMoney: number; duelsRemaining: number }
+  | { kind: 'player-expired'; playerId: string; nickname: string }
   | { kind: 'case-list'; cases: CaseSummary[]; freeCaseId: string; freeCaseAvailable: boolean }
   | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
@@ -667,7 +686,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 16;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past
