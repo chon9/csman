@@ -21,6 +21,7 @@ const PRIMARY: NavItem[] = [
   { id: 'tournaments', label: 'Tournaments', icon: '🏆' },
   { id: 'market', label: 'Market', icon: '💱' },
   { id: 'cases', label: 'Cases', icon: '📦' },
+  { id: 'boosters', label: 'Boosters', icon: '🎴' },
   { id: 'history', label: 'History', icon: '📜' },
   { id: 'leaderboard', label: 'Leaderboard', icon: '📈' },
 ];

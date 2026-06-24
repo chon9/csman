@@ -203,6 +203,15 @@ export interface Player {
   stats: PlayerSeasonStats;
   transferListed: boolean;
   askingPrice: number;
+  /** Online-mode booster card applied to this player. Bumps combat attrs
+   *  for a fixed number of ranked duels, then auto-removes. Persists in JSON. */
+  activeBoost?: {
+    rarity: 'common' | 'rare' | 'epic' | 'legendary';
+    name: string;
+    attrBonus: number;
+    duelsLeft: number;
+    appliedAt: number;
+  };
 }
 
 export interface MapPoolRating {

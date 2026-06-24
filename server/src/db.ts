@@ -340,6 +340,20 @@ export function openDb(path: string) {
     );
     CREATE INDEX IF NOT EXISTS idx_skin_team ON skin_inventory(team_id);
   `);
+  // Booster cards. Unapplied cards sit here; applied boosts live on the
+  // owning player's JSON (player.activeBoost field) so they travel with
+  // the player through transfers/loans without needing a join.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS boost_inventory (
+      id TEXT PRIMARY KEY,
+      team_id TEXT NOT NULL,
+      rarity TEXT NOT NULL,
+      acquired_at INTEGER NOT NULL,
+      json TEXT NOT NULL,
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_boost_team ON boost_inventory(team_id);
+  `);
 
   // -------- Owner / auth --------
 
@@ -419,6 +433,7 @@ export function openDb(path: string) {
       deleteTeamMatches.run(teamId, teamId);
       deleteTeamAchievements.run(teamId);
       deleteTeamSkins.run(teamId);
+      deleteTeamBoosts.run(teamId);
       deleteTeamPlayers.run(teamId);
       clearOwnerTeam.run(teamId);
       deleteTeamRow.run(teamId);
@@ -522,6 +537,27 @@ export function openDb(path: string) {
   }
   function removeSkin(teamId: string, skinId: string): boolean {
     return deleteSkin.run(skinId, teamId).changes > 0;
+  }
+
+  // -------- Booster cards --------
+
+  const insertBoost = db.prepare(`INSERT INTO boost_inventory (id, team_id, rarity, acquired_at, json) VALUES (?, ?, ?, ?, ?)`);
+  const loadBoostsForTeam = db.prepare(`SELECT json FROM boost_inventory WHERE team_id = ? ORDER BY acquired_at DESC`);
+  const loadBoostById = db.prepare(`SELECT json FROM boost_inventory WHERE id = ? AND team_id = ?`);
+  const deleteBoost = db.prepare(`DELETE FROM boost_inventory WHERE id = ? AND team_id = ?`);
+  const deleteTeamBoosts = db.prepare(`DELETE FROM boost_inventory WHERE team_id = ?`);
+  function addBoost(teamId: string, cardId: string, rarity: string, cardJson: string): void {
+    insertBoost.run(cardId, teamId, rarity, Date.now(), cardJson);
+  }
+  function loadBoosts(teamId: string): unknown[] {
+    return (loadBoostsForTeam.all(teamId) as { json: string }[]).map((r) => JSON.parse(r.json));
+  }
+  function loadBoost(teamId: string, cardId: string): unknown | null {
+    const r = loadBoostById.get(cardId, teamId) as { json: string } | undefined;
+    return r ? JSON.parse(r.json) : null;
+  }
+  function removeBoost(teamId: string, cardId: string): boolean {
+    return deleteBoost.run(cardId, teamId).changes > 0;
   }
 
   function rowToTeam(row: Record<string, unknown>): TeamRow {
@@ -1557,6 +1593,10 @@ export function openDb(path: string) {
     loadSkins,
     loadSkin,
     removeSkin,
+    addBoost,
+    loadBoosts,
+    loadBoost,
+    removeBoost,
     createTeam,
     loadTeam,
     setTeamPlayers,

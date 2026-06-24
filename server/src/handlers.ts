@@ -122,7 +122,8 @@ import { buildWageMap, ensureFreeAgentPool, mintWonderkid, suggestedWage } from 
 import { CASES, DAILY_FREE_CASE_ID } from '../../src/data/cs2Cases.ts';
 import { openCase as rollCaseOpen } from '../../src/sim/caseOpening.ts';
 import { RNG } from '../../src/engine/rng.ts';
-import type { CaseSummary, SkinInstanceWire } from '../../src/online/protocol.ts';
+import type { ActiveBoostWire, BoostCard, BoostRarity, CaseSummary, SkinInstanceWire } from '../../src/online/protocol.ts';
+import { BOOST_PACK_COST, BOOST_PACK_ODDS, BOOST_RARITY_META } from '../../src/online/protocol.ts';
 import type { SkinInstance } from '../../src/types.ts';
 import { cacheLiveReplay, getLiveReplay } from './liveState.ts';
 import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorPayouts } from './serverTick.ts';
@@ -142,6 +143,71 @@ function nextUtcMidnight(): string {
   const d = new Date();
   d.setUTCHours(24, 0, 0, 0);
   return d.toISOString();
+}
+
+/** Combat attributes that absorb a booster's attrBonus. Picked so the boost
+ *  hits the engine's most-read fields. Attributes can exceed 20 during the
+ *  boost — the engine math doesn't hard-cap them. */
+const BOOST_TARGET_ATTRS = ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'] as const;
+
+/** Mutate a player's attributes in-place to include any active boost.
+ *  Returns the snapshot needed to restore the un-boosted values. Idempotent
+ *  for boost-less players (no-op snapshot). */
+function applyBoostToPlayer(player: Player): Partial<Player['attributes']> | null {
+  const boost = player.activeBoost;
+  if (!boost || boost.duelsLeft <= 0) return null;
+  const snapshot: Partial<Player['attributes']> = {};
+  for (const k of BOOST_TARGET_ATTRS) {
+    snapshot[k] = player.attributes[k];
+    // Cap at 25 — engine still scales smoothly there, but stops boosts from
+    // stacking to absurd values if anyone ever wires up double-cards.
+    player.attributes[k] = Math.min(25, (player.attributes[k] ?? 10) + boost.attrBonus);
+  }
+  return snapshot;
+}
+function restoreBoostSnapshot(player: Player, snapshot: Partial<Player['attributes']> | null): void {
+  if (!snapshot) return;
+  for (const k of BOOST_TARGET_ATTRS) {
+    if (snapshot[k] !== undefined) player.attributes[k] = snapshot[k]!;
+  }
+}
+/** Tick down duelsLeft on every active boost in the roster. Clears the
+ *  field entirely (and notifies via the supplied callback) when it hits 0. */
+function tickBoostsAfterDuel(
+  players: Player[],
+  notify: (p: Player) => void,
+): void {
+  for (const p of players) {
+    if (!p.activeBoost) continue;
+    p.activeBoost.duelsLeft -= 1;
+    if (p.activeBoost.duelsLeft <= 0) {
+      delete p.activeBoost;
+      notify(p);
+    }
+  }
+}
+
+/** Roll a single booster card per BOOST_PACK_ODDS. Uses Math.random — the
+ *  packs aren't deterministic-seeded (unlike map vetoes), they're consumable
+ *  cosmetics so a per-pull RNG is fine. */
+function rollBoostCard(): BoostCard {
+  const r = Math.random();
+  let acc = 0;
+  let chosen: BoostRarity = 'common';
+  const order: BoostRarity[] = ['common', 'rare', 'epic', 'legendary'];
+  for (const rarity of order) {
+    acc += BOOST_PACK_ODDS[rarity];
+    if (r <= acc) { chosen = rarity; break; }
+  }
+  const meta = BOOST_RARITY_META[chosen];
+  return {
+    id: `boost-${randomBytes(5).toString('hex')}`,
+    rarity: chosen,
+    name: meta.name,
+    attrBonus: meta.attrBonus,
+    duels: meta.duels,
+    acquiredAt: Date.now(),
+  };
 }
 
 /** Nickname (lowercased) that gets admin powers. Set via CSM_ADMIN_NICK env
@@ -393,12 +459,24 @@ export function handle(
       // duels.ts but using TeamRow's fields). Reuse mapPool default.
       const engineTeam: Team = teamRowToEngineTeam(team);
       const matchId = `duel-${team.id}-${Date.now()}`;
+      // Boost integration: spread the card's bonus across combat attributes
+      // BEFORE the engine reads them; restore after so daily.ts sees the
+      // baseline values when computing form/morale/fatigue gains.
+      const boostSnapshots: Array<[Player, Partial<Player['attributes']> | null]> = [];
+      if (!isScrim) for (const p of players) boostSnapshots.push([p, applyBoostToPlayer(p)]);
       const duel = runAiDuel(engineTeam, players, stake, msg.format ?? 'BO1', matchId, team.tactics);
+      for (const [p, snap] of boostSnapshots) restoreBoostSnapshot(p, snap);
       team.money = Math.max(0, team.money + duel.moneyDelta);
       db.setTeamMoneyDay(team.id, team.money, team.day);
       // Tick the daily duel counter — scrims don't count toward the cap.
-      if (!isScrim) db.recordDuelUsed(team.id, today);
-      // Persist the mutated players (form/morale/fatigue + match stats).
+      if (!isScrim) {
+        db.recordDuelUsed(team.id, today);
+        // Decrement boost duels-left; emit boost-expired pushes if any ran out.
+        tickBoostsAfterDuel(players, (p) => {
+          notifyTeam(team.id, { kind: 'boost-expired', playerId: p.id });
+        });
+      }
+      // Persist the mutated players (form/morale/fatigue + match stats + boost tick).
       for (const p of players) db.persistPlayer(p);
       // Persist a stripped copy to match history so the History screen can
       // show this duel and the user can replay it later.
@@ -663,6 +741,10 @@ export function handle(
       const challengerPlayers = db.loadTeamPlayers(challenger.id);
       const accepterPlayers = db.loadTeamPlayers(accepter.id);
       const matchId = `pvp-${challenge.id}`;
+      // Boost integration on both sides — apply before engine reads, restore after.
+      const pvpBoostSnaps: Array<[Player, Partial<Player['attributes']> | null]> = [];
+      for (const p of challengerPlayers) pvpBoostSnaps.push([p, applyBoostToPlayer(p)]);
+      for (const p of accepterPlayers) pvpBoostSnaps.push([p, applyBoostToPlayer(p)]);
       const duel = runPvpDuel(
         teamRowToEngineTeam(challenger),
         challengerPlayers,
@@ -674,6 +756,7 @@ export function handle(
         challenger.tactics,
         accepter.tactics,
       );
+      for (const [p, snap] of pvpBoostSnaps) restoreBoostSnapshot(p, snap);
 
       // Money flow — winner gets stake, loser pays it.
       if (duel.winnerTeamId === challenger.id) {
@@ -688,6 +771,9 @@ export function handle(
       // PvP counts toward both teams' daily caps.
       db.recordDuelUsed(challenger.id, pvpToday);
       db.recordDuelUsed(accepter.id, pvpToday);
+      // Tick boost duels-left for both sides; push expiry notices per team.
+      tickBoostsAfterDuel(challengerPlayers, (p) => notifyTeam(challenger.id, { kind: 'boost-expired', playerId: p.id }));
+      tickBoostsAfterDuel(accepterPlayers, (p) => notifyTeam(accepter.id, { kind: 'boost-expired', playerId: p.id }));
       for (const p of challengerPlayers) db.persistPlayer(p);
       for (const p of accepterPlayers) db.persistPlayer(p);
       db.recordMatch({
@@ -994,6 +1080,87 @@ export function handle(
       db.setTeamMoneyDay(team.id, team.money, team.day);
       log(`skin sold: ${team.tag} +$${payout.toLocaleString()} (${skin.weapon} ${skin.name})`);
       return { kind: 'skin-sold', skinId: msg.skinId, payout, newMoney: team.money };
+    }
+
+    // ---------- Booster packs (gacha) ----------
+
+    case 'list-boosts': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const cards = db.loadBoosts(conn.teamId) as BoostCard[];
+      const players = db.loadTeamPlayers(conn.teamId);
+      const activeByPlayer: Record<string, ActiveBoostWire> = {};
+      for (const p of players) {
+        if (p.activeBoost && p.activeBoost.duelsLeft > 0) {
+          activeByPlayer[p.id] = {
+            rarity: p.activeBoost.rarity,
+            name: p.activeBoost.name,
+            attrBonus: p.activeBoost.attrBonus,
+            duelsLeft: p.activeBoost.duelsLeft,
+            appliedAt: p.activeBoost.appliedAt,
+          };
+        }
+      }
+      return { kind: 'boost-inventory', cards, activeByPlayer };
+    }
+
+    case 'buy-boost-pack': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      if (team.money < BOOST_PACK_COST) {
+        return { kind: 'error', code: 'insufficient-funds', message: `Pack costs $${BOOST_PACK_COST.toLocaleString()} — you have $${team.money.toLocaleString()}.` };
+      }
+      team.money -= BOOST_PACK_COST;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      const card = rollBoostCard();
+      db.addBoost(team.id, card.id, card.rarity, JSON.stringify(card));
+      log(`boost pack: ${team.tag} -$${BOOST_PACK_COST} → ${card.rarity} ${card.name} (+${card.attrBonus} attrs × ${card.duels} duel${card.duels === 1 ? '' : 's'})`);
+      return { kind: 'boost-pack-opened', card, cost: BOOST_PACK_COST, newMoney: team.money };
+    }
+
+    case 'apply-boost': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const card = db.loadBoost(conn.teamId, msg.cardId) as BoostCard | null;
+      if (!card) return { kind: 'error', code: 'no-card', message: 'Card not in inventory.' };
+      const player = db.loadPlayer(msg.playerId);
+      if (!player || player.teamId !== team.id) {
+        return { kind: 'error', code: 'not-your-player', message: 'Player not on your roster.' };
+      }
+      if (player.activeBoost && player.activeBoost.duelsLeft > 0) {
+        return { kind: 'error', code: 'already-boosted', message: `${player.nickname} already has an active boost (${player.activeBoost.duelsLeft} duel${player.activeBoost.duelsLeft === 1 ? '' : 's'} left).` };
+      }
+      player.activeBoost = {
+        rarity: card.rarity,
+        name: card.name,
+        attrBonus: card.attrBonus,
+        duelsLeft: card.duels,
+        appliedAt: Date.now(),
+      };
+      db.persistPlayer(player);
+      db.removeBoost(conn.teamId, msg.cardId);
+      log(`boost applied: ${team.tag} ${player.nickname} ← ${card.rarity} ${card.name} (+${card.attrBonus}, ${card.duels} duels)`);
+      return {
+        kind: 'boost-applied',
+        cardId: msg.cardId,
+        playerId: msg.playerId,
+        active: {
+          rarity: card.rarity,
+          name: card.name,
+          attrBonus: card.attrBonus,
+          duelsLeft: card.duels,
+          appliedAt: player.activeBoost.appliedAt,
+        },
+      };
+    }
+
+    case 'discard-boost': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      if (!db.removeBoost(conn.teamId, msg.cardId)) {
+        return { kind: 'error', code: 'no-card', message: 'Card not in inventory.' };
+      }
+      return { kind: 'boost-discarded', cardId: msg.cardId };
     }
 
     // ---------- Phase 3: match history ----------

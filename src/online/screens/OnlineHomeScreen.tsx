@@ -27,6 +27,7 @@ import LoanOfferModal from './LoanOfferModal';
 import CoachesPanel from './CoachesPanel';
 import SponsorsPanel from './SponsorsPanel';
 import type { Player } from '../../types';
+import { fatigueTooltip, moraleTooltip } from '../recoveryHelpers';
 
 export default function OnlineHomeScreen() {
   const team = useOnline((s) => s.team);
@@ -188,9 +189,9 @@ export default function OnlineHomeScreen() {
 
         {/* ===== Time-skip ===== */}
         <div className="panel" style={{ padding: 14 }}>
-          <div className="panel-title">Advance Time <span className="muted small">— pay to train</span></div>
+          <div className="panel-title">Advance Time <span className="muted small">— skip = the only way time passes</span></div>
           <p className="muted small" style={{ marginTop: 2 }}>
-            Fast-forward your team clock. Each week boundary runs a weekly training tick (gains, possible regressions).
+            Online mode has no automatic clock — duels alone don't move days. Use this to advance.
             ${TIME_SKIP_COST_PER_DAY}/day · max {MAX_TIME_SKIP_DAYS} days/skip.
           </p>
           <div style={{ display: 'grid', gap: 10, marginTop: 8 }}>
@@ -206,7 +207,7 @@ export default function OnlineHomeScreen() {
               />
             </label>
             <div className="muted small">
-              Cost: <strong>${skipCost.toLocaleString()}</strong> · runs ~{Math.floor(skipDays / 7)} weekly training tick{Math.floor(skipDays / 7) === 1 ? '' : 's'}
+              Cost: <strong>${skipCost.toLocaleString()}</strong> · {Math.floor(skipDays / 7)} weekly training tick{Math.floor(skipDays / 7) === 1 ? '' : 's'}
             </div>
             <button
               className="btn btn-accent"
@@ -216,6 +217,18 @@ export default function OnlineHomeScreen() {
             >
               {skipPending ? 'Advancing…' : `Skip ${skipDays} day${skipDays === 1 ? '' : 's'}`}
             </button>
+
+            {/* What changes when you skip — surfaces the hidden mechanics. */}
+            <div style={{ marginTop: 4, padding: 8, borderRadius: 6, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <div className="muted small" style={{ marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 10 }}>
+                What changes when you skip
+              </div>
+              <ul className="muted small" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+                <li><strong>Every day:</strong> fatigue recovers (1.5–5.5 / day, scales with endurance); morale drifts toward 12</li>
+                <li><strong>Every 7-day chunk:</strong> training tick — attribute gains for young players, occasional regressions</li>
+                <li><strong>Loans + sponsors:</strong> auto-settle if their due date falls in the skip window</li>
+              </ul>
+            </div>
           </div>
         </div>
       </div>
@@ -260,8 +273,16 @@ export default function OnlineHomeScreen() {
                     <td className="num">{p.currentAbility}</td>
                     <td className="num">{p.potentialAbility}</td>
                     <td className="num">{p.form.toFixed(1)}</td>
-                    <td className={`num ${p.morale >= 14 ? 'text-win' : p.morale <= 7 ? 'text-loss' : ''}`}>{p.morale.toFixed(1)}</td>
-                    <td className={`num ${p.fatigue >= 60 ? 'text-loss' : p.fatigue <= 25 ? 'text-win' : ''}`}>{p.fatigue.toFixed(0)}%</td>
+                    <td
+                      className={`num ${p.morale >= 14 ? 'text-win' : p.morale <= 7 ? 'text-loss' : ''}`}
+                      title={moraleTooltip(p)}
+                      style={{ cursor: 'help' }}
+                    >{p.morale.toFixed(1)}</td>
+                    <td
+                      className={`num ${p.fatigue >= 60 ? 'text-loss' : p.fatigue <= 25 ? 'text-win' : ''}`}
+                      title={fatigueTooltip(p)}
+                      style={{ cursor: 'help' }}
+                    >{p.fatigue.toFixed(0)}%</td>
                     <td>
                       {myGoals.length === 0 ? (
                         <span className="muted small">—</span>

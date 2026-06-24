@@ -60,6 +60,51 @@ export interface TeamProfileFields {
 /** Fixed daily login bonus credited to the team's money on claim. */
 export const DAILY_BONUS_AMOUNT = 10_000;
 
+// ============ Booster packs (gacha) ============
+
+/** Card rarities — drives drop odds, attribute delta, and duel count. */
+export type BoostRarity = 'common' | 'rare' | 'epic' | 'legendary';
+
+export interface BoostCard {
+  id: string;
+  rarity: BoostRarity;
+  /** Flavour name. */
+  name: string;
+  /** Bonus added to each of {aim, reflexes, positioning, gameSense, clutch}. */
+  attrBonus: number;
+  /** How many ranked duels the card lasts once applied. Scrims don't tick. */
+  duels: number;
+  acquiredAt: number;
+}
+
+/** Drop odds (must sum to 1). Tuned so most pulls feel meaningful but
+ *  legendary stays a real moment. */
+export const BOOST_PACK_ODDS: Record<BoostRarity, number> = {
+  common: 0.70,
+  rare: 0.20,
+  epic: 0.09,
+  legendary: 0.01,
+};
+
+/** Per-rarity attribute bonus + duel count + display name. */
+export const BOOST_RARITY_META: Record<BoostRarity, { name: string; attrBonus: number; duels: number; color: string }> = {
+  common: { name: 'Coffee Buzz', attrBonus: 1, duels: 1, color: '#9aa0aa' },
+  rare: { name: 'Adrenaline Rush', attrBonus: 2, duels: 2, color: '#4b69ff' },
+  epic: { name: 'In The Zone', attrBonus: 3, duels: 3, color: '#d32ce6' },
+  legendary: { name: 'God Mode', attrBonus: 5, duels: 3, color: '#ffd700' },
+};
+
+/** Cost in $ to open one pack. One card per pack. */
+export const BOOST_PACK_COST = 5_000;
+
+export interface ActiveBoostWire {
+  rarity: BoostRarity;
+  name: string;
+  attrBonus: number;
+  duelsLeft: number;
+  appliedAt: number;
+}
+
 /** Base daily duel cap (PvP + AI). Resets at 00:00 UTC. */
 export const DAILY_DUEL_CAP = 15;
 /** Cost to purchase one extra duel slot for today. */
@@ -463,6 +508,11 @@ export type ClientMessage =
   | { kind: 'open-free-case' }
   | { kind: 'list-skins' }
   | { kind: 'sell-skin'; skinId: string }
+  // ----- Booster packs (gacha) -----
+  | { kind: 'list-boosts' }
+  | { kind: 'buy-boost-pack' }
+  | { kind: 'apply-boost'; cardId: string; playerId: string }
+  | { kind: 'discard-boost'; cardId: string }
   // ----- Admin (gated server-side by CSM_ADMIN_NICK env var) -----
   | { kind: 'admin-list-users' }
   | { kind: 'admin-reset-pin'; nickname: string; newPin: string }
@@ -543,6 +593,12 @@ export type ServerMessage =
   | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
   | { kind: 'skin-sold'; skinId: string; payout: number; newMoney: number }
+  // ----- Booster packs -----
+  | { kind: 'boost-inventory'; cards: BoostCard[]; activeByPlayer: Record<string, ActiveBoostWire> }
+  | { kind: 'boost-pack-opened'; card: BoostCard; cost: number; newMoney: number }
+  | { kind: 'boost-applied'; cardId: string; playerId: string; active: ActiveBoostWire }
+  | { kind: 'boost-discarded'; cardId: string }
+  | { kind: 'boost-expired'; playerId: string }
   // ----- Admin -----
   | { kind: 'admin-users'; rows: AdminUserRow[] }
   | { kind: 'admin-pin-reset'; nickname: string; newPin: string }
@@ -559,7 +615,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 /** Age past which players have a non-zero chance to retire each time-skip week. */
 export const RETIREMENT_AGE_THRESHOLD = 32;
 /** Sponsor payment cadence — auto-credit once per 30 real days while active. */

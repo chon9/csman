@@ -14,8 +14,10 @@ import type {
   LeaderboardRow,
   LiveFeedEntry,
   LoanOffer,
+  ActiveBoostWire,
   AdminTeamEditFields,
   AdminUserRow,
+  BoostCard,
   CaseSummary,
   MarketListing,
   MatchHistoryEntry,
@@ -39,7 +41,7 @@ import type {
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -132,6 +134,14 @@ interface OnlineState {
   /** Extra slots purchased today. Total cap = DAILY_DUEL_CAP + duelsExtra. */
   duelsExtra: number;
 
+  // ----- Boosters -----
+  /** Unapplied booster cards in inventory. */
+  boosts: BoostCard[];
+  /** Active boosts keyed by playerId — refreshed by every list-boosts call. */
+  activeBoosts: Record<string, ActiveBoostWire>;
+  /** Holds the last opened pack card for the reveal modal. Null after dismiss. */
+  boostReveal: BoostCard | null;
+
   // ----- Phase 7 -----
   tacticsPresets: TacticsPreset[];
   news: NewsItem[];
@@ -172,6 +182,12 @@ interface OnlineState {
   listSkins: () => void;
   sellSkin: (skinId: string) => void;
   dismissCaseOpening: () => void;
+  // Boosters
+  listBoosts: () => void;
+  buyBoostPack: () => void;
+  applyBoost: (cardId: string, playerId: string) => void;
+  discardBoost: (cardId: string) => void;
+  dismissBoostReveal: () => void;
   // Admin actions (no-op for non-admins; server still validates).
   adminListUsers: () => void;
   adminResetPin: (nickname: string, newPin: string) => void;
@@ -291,6 +307,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   caseOpening: null,
   duelsUsed: 0,
   duelsExtra: 0,
+  boosts: [],
+  activeBoosts: {},
+  boostReveal: null,
   tacticsPresets: [],
   news: [],
   directory: [],
@@ -756,6 +775,39 @@ export const useOnline = create<OnlineState>((set, get) => ({
           pushToast('success', `Skin sold: +$${msg.payout.toLocaleString()}.`);
           break;
         }
+        case 'boost-inventory': {
+          set({ boosts: msg.cards, activeBoosts: msg.activeByPlayer });
+          break;
+        }
+        case 'boost-pack-opened': {
+          const t = get().team;
+          set({
+            team: t ? { ...t, money: msg.newMoney } : t,
+            boosts: [msg.card, ...get().boosts],
+            boostReveal: msg.card,
+          });
+          break;
+        }
+        case 'boost-applied': {
+          set({
+            boosts: get().boosts.filter((c) => c.id !== msg.cardId),
+            activeBoosts: { ...get().activeBoosts, [msg.playerId]: msg.active },
+          });
+          pushToast('success', `Applied ${msg.active.name} (+${msg.active.attrBonus}, ${msg.active.duelsLeft} duel${msg.active.duelsLeft === 1 ? '' : 's'}).`);
+          break;
+        }
+        case 'boost-discarded': {
+          set({ boosts: get().boosts.filter((c) => c.id !== msg.cardId) });
+          break;
+        }
+        case 'boost-expired': {
+          const cur = { ...get().activeBoosts };
+          const name = cur[msg.playerId]?.name;
+          delete cur[msg.playerId];
+          set({ activeBoosts: cur });
+          if (name) pushToast('info', `${name} boost expired.`);
+          break;
+        }
         case 'admin-users': {
           set({ adminUsers: msg.rows });
           break;
@@ -847,6 +899,23 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   dismissCaseOpening() {
     set({ caseOpening: null });
+  },
+
+  // ----- Boosters -----
+  listBoosts() {
+    get().client?.send({ kind: 'list-boosts' });
+  },
+  buyBoostPack() {
+    get().client?.send({ kind: 'buy-boost-pack' });
+  },
+  applyBoost(cardId, playerId) {
+    get().client?.send({ kind: 'apply-boost', cardId, playerId });
+  },
+  discardBoost(cardId) {
+    get().client?.send({ kind: 'discard-boost', cardId });
+  },
+  dismissBoostReveal() {
+    set({ boostReveal: null });
   },
 
   // ----- Admin actions -----
