@@ -128,11 +128,11 @@ interface OnlineState {
   /** Set while a case-opening animation is in flight (modal active). */
   caseOpening: { caseId: string; strip: SkinStripEntry[]; winnerIndex: number; instance: SkinInstanceWire } | null;
 
-  // ----- Daily duel cap -----
-  /** Duels used today (resets at 00:00 UTC). */
+  // ----- Per-in-game-day duel cap -----
+  /** Duels used this in-game day (resets every ~4 real hours / 1 game day). */
   duelsUsed: number;
-  /** Extra slots purchased today. Total cap = DAILY_DUEL_CAP + duelsExtra. */
-  duelsExtra: number;
+  /** Pay-to-refill cycles used this in-game day. Max = MAX_REFILLS_PER_DAY. */
+  duelsRefillsUsed: number;
 
   // ----- Wall-clock auto-advance -----
   /** UTC ms of the next 4-hour boundary, when team.day will auto-tick +1. */
@@ -179,7 +179,7 @@ interface OnlineState {
   go: (screen: OnlineScreen) => void;
   // Daily bonus + cases.
   claimDailyBonus: () => void;
-  buyExtraDuel: () => void;
+  refillDuels: () => void;
   renewContract: (playerId: string) => void;
   listCases: () => void;
   openCase: (caseId: string) => void;
@@ -312,7 +312,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   skins: [],
   caseOpening: null,
   duelsUsed: 0,
-  duelsExtra: 0,
+  duelsRefillsUsed: 0,
   nextTickUtcMs: 0,
   boosts: [],
   activeBoosts: {},
@@ -405,7 +405,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
             dailyBonusAvailable: msg.dailyBonusAvailable,
             freeCaseAvailable: msg.freeCaseAvailable,
             duelsUsed: msg.duelsUsed,
-            duelsExtra: msg.duelsExtra,
+            duelsRefillsUsed: msg.duelsRefillsUsed,
             nextTickUtcMs: msg.nextTickUtcMs,
           });
           break;
@@ -736,13 +736,17 @@ export const useOnline = create<OnlineState>((set, get) => ({
           pushToast('success', `Daily bonus: +$${msg.amount.toLocaleString()}.`);
           break;
         }
-        case 'extra-duel-purchased': {
+        case 'duels-refilled': {
           const t = get().team;
           set({
             team: t ? { ...t, money: msg.newMoney } : t,
-            duelsExtra: msg.extra,
+            duelsUsed: 0,
+            duelsRefillsUsed: msg.refillsUsed,
           });
-          pushToast('success', `Bought an extra duel slot ($${msg.cost.toLocaleString()}). ${msg.remaining} duel${msg.remaining === 1 ? '' : 's'} left today.`);
+          pushToast(
+            'success',
+            `Duels refilled (-$${msg.cost.toLocaleString()}). ${msg.refillsLeft} refill${msg.refillsLeft === 1 ? '' : 's'} left this in-game day.`,
+          );
           break;
         }
         case 'contract-renewed': {
@@ -773,7 +777,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
           break;
         }
         case 'duel-stats': {
-          set({ duelsUsed: msg.used, duelsExtra: msg.extra });
+          set({ duelsUsed: msg.used, duelsRefillsUsed: msg.refillsUsed });
           break;
         }
         case 'case-list': {
@@ -914,8 +918,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   claimDailyBonus() {
     get().client?.send({ kind: 'claim-daily-bonus' });
   },
-  buyExtraDuel() {
-    get().client?.send({ kind: 'buy-extra-duel' });
+  refillDuels() {
+    get().client?.send({ kind: 'refill-duels' });
   },
   renewContract(playerId) {
     get().client?.send({ kind: 'renew-contract', playerId });

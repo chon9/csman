@@ -171,13 +171,17 @@ export const CONTRACT_RENEWAL_WAGE_MULT = 4;
 /** Threshold at which the UI starts warning the user a contract is running out. */
 export const CONTRACT_DUELS_WARN_AT = 8;
 
-/** Base daily duel cap (PvP + AI). Resets at 00:00 UTC. */
+/** Base duel cap per in-game day (PvP + AI). One in-game day = 4 real
+ *  hours, so this resets six times per real day. Scrims don't count. */
 export const DAILY_DUEL_CAP = 15;
-/** Cost to purchase one extra duel slot for today. */
-export const EXTRA_DUEL_COST = 5_000;
-/** Hard ceiling on extra slots a single team can buy in one day. Guards
- *  against typos / runaway scripts more than abuse. */
-export const MAX_EXTRA_DUELS_PER_DAY = 30;
+/** Cash cost per missing duel restored when the user clicks Refill.
+ *  Full refill of 15 missing duels = 15 × cost. */
+export const REFILL_COST_PER_DUEL = 1_500;
+/** Minimum charge on any refill (so 0-used refills aren't free). */
+export const MIN_REFILL_COST = 1_500;
+/** How many times a team can refill within one in-game day.
+ *  2 refills × 15 duels = 30 extra duels max (matches the old cap). */
+export const MAX_REFILLS_PER_DAY = 2;
 
 /** Slim case-card data sent to clients to render the case picker. The skin
  *  pool itself isn't sent — clients receive the opened skin in `case-opened`. */
@@ -567,8 +571,8 @@ export type ClientMessage =
   | { kind: 'mint-free-agent'; tier: MintTier }
   // ----- Daily login bonus -----
   | { kind: 'claim-daily-bonus' }
-  // ----- Duel cap: buy an extra slot for today -----
-  | { kind: 'buy-extra-duel' }
+  // ----- Duel cap: refill ALL missing duels for today (capped per day) -----
+  | { kind: 'refill-duels' }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
@@ -594,7 +598,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { kind: 'hello-ok'; sessionToken: string; hasTeam: boolean; isAdmin: boolean }
   | { kind: 'hello-bad-pin' }
-  | { kind: 'state'; team: OnlineTeam; players: Player[]; dailyBonusAvailable: boolean; freeCaseAvailable: boolean; duelsUsed: number; duelsExtra: number; nextTickUtcMs: number }
+  | { kind: 'state'; team: OnlineTeam; players: Player[]; dailyBonusAvailable: boolean; freeCaseAvailable: boolean; duelsUsed: number; duelsRefillsUsed: number; nextTickUtcMs: number }
   | { kind: 'team-created'; team: OnlineTeam }
   | { kind: 'players-spawned'; players: Player[] }
   | { kind: 'error'; code: string; message: string }
@@ -656,8 +660,8 @@ export type ServerMessage =
   | { kind: 'free-agent-minted'; player: Player; cost: number; tier: MintTier }
   // ----- Daily bonus + cases -----
   | { kind: 'daily-bonus-claimed'; amount: number; newMoney: number; nextClaimUtc: string }
-  | { kind: 'duel-stats'; used: number; extra: number; cap: number; remaining: number }
-  | { kind: 'extra-duel-purchased'; cost: number; newMoney: number; remaining: number; extra: number }
+  | { kind: 'duel-stats'; used: number; refillsUsed: number; cap: number; remaining: number }
+  | { kind: 'duels-refilled'; cost: number; newMoney: number; refillsUsed: number; refillsLeft: number }
   | { kind: 'contract-renewed'; playerId: string; cost: number; newMoney: number; duelsRemaining: number }
   | { kind: 'player-expired'; playerId: string; nickname: string }
   | { kind: 'case-list'; cases: CaseSummary[]; freeCaseId: string; freeCaseAvailable: boolean }
@@ -686,7 +690,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 17;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

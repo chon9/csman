@@ -6750,3 +6750,41 @@ input[type='range'] {
   .table.table-dense td:first-child,
   .table.table-dense th:first-child { white-space: normal; }
 }
+
+/* ===== Splash + Menu mobile scaling ===== */
+@media (max-width: 600px) {
+  .splash-screen { padding: 24px 16px !important; }
+  .splash-mark-cs { font-size: 64px !important; letter-spacing: 4px !important; }
+  .splash-mark-mgr { font-size: 38px !important; letter-spacing: 6px !important; }
+  .splash-tagline { font-size: 12px !important; padding: 0 10px; }
+  .splash-progress { width: 80vw !important; max-width: 320px; }
+
+  .menu-screen { padding: 24px 16px !important; }
+  .menu-content { max-width: 100% !important; }
+  .menu-brand-cs { font-size: 38px !important; letter-spacing: 4px !important; }
+  .menu-brand-mgr { font-size: 18px !important; letter-spacing: 6px !important; }
+  .menu-tagline { font-size: 12px !important; padding: 0 6px; }
+  .menu-btn { padding: 12px 14px !important; font-size: 13px !important; }
+  .menu-version { font-size: 10px !important; }
+}
+
+/* ===== Prevent iOS Safari from auto-zooming on input focus =====
+   Trigger threshold is 16px. Bumping inputs to 16px on touch-capable
+   viewports (≤900px catches tablets too) kills the zoom without
+   wrecking the desktop layout. */
+@media (max-width: 900px) {
+  .input,
+  .input-tight,
+  .input.input-tight,
+  .search-input,
+  .chat-input input,
+  input[type='text'],
+  input[type='number'],
+  input[type='password'],
+  input[type='email'],
+  input[type='search'],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}

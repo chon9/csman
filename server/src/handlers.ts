@@ -25,9 +25,10 @@ import {
   CONTRACT_RENEWAL_WAGE_MULT,
   DAILY_BONUS_AMOUNT,
   DAILY_DUEL_CAP,
-  EXTRA_DUEL_COST,
   FREE_AGENT_POOL_SIZE,
-  MAX_EXTRA_DUELS_PER_DAY,
+  MAX_REFILLS_PER_DAY,
+  MIN_REFILL_COST,
+  REFILL_COST_PER_DUEL,
   INITIAL_ROSTER_SIZE,
   MAX_DUEL_STAKE,
   MAX_LOAN_DAYS,
@@ -337,7 +338,12 @@ function buildState(db: DB, teamId: string): ServerMessage | null {
   if (!team) return null;
   const players: Player[] = db.loadTeamPlayers(teamId);
   const today = new Date().toISOString().slice(0, 10);
-  const duelStats = db.getDuelStats(teamId, today);
+  // Duel cap counters key off the team's in-game day (resets every 4 real
+  // hours / 1 game day) so the cadence matches the rest of the time loop.
+  // Daily bonus + free case stay on real UTC date — they're real-world
+  // login rewards, not gameplay-pace gates.
+  const gameDayKey = `day-${team.day}`;
+  const duelStats = db.getDuelStats(teamId, gameDayKey);
   return {
     kind: 'state',
     team: teamRowToOnline(team),
@@ -345,7 +351,7 @@ function buildState(db: DB, teamId: string): ServerMessage | null {
     dailyBonusAvailable: db.getDailyClaimDate(teamId) !== today,
     freeCaseAvailable: db.getFreeCaseDate(teamId) !== today,
     duelsUsed: duelStats.used,
-    duelsExtra: duelStats.extra,
+    duelsRefillsUsed: duelStats.refillsUsed,
     nextTickUtcMs: nextAutoTickUtcMs(),
   };
 }
@@ -501,18 +507,19 @@ export function handle(
       if (team.playerIds.length < 5) {
         return { kind: 'error', code: 'roster-incomplete', message: 'Need 5 players to duel.' };
       }
-      // Daily duel cap — counts both AI and PvP duels. Scrims (stake=0)
-      // skip the check so unranked practice stays unlimited.
+      // Per-in-game-day duel cap — counts both AI and PvP duels. Scrims
+      // (stake=0) skip the check so unranked practice stays unlimited.
+      // Cap resets every in-game day (≈ every 4 real hours).
       const isScrim = msg.stake === 0;
-      const today = new Date().toISOString().slice(0, 10);
+      const today = new Date().toISOString().slice(0, 10); // for daily-bonus path; unrelated to duel cap
+      const gameDayKey = `day-${team.day}`;
       if (!isScrim) {
-        const stats = db.getDuelStats(team.id, today);
-        const cap = DAILY_DUEL_CAP + stats.extra;
-        if (stats.used >= cap) {
+        const stats = db.getDuelStats(team.id, gameDayKey);
+        if (stats.used >= DAILY_DUEL_CAP) {
           return {
             kind: 'error',
             code: 'duel-cap',
-            message: `Daily duel cap (${cap}) reached. Buy an extra slot ($${EXTRA_DUEL_COST.toLocaleString()}) or wait until 00:00 UTC.`,
+            message: `Duel cap (${DAILY_DUEL_CAP}/in-game day) reached. Refill from the home screen or wait for the next tick.`,
           };
         }
       }
@@ -536,7 +543,7 @@ export function handle(
       db.setTeamMoneyDay(team.id, team.money, team.day);
       // Tick the daily duel counter — scrims don't count toward the cap.
       if (!isScrim) {
-        db.recordDuelUsed(team.id, today);
+        db.recordDuelUsed(team.id, gameDayKey);
         // Decrement boost duels-left; emit boost-expired pushes if any ran out.
         tickBoostsAfterDuel(players, (p) => {
           notifyTeam(team.id, { kind: 'boost-expired', playerId: p.id });
@@ -793,22 +800,25 @@ export function handle(
         return { kind: 'error', code: 'challenger-broke', message: 'Challenger can no longer cover the stake.' };
       }
       // Both sides have to have a duel slot available — PvP counts for both.
-      const pvpToday = new Date().toISOString().slice(0, 10);
-      const accepterStats = db.getDuelStats(accepter.id, pvpToday);
-      const challengerStats = db.getDuelStats(challenger.id, pvpToday);
-      if (accepterStats.used >= DAILY_DUEL_CAP + accepterStats.extra) {
+      // Each team uses ITS OWN in-game day as the cap key (they may be at
+      // slightly different team.day values).
+      const accepterDayKey = `day-${accepter.day}`;
+      const challengerDayKey = `day-${challenger.day}`;
+      const accepterStats = db.getDuelStats(accepter.id, accepterDayKey);
+      const challengerStats = db.getDuelStats(challenger.id, challengerDayKey);
+      if (accepterStats.used >= DAILY_DUEL_CAP) {
         return {
           kind: 'error',
           code: 'duel-cap',
-          message: `You've hit your daily duel cap (${DAILY_DUEL_CAP + accepterStats.extra}). Buy an extra slot or wait until 00:00 UTC.`,
+          message: `You've hit your in-game-day duel cap (${DAILY_DUEL_CAP}). Refill from the home screen or wait for the next tick.`,
         };
       }
-      if (challengerStats.used >= DAILY_DUEL_CAP + challengerStats.extra) {
+      if (challengerStats.used >= DAILY_DUEL_CAP) {
         db.removeChallenge(challenge.id);
         return {
           kind: 'error',
           code: 'challenger-capped',
-          message: 'Challenger has hit their daily duel cap — challenge auto-cancelled.',
+          message: 'Challenger has hit their in-game-day duel cap — challenge auto-cancelled.',
         };
       }
 
@@ -842,9 +852,9 @@ export function handle(
       }
       db.setTeamMoneyDay(challenger.id, challenger.money, challenger.day);
       db.setTeamMoneyDay(accepter.id, accepter.money, accepter.day);
-      // PvP counts toward both teams' daily caps.
-      db.recordDuelUsed(challenger.id, pvpToday);
-      db.recordDuelUsed(accepter.id, pvpToday);
+      // PvP counts toward both teams' in-game-day caps.
+      db.recordDuelUsed(challenger.id, challengerDayKey);
+      db.recordDuelUsed(accepter.id, accepterDayKey);
       // Tick boost duels-left for both sides; push expiry notices per team.
       tickBoostsAfterDuel(challengerPlayers, (p) => notifyTeam(challenger.id, { kind: 'boost-expired', playerId: p.id }));
       tickBoostsAfterDuel(accepterPlayers, (p) => notifyTeam(accepter.id, { kind: 'boost-expired', playerId: p.id }));
@@ -1056,37 +1066,45 @@ export function handle(
       };
     }
 
-    case 'buy-extra-duel': {
+    case 'refill-duels': {
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
       const team = db.loadTeam(conn.teamId);
       if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
-      const today = new Date().toISOString().slice(0, 10);
-      const stats = db.getDuelStats(team.id, today);
-      if (stats.extra >= MAX_EXTRA_DUELS_PER_DAY) {
+      const gameDayKey = `day-${team.day}`;
+      const stats = db.getDuelStats(team.id, gameDayKey);
+      if (stats.refillsUsed >= MAX_REFILLS_PER_DAY) {
         return {
           kind: 'error',
-          code: 'extra-cap',
-          message: `You've already bought ${stats.extra} extra duel slots today — that's the daily ceiling.`,
+          code: 'refill-cap',
+          message: `You've already refilled ${stats.refillsUsed}/${MAX_REFILLS_PER_DAY} times this in-game day. Wait for the next tick.`,
         };
       }
-      if (team.money < EXTRA_DUEL_COST) {
+      if (stats.used <= 0) {
+        return {
+          kind: 'error',
+          code: 'nothing-to-refill',
+          message: 'Duel slots are already full — nothing to refill.',
+        };
+      }
+      const cost = Math.max(MIN_REFILL_COST, stats.used * REFILL_COST_PER_DUEL);
+      if (team.money < cost) {
         return {
           kind: 'error',
           code: 'insufficient-funds',
-          message: `Need $${EXTRA_DUEL_COST.toLocaleString()} for an extra slot — you have $${team.money.toLocaleString()}.`,
+          message: `Refilling ${stats.used} duel${stats.used === 1 ? '' : 's'} costs $${cost.toLocaleString()} — you have $${team.money.toLocaleString()}.`,
         };
       }
-      team.money -= EXTRA_DUEL_COST;
+      team.money -= cost;
       db.setTeamMoneyDay(team.id, team.money, team.day);
-      const next = db.recordDuelExtraPurchased(team.id, today);
-      const remaining = DAILY_DUEL_CAP + next.extra - next.used;
-      log(`duel-cap: ${team.tag} bought slot #${next.extra} ($${EXTRA_DUEL_COST}) → ${remaining} left today`);
+      const next = db.recordDuelRefill(team.id, gameDayKey);
+      const refillsLeft = Math.max(0, MAX_REFILLS_PER_DAY - next.refillsUsed);
+      log(`duel-cap: ${team.tag} refilled ${stats.used} duels for $${cost} (${next.refillsUsed}/${MAX_REFILLS_PER_DAY} refills used)`);
       return {
-        kind: 'extra-duel-purchased',
-        cost: EXTRA_DUEL_COST,
+        kind: 'duels-refilled',
+        cost,
         newMoney: team.money,
-        remaining,
-        extra: next.extra,
+        refillsUsed: next.refillsUsed,
+        refillsLeft,
       };
     }
 

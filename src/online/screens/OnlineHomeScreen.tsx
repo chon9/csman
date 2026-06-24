@@ -9,10 +9,12 @@ import {
   CONTRACT_RENEWAL_DUELS,
   CONTRACT_RENEWAL_WAGE_MULT,
   DAILY_DUEL_CAP,
-  EXTRA_DUEL_COST,
   MAX_DUEL_STAKE,
+  MAX_REFILLS_PER_DAY,
   MAX_TIME_SKIP_DAYS,
   MIN_DUEL_STAKE,
+  MIN_REFILL_COST,
+  REFILL_COST_PER_DUEL,
   TIME_SKIP_COST_PER_DAY,
 } from '../protocol';
 import type { MatchFormat } from '../../types';
@@ -41,8 +43,8 @@ export default function OnlineHomeScreen() {
   const refresh = useOnline((s) => s.refreshState);
   const spawnInitialRoster = useOnline((s) => s.spawnInitialRoster);
   const duelsUsed = useOnline((s) => s.duelsUsed);
-  const duelsExtra = useOnline((s) => s.duelsExtra);
-  const buyExtraDuel = useOnline((s) => s.buyExtraDuel);
+  const duelsRefillsUsed = useOnline((s) => s.duelsRefillsUsed);
+  const refillDuels = useOnline((s) => s.refillDuels);
   const renewContract = useOnline((s) => s.renewContract);
   const registerAiDuel = useOnline((s) => s.registerAiDuel);
   const timeSkip = useOnline((s) => s.timeSkip);
@@ -109,9 +111,9 @@ export default function OnlineHomeScreen() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <DuelCapChip
             used={duelsUsed}
-            extra={duelsExtra}
+            refillsUsed={duelsRefillsUsed}
             money={team.money}
-            onBuyExtra={buyExtraDuel}
+            onRefill={refillDuels}
           />
           <button className="btn btn-tiny" onClick={refresh} title="Refresh state">↻</button>
           <button className="btn btn-tiny" onClick={() => setProfileOpen(true)} title="Edit bio, color, social links">
@@ -381,33 +383,44 @@ function StatCard({ label, value }: { label: string; value: string }) {
 
 interface DuelCapChipProps {
   used: number;
-  extra: number;
+  refillsUsed: number;
   money: number;
-  onBuyExtra: () => void;
+  onRefill: () => void;
 }
 
-function DuelCapChip({ used, extra, money, onBuyExtra }: DuelCapChipProps): React.ReactElement {
-  const cap = DAILY_DUEL_CAP + extra;
-  const remaining = Math.max(0, cap - used);
+function DuelCapChip({ used, refillsUsed, money, onRefill }: DuelCapChipProps): React.ReactElement {
+  const remaining = Math.max(0, DAILY_DUEL_CAP - used);
+  const refillsLeft = Math.max(0, MAX_REFILLS_PER_DAY - refillsUsed);
   const chipClass =
     remaining === 0 ? 'duel-cap-chip-out' :
     remaining <= 3 ? 'duel-cap-chip-low' : '';
-  const canBuy = money >= EXTRA_DUEL_COST;
-  const title = remaining === 0
-    ? `Daily duel cap hit. Buy extra slot for $${EXTRA_DUEL_COST.toLocaleString()} or wait until 00:00 UTC.`
-    : `${remaining}/${cap} duels left today (resets at 00:00 UTC)`;
+  const refillCost = Math.max(MIN_REFILL_COST, used * REFILL_COST_PER_DUEL);
+  const canRefill = refillsLeft > 0 && used > 0 && money >= refillCost;
+  const refillDisabledTitle =
+    refillsLeft <= 0 ? `No refills left this in-game day (cap ${MAX_REFILLS_PER_DAY}).` :
+    used <= 0 ? 'Already full.' :
+    money < refillCost ? `Need $${refillCost.toLocaleString()} to refill ${used} duel${used === 1 ? '' : 's'}.` :
+    '';
   return (
     <>
-      <span className={`duel-cap-chip ${chipClass}`} title={title}>
-        ⚔ {remaining}/{cap} left today
+      <span
+        className={`duel-cap-chip ${chipClass}`}
+        title={`${remaining}/${DAILY_DUEL_CAP} duels left this in-game day · ${refillsLeft}/${MAX_REFILLS_PER_DAY} refills left · resets when the day ticks (~every 4 real hours)`}
+      >
+        ⚔ {remaining}/{DAILY_DUEL_CAP} left
       </span>
       <button
         className="duel-cap-buy"
-        onClick={onBuyExtra}
-        disabled={!canBuy}
-        title={canBuy ? `Buy +1 duel slot for $${EXTRA_DUEL_COST.toLocaleString()}` : `Need $${EXTRA_DUEL_COST.toLocaleString()}`}
+        onClick={() => {
+          if (!canRefill) return;
+          if (window.confirm(`Refill ${used} missing duel${used === 1 ? '' : 's'} for $${refillCost.toLocaleString()}?`)) {
+            onRefill();
+          }
+        }}
+        disabled={!canRefill}
+        title={canRefill ? `Refill ${used} duel${used === 1 ? '' : 's'} for $${refillCost.toLocaleString()} (${refillsLeft} refills left)` : refillDisabledTitle}
       >
-        + slot · ${EXTRA_DUEL_COST.toLocaleString()}
+        ↻ Refill · ${refillCost.toLocaleString()} ({refillsLeft})
       </button>
     </>
   );

@@ -493,32 +493,39 @@ export function openDb(path: string) {
 
   // -------- Daily duel cap --------
 
+  // Note: the persisted columns are duels_date / duels_used / duels_extra.
+  // We now use them as: duels_date = "day-{team.day}" (in-game day key),
+  // duels_used = duels played this in-game day, duels_extra = REFILLS used
+  // (capped at MAX_REFILLS_PER_DAY). Keeping the column names avoids a
+  // destructive migration on existing databases.
   const getDuelCounters = db.prepare(
     `SELECT duels_date, duels_used, duels_extra FROM teams WHERE id = ?`,
   );
   const setDuelCounters = db.prepare(
     `UPDATE teams SET duels_date = ?, duels_used = ?, duels_extra = ? WHERE id = ?`,
   );
-  /** Read the team's duel counters, auto-resetting them if the stored date
-   *  is not today (UTC). Always returns today's values. */
-  function getDuelStats(teamId: string, today: string): { used: number; extra: number } {
+  /** Read the team's duel counters, auto-resetting them if the stored day
+   *  key is not the current in-game day. Always returns today's values. */
+  function getDuelStats(teamId: string, todayKey: string): { used: number; refillsUsed: number } {
     const r = getDuelCounters.get(teamId) as
       | { duels_date: string | null; duels_used: number | null; duels_extra: number | null }
       | undefined;
-    if (!r) return { used: 0, extra: 0 };
-    if ((r.duels_date ?? '') !== today) return { used: 0, extra: 0 };
-    return { used: r.duels_used ?? 0, extra: r.duels_extra ?? 0 };
+    if (!r) return { used: 0, refillsUsed: 0 };
+    if ((r.duels_date ?? '') !== todayKey) return { used: 0, refillsUsed: 0 };
+    return { used: r.duels_used ?? 0, refillsUsed: r.duels_extra ?? 0 };
   }
-  function recordDuelUsed(teamId: string, today: string): { used: number; extra: number } {
-    const cur = getDuelStats(teamId, today);
-    const next = { used: cur.used + 1, extra: cur.extra };
-    setDuelCounters.run(today, next.used, next.extra, teamId);
+  function recordDuelUsed(teamId: string, todayKey: string): { used: number; refillsUsed: number } {
+    const cur = getDuelStats(teamId, todayKey);
+    const next = { used: cur.used + 1, refillsUsed: cur.refillsUsed };
+    setDuelCounters.run(todayKey, next.used, next.refillsUsed, teamId);
     return next;
   }
-  function recordDuelExtraPurchased(teamId: string, today: string): { used: number; extra: number } {
-    const cur = getDuelStats(teamId, today);
-    const next = { used: cur.used, extra: cur.extra + 1 };
-    setDuelCounters.run(today, next.used, next.extra, teamId);
+  /** Pay-to-refill: reset duels_used to 0, increment refills counter.
+   *  Caller validates the per-day refill cap + charges money. */
+  function recordDuelRefill(teamId: string, todayKey: string): { used: number; refillsUsed: number } {
+    const cur = getDuelStats(teamId, todayKey);
+    const next = { used: 0, refillsUsed: cur.refillsUsed + 1 };
+    setDuelCounters.run(todayKey, next.used, next.refillsUsed, teamId);
     return next;
   }
 
@@ -1604,7 +1611,7 @@ export function openDb(path: string) {
     markFreeCaseClaim,
     getDuelStats,
     recordDuelUsed,
-    recordDuelExtraPurchased,
+    recordDuelRefill,
     getAutoTickAnchor,
     setAutoTickAnchor,
     addSkin,
