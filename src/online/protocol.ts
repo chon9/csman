@@ -156,6 +156,30 @@ export interface ActiveBoostWire {
   appliedAt: number;
 }
 
+// ============ Morale mini-game (rock-paper-scissors team building) ============
+
+export type RpsChoice = 'rock' | 'paper' | 'scissors';
+export type RpsOutcome = 'win' | 'tie' | 'loss';
+
+/** Free plays per in-game day. Cap = 5 (max +10 morale from perfect play). */
+export const MORALE_GAME_PLAYS_PER_DAY = 5;
+/** Morale delta applied to each of the 5 starters per outcome. */
+export const MORALE_GAME_DELTAS: Record<RpsOutcome, number> = {
+  win: 2,
+  tie: 1,
+  loss: 0, // generous — losses cost nothing so the game stays a real recovery tool
+};
+
+export interface MoraleGameResult {
+  yourPick: RpsChoice;
+  aiPick: RpsChoice;
+  outcome: RpsOutcome;
+  /** Morale change applied to each starter. */
+  moraleDelta: number;
+  /** Plays remaining this in-game day after this one. */
+  playsLeft: number;
+}
+
 // ============ Massage center (gacha-style spa visit) ============
 
 /** Cost per spa visit. Random class 1-10 masseuse, always reduces fatigue;
@@ -638,6 +662,8 @@ export type ClientMessage =
   | { kind: 'refill-duels' }
   // ----- Massage center: book a random-class spa session for the starters -----
   | { kind: 'book-massage' }
+  // ----- Morale mini-game: play one round of rock-paper-scissors -----
+  | { kind: 'play-morale-game'; choice: RpsChoice }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
@@ -663,7 +689,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { kind: 'hello-ok'; sessionToken: string; hasTeam: boolean; isAdmin: boolean }
   | { kind: 'hello-bad-pin' }
-  | { kind: 'state'; team: OnlineTeam; players: Player[]; dailyBonusAvailable: boolean; freeCaseAvailable: boolean; duelsUsed: number; duelsRefillsUsed: number; nextTickUtcMs: number }
+  | { kind: 'state'; team: OnlineTeam; players: Player[]; dailyBonusAvailable: boolean; freeCaseAvailable: boolean; duelsUsed: number; duelsRefillsUsed: number; moraleGamePlaysUsed: number; nextTickUtcMs: number }
   | { kind: 'team-created'; team: OnlineTeam }
   | { kind: 'players-spawned'; players: Player[] }
   | { kind: 'error'; code: string; message: string }
@@ -730,6 +756,7 @@ export type ServerMessage =
   | { kind: 'contract-renewed'; playerId: string; cost: number; newMoney: number; duelsRemaining: number }
   | { kind: 'player-expired'; playerId: string; nickname: string }
   | { kind: 'massage-booked'; outcome: MassageOutcome; cost: number; newMoney: number; nextEligibleGameDay: number }
+  | { kind: 'morale-game-result'; result: MoraleGameResult }
   | { kind: 'case-list'; cases: CaseSummary[]; freeCaseId: string; freeCaseAvailable: boolean }
   | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
@@ -756,7 +783,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 20;
+export const PROTOCOL_VERSION = 21;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

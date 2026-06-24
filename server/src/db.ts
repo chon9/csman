@@ -335,6 +335,9 @@ export function openDb(path: string) {
   tryAddColumn('teams', 'last_auto_tick_at', 'INTEGER', '0');
   // In-game day of the most recent massage. 0 = never booked.
   tryAddColumn('teams', 'last_massage_day', 'INTEGER', '0');
+  // Morale mini-game plays this in-game day (reset when day changes).
+  tryAddColumn('teams', 'morale_game_day', 'INTEGER', '0');
+  tryAddColumn('teams', 'morale_game_plays', 'INTEGER', '0');
   // Skin inventory rows owned by this team — JSON-blob per skin instance.
   db.exec(`
     CREATE TABLE IF NOT EXISTS skin_inventory (
@@ -553,6 +556,24 @@ export function openDb(path: string) {
   }
   function setLastMassageDay(teamId: string, day: number): void {
     setLastMassageDayStmt.run(day, teamId);
+  }
+
+  // -------- Morale mini-game --------
+
+  const getMoraleGameStmt = db.prepare(`SELECT morale_game_day, morale_game_plays FROM teams WHERE id = ?`);
+  const setMoraleGameStmt = db.prepare(`UPDATE teams SET morale_game_day = ?, morale_game_plays = ? WHERE id = ?`);
+  /** Returns plays USED this in-game day (auto-resets when day changes). */
+  function getMoraleGamePlays(teamId: string, gameDay: number): number {
+    const r = getMoraleGameStmt.get(teamId) as { morale_game_day: number | null; morale_game_plays: number | null } | undefined;
+    if (!r) return 0;
+    if ((r.morale_game_day ?? 0) !== gameDay) return 0;
+    return r.morale_game_plays ?? 0;
+  }
+  function recordMoraleGamePlay(teamId: string, gameDay: number): number {
+    const cur = getMoraleGamePlays(teamId, gameDay);
+    const next = cur + 1;
+    setMoraleGameStmt.run(gameDay, next, teamId);
+    return next;
   }
 
   // -------- Skin inventory --------
@@ -1643,6 +1664,8 @@ export function openDb(path: string) {
     setAutoTickAnchor,
     getLastMassageDay,
     setLastMassageDay,
+    getMoraleGamePlays,
+    recordMoraleGamePlay,
     addSkin,
     loadSkins,
     loadSkin,

@@ -20,6 +20,8 @@ import type {
   BoostCard,
   CaseSummary,
   MassageOutcome,
+  MoraleGameResult,
+  RpsChoice,
   MarketListing,
   MatchHistoryEntry,
   MintTier,
@@ -42,7 +44,7 @@ import type {
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'morale-game';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -145,6 +147,14 @@ interface OnlineState {
   /** In-game day after which a new massage can be booked. */
   massageNextEligibleDay: number;
 
+  // ----- Morale mini-game -----
+  /** Plays USED this in-game day (resets when the team's game-day ticks). */
+  moraleGamePlaysUsed: number;
+  /** Last round result for the reveal panel — kept until next play. */
+  moraleGameLast: MoraleGameResult | null;
+  /** Rolling tally of today's session, cleared at next day. */
+  moraleGameSession: { wins: number; ties: number; losses: number; totalMorale: number };
+
   // ----- Boosters -----
   /** Unapplied booster cards in inventory. */
   boosts: BoostCard[];
@@ -190,6 +200,7 @@ interface OnlineState {
   renewContract: (playerId: string) => void;
   bookMassage: () => void;
   dismissMassageReveal: () => void;
+  playMoraleGame: (choice: RpsChoice) => void;
   listCases: () => void;
   openCase: (caseId: string) => void;
   openFreeCase: () => void;
@@ -328,6 +339,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   boostReveal: null,
   massageReveal: null,
   massageNextEligibleDay: 0,
+  moraleGamePlaysUsed: 0,
+  moraleGameLast: null,
+  moraleGameSession: { wins: 0, ties: 0, losses: 0, totalMorale: 0 },
   tacticsPresets: [],
   news: [],
   directory: [],
@@ -417,6 +431,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
         case 'state': {
           const players: Record<string, Player> = {};
           for (const p of msg.players) players[p.id] = p;
+          // Reset the local morale-game tally when the server tells us the
+          // play counter rolled over (new in-game day).
+          const moraleSessionReset = msg.moraleGamePlaysUsed < get().moraleGamePlaysUsed;
           set({
             team: msg.team,
             players,
@@ -424,6 +441,11 @@ export const useOnline = create<OnlineState>((set, get) => ({
             freeCaseAvailable: msg.freeCaseAvailable,
             duelsUsed: msg.duelsUsed,
             duelsRefillsUsed: msg.duelsRefillsUsed,
+            moraleGamePlaysUsed: msg.moraleGamePlaysUsed,
+            ...(moraleSessionReset ? {
+              moraleGameLast: null,
+              moraleGameSession: { wins: 0, ties: 0, losses: 0, totalMorale: 0 },
+            } : {}),
             nextTickUtcMs: msg.nextTickUtcMs,
           });
           break;
@@ -767,6 +789,25 @@ export const useOnline = create<OnlineState>((set, get) => ({
           );
           break;
         }
+        case 'morale-game-result': {
+          const cur = get().moraleGameSession;
+          const next = {
+            wins: cur.wins + (msg.result.outcome === 'win' ? 1 : 0),
+            ties: cur.ties + (msg.result.outcome === 'tie' ? 1 : 0),
+            losses: cur.losses + (msg.result.outcome === 'loss' ? 1 : 0),
+            totalMorale: cur.totalMorale + msg.result.moraleDelta,
+          };
+          set({
+            moraleGameLast: msg.result,
+            moraleGameSession: next,
+            // playsLeft = cap - used → used = cap - playsLeft. Hardcode 5
+            // here too so a stale constant on the client doesn't desync.
+            moraleGamePlaysUsed: 5 - msg.result.playsLeft,
+          });
+          // Refresh state so roster table picks up the new morale values.
+          client.send({ kind: 'refresh-state' });
+          break;
+        }
         case 'massage-booked': {
           const t = get().team;
           set({
@@ -964,6 +1005,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   dismissMassageReveal() {
     set({ massageReveal: null });
+  },
+  playMoraleGame(choice) {
+    get().client?.send({ kind: 'play-morale-game', choice });
   },
   listCases() {
     get().client?.send({ kind: 'list-cases' });

@@ -30,9 +30,13 @@ import {
   MASSAGE_COST,
   MAX_REFILLS_PER_DAY,
   MIN_REFILL_COST,
+  MORALE_GAME_DELTAS,
+  MORALE_GAME_PLAYS_PER_DAY,
   REFILL_COST_PER_DUEL,
   massageEffects,
   type MassageMasseuse,
+  type RpsChoice,
+  type RpsOutcome,
   INITIAL_ROSTER_SIZE,
   MAX_DUEL_STAKE,
   MAX_LOAN_DAYS,
@@ -423,6 +427,7 @@ function buildState(db: DB, teamId: string): ServerMessage | null {
     freeCaseAvailable: db.getFreeCaseDate(teamId) !== today,
     duelsUsed: duelStats.used,
     duelsRefillsUsed: duelStats.refillsUsed,
+    moraleGamePlaysUsed: db.getMoraleGamePlays(teamId, team.day),
     nextTickUtcMs: nextAutoTickUtcMs(),
   };
 }
@@ -1276,6 +1281,57 @@ export function handle(
         cost: MASSAGE_COST,
         newMoney: team.money,
         nextEligibleGameDay: team.day + MASSAGE_COOLDOWN_GAME_DAYS,
+      };
+    }
+
+    case 'play-morale-game': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      if (team.playerIds.length < 5) {
+        return { kind: 'error', code: 'roster-incomplete', message: 'Need 5 players on the roster.' };
+      }
+      const choices: readonly RpsChoice[] = ['rock', 'paper', 'scissors'] as const;
+      if (!choices.includes(msg.choice)) {
+        return { kind: 'error', code: 'bad-choice', message: 'Pick rock, paper, or scissors.' };
+      }
+      const playsUsed = db.getMoraleGamePlays(team.id, team.day);
+      if (playsUsed >= MORALE_GAME_PLAYS_PER_DAY) {
+        return {
+          kind: 'error',
+          code: 'morale-game-cap',
+          message: `Team's done with team-building today — back at next game-day tick.`,
+        };
+      }
+      const aiPick: RpsChoice = choices[Math.floor(Math.random() * choices.length)];
+      let outcome: RpsOutcome = 'tie';
+      if (aiPick !== msg.choice) {
+        const winsAgainst: Record<RpsChoice, RpsChoice> = {
+          rock: 'scissors',
+          paper: 'rock',
+          scissors: 'paper',
+        };
+        outcome = winsAgainst[msg.choice] === aiPick ? 'win' : 'loss';
+      }
+      const moraleDelta = MORALE_GAME_DELTAS[outcome];
+      if (moraleDelta !== 0) {
+        const players = db.loadTeamPlayers(team.id);
+        for (const p of players.slice(0, 5)) {
+          p.morale = Math.max(1, Math.min(20, Math.round((p.morale + moraleDelta) * 10) / 10));
+          db.persistPlayer(p);
+        }
+      }
+      const newPlays = db.recordMoraleGamePlay(team.id, team.day);
+      log(`morale-game: ${team.tag} ${msg.choice} vs ${aiPick} → ${outcome} (+${moraleDelta} morale, ${MORALE_GAME_PLAYS_PER_DAY - newPlays} plays left)`);
+      return {
+        kind: 'morale-game-result',
+        result: {
+          yourPick: msg.choice,
+          aiPick,
+          outcome,
+          moraleDelta,
+          playsLeft: Math.max(0, MORALE_GAME_PLAYS_PER_DAY - newPlays),
+        },
       };
     }
 
