@@ -14,7 +14,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { openDb } from './db.ts';
 import { handle, newConnSession, type ConnSession } from './handlers.ts';
 import { handleHttp } from './httpRoutes.ts';
-import { seedRealNamePool } from './freeAgents.ts';
+import { backfillLegacyContracts, seedRealNamePool } from './freeAgents.ts';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../src/online/protocol.ts';
 
 const PORT = Number(process.env.CSM_PORT ?? 8787);
@@ -29,6 +29,14 @@ console.log(`[csm] sqlite ready at ${DB_PATH}`);
 const seedResult = seedRealNamePool(db);
 if (seedResult.added > 0) {
   console.log(`[csm] seeded ${seedResult.added} real-name HLTV players into the FA pool`);
+}
+
+// Stamp duelsRemaining onto any signed player whose contract predates the
+// duel-cap system. Bench-promoted players otherwise display 'unlimited'
+// until they play a match, which looks like a bug to the user.
+const backfillResult = backfillLegacyContracts(db);
+if (backfillResult.updated > 0) {
+  console.log(`[csm] backfilled duelsRemaining on ${backfillResult.updated} legacy contracts`);
 }
 
 // Shared http.Server: serves /team/:id HTML profiles + upgrades to WebSocket

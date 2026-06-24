@@ -8,7 +8,7 @@ import { generateFreeAgentPool } from '../../src/data/faPool.ts';
 import { buildPlayer, type PlayerSpec, type TeamSpec } from '../../src/data/dbBuild.ts';
 import { NEWGEN_POOLS } from '../../src/data/newgenNames.ts';
 import { RNG, hashSeed } from '../../src/engine/rng.ts';
-import { MINT_TIERS, type MintTier } from '../../src/online/protocol.ts';
+import { CONTRACT_DUELS_INITIAL_FA, MINT_TIERS, type MintTier } from '../../src/online/protocol.ts';
 import type { Player, PlayerRole, Region } from '../../src/types.ts';
 import { ROSTERS_A } from '../../src/data/rostersA.ts';
 import { ROSTERS_B } from '../../src/data/rostersB.ts';
@@ -157,4 +157,32 @@ export function seedRealNamePool(db: DB): { added: number } {
   for (const spec of REAL_FREE_AGENTS) insertSpec(spec);
 
   return { added };
+}
+
+/**
+ * Walk every signed player and stamp duelsRemaining onto contracts that
+ * predate the duel-cap system. Runs once on server boot so legacy rosters
+ * + any bench-promoted player (who never decremented while sitting out)
+ * land with a real counter visible immediately — no more "unlimited" -looking
+ * "—" cells on the home roster table.
+ *
+ * Cheap: one SELECT + one persistPlayer per row that needs a backfill.
+ * Idempotent — re-running it finds nothing to do on subsequent boots.
+ */
+export function backfillLegacyContracts(db: DB): { updated: number } {
+  const rows = db.raw
+    .prepare(`SELECT id, json FROM players WHERE team_id IS NOT NULL`)
+    .all() as { id: string; json: string }[];
+  let updated = 0;
+  for (const r of rows) {
+    let p: Player;
+    try { p = JSON.parse(r.json) as Player; }
+    catch { continue; }
+    if (!p.contract) continue;
+    if (typeof p.contract.duelsRemaining === 'number') continue;
+    p.contract.duelsRemaining = CONTRACT_DUELS_INITIAL_FA;
+    db.persistPlayer(p);
+    updated++;
+  }
+  return { updated };
 }
