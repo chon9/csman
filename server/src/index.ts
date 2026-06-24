@@ -14,6 +14,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { openDb } from './db.ts';
 import { handle, newConnSession, type ConnSession } from './handlers.ts';
 import { handleHttp } from './httpRoutes.ts';
+import { seedRealNamePool } from './freeAgents.ts';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../src/online/protocol.ts';
 
 const PORT = Number(process.env.CSM_PORT ?? 8787);
@@ -22,6 +23,13 @@ const DB_PATH = process.env.CSM_DB ?? './data/csm.db';
 
 const db = openDb(DB_PATH);
 console.log(`[csm] sqlite ready at ${DB_PATH}`);
+
+// One-time seed of HLTV real-name players into the free-agent pool.
+// Idempotent — gated by a canary row, safe to call on every boot.
+const seedResult = seedRealNamePool(db);
+if (seedResult.added > 0) {
+  console.log(`[csm] seeded ${seedResult.added} real-name HLTV players into the FA pool`);
+}
 
 // Shared http.Server: serves /team/:id HTML profiles + upgrades to WebSocket
 // on the same port. Reverse-proxy (Caddy) friendliness — one URL, one cert.

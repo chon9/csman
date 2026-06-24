@@ -5,11 +5,15 @@
 // the next refill threshold is crossed.
 
 import { generateFreeAgentPool } from '../../src/data/faPool.ts';
-import { buildPlayer, type PlayerSpec } from '../../src/data/dbBuild.ts';
+import { buildPlayer, type PlayerSpec, type TeamSpec } from '../../src/data/dbBuild.ts';
 import { NEWGEN_POOLS } from '../../src/data/newgenNames.ts';
 import { RNG, hashSeed } from '../../src/engine/rng.ts';
 import { MINT_TIERS, type MintTier } from '../../src/online/protocol.ts';
 import type { Player, PlayerRole, Region } from '../../src/types.ts';
+import { ROSTERS_A } from '../../src/data/rostersA.ts';
+import { ROSTERS_B } from '../../src/data/rostersB.ts';
+import { FREE_AGENTS as REAL_FREE_AGENTS, ROSTERS_C } from '../../src/data/rostersC.ts';
+import { ROSTERS_D } from '../../src/data/rostersD.ts';
 import type { DB } from './db.ts';
 
 /** Refill the pool any time it drops below this floor — keeps the market
@@ -110,4 +114,47 @@ export function mintWonderkid(db: DB, tier: MintTier, startDate: string): Player
   );
   db.savePlayer(player);
   return player;
+}
+
+/**
+ * Seed the FA pool with every real-name HLTV player from the single-player
+ * rosters (ROSTERS_A..D + hand-curated FREE_AGENTS in rostersC). All enter
+ * the online server as free agents — anyone can sign them, and when their
+ * contract expires (duel cap) they return to the FA pool same as newgens.
+ *
+ * Idempotent via canary check + INSERT OR IGNORE: safe to call on every
+ * server boot. Only inserts that didn't previously exist actually land.
+ *
+ * Returns the count of records inserted on this call (0 = already seeded).
+ */
+export function seedRealNamePool(db: DB): { added: number } {
+  // Canary: if `s1mple` is already in the players table, real-name pool
+  // has already been seeded on a prior boot. Skip the work.
+  if (db.loadPlayer('s1mple')) return { added: 0 };
+
+  const startDate = new Date().toISOString().slice(0, 10);
+  const { ids: usedIds, nicks: usedNicks } = db.loadAllPlayerKeys();
+  let added = 0;
+
+  const insertSpec = (spec: PlayerSpec): void => {
+    const baseId = spec.nick.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    let id = baseId;
+    let suffix = 0;
+    while (usedIds.has(id)) id = `${baseId}-${++suffix}`;
+    usedIds.add(id);
+    usedNicks.add(spec.nick.toLowerCase());
+    // buildPlayer with teamId=null yields contract=null — pure free agent.
+    const player = buildPlayer(spec, null, startDate);
+    player.id = id;
+    db.savePlayer(player); // INSERT OR IGNORE — duplicate ids silently no-op
+    added++;
+  };
+
+  const allTeamRosters: TeamSpec[] = [...ROSTERS_A, ...ROSTERS_B, ...ROSTERS_C, ...ROSTERS_D];
+  for (const team of allTeamRosters) {
+    for (const spec of team.players) insertSpec(spec);
+  }
+  for (const spec of REAL_FREE_AGENTS) insertSpec(spec);
+
+  return { added };
 }
