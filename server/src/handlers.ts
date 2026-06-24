@@ -618,6 +618,10 @@ export function handle(
           moneyDelta: duel.moneyDelta,
           newMoney: team.money,
           summary: duel.summary,
+          // Snapshot the 5 starters who actually played — independent of any
+          // post-duel contract expiry that pulled them off team.playerIds.
+          // The result modal uses this to colour the scoreboard correctly.
+          userLineupIds: players.slice(0, 5).map((p) => p.id),
         },
       };
     }
@@ -928,6 +932,10 @@ export function handle(
       // Push duel-result to BOTH sides. The challenger sees it via notifyTeam;
       // the accepter (= this connection) gets it as the reply below.
       const accepterWon = duel.winnerTeamId === accepter.id;
+      // Lineup snapshots for the scoreboard — captured BEFORE the post-duel
+      // contract tick can drop expired players off team.playerIds.
+      const challengerLineupIds = challengerPlayers.slice(0, 5).map((p) => p.id);
+      const accepterLineupIds = accepterPlayers.slice(0, 5).map((p) => p.id);
       const challengerOutcome = {
         result: duel.result,
         opponentName: accepter.name,
@@ -937,6 +945,7 @@ export function handle(
         summary: accepterWon
           ? `Lost to ${accepter.tag} ${duel.result.mapsA}-${duel.result.mapsB}. -$${challenge.stake.toLocaleString()}.`
           : `Beat ${accepter.tag} ${duel.result.mapsA}-${duel.result.mapsB}. +$${challenge.stake.toLocaleString()}.`,
+        userLineupIds: challengerLineupIds,
       };
       const accepterOutcome = {
         result: duel.result,
@@ -947,6 +956,7 @@ export function handle(
         summary: accepterWon
           ? `Beat ${challenger.tag} ${duel.result.mapsB}-${duel.result.mapsA}. +$${challenge.stake.toLocaleString()}.`
           : `Lost to ${challenger.tag} ${duel.result.mapsB}-${duel.result.mapsA}. -$${challenge.stake.toLocaleString()}.`,
+        userLineupIds: accepterLineupIds,
       };
       notifyTeam(challenger.id, { kind: 'duel-result', outcome: challengerOutcome });
       // Also tell the challenger their challenge resolved (so any list-challenges UI clears).

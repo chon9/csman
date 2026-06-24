@@ -502,6 +502,10 @@ export interface DuelOutcome {
   newMoney: number;
   /** Plain-English flavour line for the inbox / toast. */
   summary: string;
+  /** Player IDs the USER'S team fielded for this duel, snapshotted BEFORE
+   *  the contract tick. Without this, the result modal can't tell who was
+   *  on our side once expired players have been removed from team.playerIds. */
+  userLineupIds: string[];
 }
 
 // ============ Client → Server messages ============
@@ -690,7 +694,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 18;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

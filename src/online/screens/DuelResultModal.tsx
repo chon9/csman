@@ -24,7 +24,12 @@ export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
     }
   }
   // Partition: own players vs the rest (= AI side).
-  const ownIds = new Set(team.playerIds);
+  // Prefer the snapshot the server sent — team.playerIds may have already
+  // been mutated by post-duel contract expiry, which would mis-classify
+  // any starter whose deal ran out as an "opponent" in the scoreboard.
+  const ownIds = new Set(outcome.userLineupIds && outcome.userLineupIds.length > 0
+    ? outcome.userLineupIds
+    : team.playerIds);
   const ourSide = Object.entries(flat)
     .filter(([id]) => ownIds.has(id))
     .sort((a, b) => b[1].rating / b[1].n - a[1].rating / a[1].n);
