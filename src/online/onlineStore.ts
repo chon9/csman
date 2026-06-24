@@ -236,6 +236,7 @@ interface OnlineState {
   refreshTournaments: () => void;
   createTournament: (size: 4 | 8, entryFee: number) => void;
   registerTournament: (tournamentId: string) => void;
+  fetchTournamentDetail: (tournamentId: string) => void;
   toggleLiveFeed: () => void;
   // Phase 6 actions
   setPlayerGoal: (playerId: string, attr: string, target: number) => void;
@@ -1088,6 +1089,10 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   registerTournament(tournamentId) {
     get().client?.send({ kind: 'register-tournament', tournamentId });
+  },
+
+  fetchTournamentDetail(tournamentId) {
+    get().client?.send({ kind: 'fetch-tournament-detail', tournamentId });
   },
 
   toggleLiveFeed() {

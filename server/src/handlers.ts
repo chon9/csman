@@ -1305,8 +1305,32 @@ export function handle(
       if (spawnedDaily) broadcast({ kind: 'tournament-update', tournament: spawnedDaily });
       const spawnedThemed = ensureThemedTournament(db);
       if (spawnedThemed) broadcast({ kind: 'tournament-update', tournament: spawnedThemed });
+      // Drive bracket execution from the periodic list call too, not just on
+      // register. Otherwise a tournament whose final slot fills can sit idle
+      // forever until someone else hits register on a different tournament.
+      runReadyTournaments(db, (tid) => {
+        const tournament = buildTournamentDetail(db, tid, null);
+        broadcast({ kind: 'tournament-update', tournament });
+        if (tournament.status === 'finished' && tournament.prizes && tournament.prizes.length > 0) {
+          const champ = tournament.prizes.find((p) => p.placement === 1);
+          if (champ) {
+            const newsItem = db.publishNews(
+              'tournament',
+              `🏆 ${champ.teamTag} won ${tournament.name} — pocketed $${champ.cash.toLocaleString()}.`,
+            );
+            broadcast({ kind: 'news-item', item: newsItem as NewsItem });
+          }
+        }
+      });
       const list = listTournaments(db, conn.teamId);
       return { kind: 'tournaments', list };
+    }
+
+    case 'fetch-tournament-detail': {
+      // Lets the user view ANY tournament's bracket (open / in-progress /
+      // finished), not just ones they registered for.
+      const tournament = buildTournamentDetail(db, msg.tournamentId, conn.teamId ?? null);
+      return { kind: 'tournament-detail', tournament };
     }
 
     case 'create-tournament': {

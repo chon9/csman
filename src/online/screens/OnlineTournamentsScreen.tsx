@@ -10,9 +10,11 @@ import ToastStack from './ToastStack';
 export default function OnlineTournamentsScreen() {
   const team = useOnline((s) => s.team);
   const tournaments = useOnline((s) => s.tournaments);
+  const activeTournament = useOnline((s) => s.activeTournament);
   const refresh = useOnline((s) => s.refreshTournaments);
   const create = useOnline((s) => s.createTournament);
   const register = useOnline((s) => s.registerTournament);
+  const fetchDetail = useOnline((s) => s.fetchTournamentDetail);
   const go = useOnline((s) => s.go);
 
   const [size, setSize] = useState<4 | 8>(4);
@@ -25,6 +27,21 @@ export default function OnlineTournamentsScreen() {
     const id = setInterval(() => refresh(), 8000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  // When the user picks a tournament to view, fetch its full bracket. Also
+  // re-fetch periodically while open + watching one — catches in-progress
+  // brackets that just finished.
+  useEffect(() => {
+    if (!selectedId) return;
+    fetchDetail(selectedId);
+    const id = setInterval(() => fetchDetail(selectedId), 6000);
+    return () => clearInterval(id);
+  }, [selectedId, fetchDetail]);
+
+  function selectTournament(id: string): void {
+    setSelectedId(id);
+    fetchDetail(id);
+  }
 
   if (!team) return null;
 
@@ -105,7 +122,7 @@ export default function OnlineTournamentsScreen() {
                   </td>
                   <td className="muted small">{t.registered}/{t.size}</td>
                   <td style={{ display: 'flex', gap: 6 }}>
-                    <button className="btn btn-tiny" onClick={() => setSelectedId(t.id)}>View</button>
+                    <button className="btn btn-tiny" onClick={() => selectTournament(t.id)}>View</button>
                     {t.status === 'open' && !t.iAmIn && (
                       <button
                         className="btn btn-tiny btn-accent"
@@ -125,14 +142,13 @@ export default function OnlineTournamentsScreen() {
         )}
       </div>
 
-      {selected && selected.status !== 'open' && (
+      {selected && (
         <BracketPanel
           tournament={
             // The lobby list has the summary fields; the bracket is on
             // activeTournament after a tournament-detail message lands.
-            // We optimistically render whatever's available.
-            useOnline.getState().activeTournament?.id === selected.id
-              ? useOnline.getState().activeTournament!
+            activeTournament?.id === selected.id
+              ? activeTournament
               : { ...selected, bracket: [] }
           }
         />
@@ -153,7 +169,11 @@ function BracketPanel({ tournament }: { tournament: TournamentDetail }) {
         {tournament.status === 'finished' && <span className="muted small"> · finished</span>}
       </div>
       {rounds.length === 0 ? (
-        <div className="muted small">Bracket not built yet.</div>
+        <div className="muted small">
+          {tournament.status === 'open'
+            ? `Bracket builds once the field fills (${tournament.registered}/${tournament.size} so far).`
+            : 'Loading bracket…'}
+        </div>
       ) : (
         <div style={{ display: 'flex', gap: 14, overflowX: 'auto', paddingTop: 8 }}>
           {rounds.map((r) => (

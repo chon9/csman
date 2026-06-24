@@ -519,6 +519,7 @@ export type ClientMessage =
   | { kind: 'fetch-chat-history'; channel?: string }
   | { kind: 'list-tournaments' }
   | { kind: 'register-tournament'; tournamentId: string }
+  | { kind: 'fetch-tournament-detail'; tournamentId: string }
   | { kind: 'create-tournament'; size: 4 | 8; entryFee: number }
   // ----- Phase 6: goals + team logos -----
   | { kind: 'set-player-goal'; playerId: string; attr: string; target: number }
@@ -666,7 +667,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past
