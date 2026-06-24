@@ -1348,6 +1348,11 @@ export function openDb(path: string) {
   const findLoan = db.prepare(`SELECT * FROM player_loans WHERE id = ?`);
   const loanFromTeam = db.prepare(`SELECT * FROM player_loans WHERE from_team_id = ? AND status != 'returned' AND status != 'declined' ORDER BY offered_at DESC`);
   const loanToTeam = db.prepare(`SELECT * FROM player_loans WHERE to_team_id = ? AND status != 'returned' AND status != 'declined' ORDER BY offered_at DESC`);
+  // Pre-offer guard: catches multi-team spam on the SAME player while a
+  // previous offer is still pending OR a previous loan is still active.
+  const openLoanForPlayer = db.prepare(
+    `SELECT * FROM player_loans WHERE player_id = ? AND (status = 'pending' OR status = 'active') LIMIT 1`,
+  );
   const dueLoans = db.prepare(`SELECT * FROM player_loans WHERE status = 'active' AND ends_at IS NOT NULL AND ends_at <= ?`);
   const updateLoanStatus = db.prepare(`UPDATE player_loans SET status = ?, ends_at = ? WHERE id = ?`);
 
@@ -1371,6 +1376,10 @@ export function openDb(path: string) {
   function loadLoan(id: string) { const r = findLoan.get(id) as LoanRow | undefined; return r ? rowToLoan(r) : null; }
   function loadLoansFromTeam(teamId: string) { return (loanFromTeam.all(teamId) as LoanRow[]).map(rowToLoan); }
   function loadLoansToTeam(teamId: string) { return (loanToTeam.all(teamId) as LoanRow[]).map(rowToLoan); }
+  function loadOpenLoanForPlayer(playerId: string) {
+    const r = openLoanForPlayer.get(playerId) as LoanRow | undefined;
+    return r ? rowToLoan(r) : null;
+  }
   function loadDueLoans(now: number) { return (dueLoans.all(now) as LoanRow[]).map(rowToLoan); }
   function setLoanStatus(id: string, status: 'pending' | 'active' | 'returned' | 'declined', endsAt: number | null = null) {
     updateLoanStatus.run(status, endsAt, id);
@@ -1733,6 +1742,7 @@ export function openDb(path: string) {
     loadLoan,
     loadLoansFromTeam,
     loadLoansToTeam,
+    loadOpenLoanForPlayer,
     loadDueLoans,
     setLoanStatus,
     inductIntoHoF,

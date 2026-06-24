@@ -1887,6 +1887,19 @@ export function handle(
       if (!player || player.teamId !== fromTeam.id) {
         return { kind: 'error', code: 'not-your-player', message: 'Player not on your roster.' };
       }
+      // Guard against re-loaning the same player. The teamId check above
+      // catches actively-loaned-out players (their teamId is the borrower),
+      // but PENDING offers leave teamId on the lender — so without this
+      // an owner could spam offers for the same player to multiple teams.
+      const existing = db.loadOpenLoanForPlayer(player.id);
+      if (existing) {
+        const stateLabel = existing.status === 'active' ? 'currently out on loan' : 'has a pending loan offer open';
+        return {
+          kind: 'error',
+          code: 'loan-conflict',
+          message: `${player.nickname} ${stateLabel}. Wait for it to return / decline before offering again.`,
+        };
+      }
       const fee = Math.max(0, Math.round(msg.fee));
       const days = Math.max(1, Math.min(MAX_LOAN_DAYS, Math.round(msg.days)));
       if (fromTeam.playerIds.length <= 5) {
