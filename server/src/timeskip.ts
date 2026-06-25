@@ -4,7 +4,7 @@
 // per simulated year.
 
 import { RNG, hashSeed } from '../../src/engine/rng.ts';
-import { applyWeeklyTraining } from '../../src/sim/daily.ts';
+import { applyWeeklyTraining, dailyPlayerTick } from '../../src/sim/daily.ts';
 import { TIME_SKIP_COST_PER_DAY } from '../../src/online/protocol.ts';
 import type { DevChange, PlayerGoal } from '../../src/online/protocol.ts';
 import type { Player, PlayerAttributes, Team, TrainingSetup } from '../../src/types.ts';
@@ -85,30 +85,34 @@ export function skipTime(
   };
   const playerLookup: Record<string, Player> = Object.fromEntries(players.map((p) => [p.id, p]));
 
-  // Iterate week-by-week. A "week" in skip is every 7 days from startDay.
-  // Training focus is auto-picked per week: if the squad is exhausted, do
-  // a rest week (-18 fatigue + small morale lift) instead of stacking +4
-  // fatigue from a normal intensity. Otherwise low-intensity aim training
-  // so the weekly tick doesn't fight the daily recovery.
-  let cursor = startDay;
-  while (cursor < endDay) {
-    cursor += 7;
-    if (cursor > endDay) break;
-    const starters = team.playerIds.slice(0, 5).map((id) => playerLookup[id]).filter(Boolean);
-    const avgFatigue = starters.length
-      ? starters.reduce((s, p) => s + p.fatigue, 0) / starters.length
-      : 0;
-    const training: TrainingSetup = avgFatigue >= 60
-      ? { focus: 'rest', intensity: 1, mapPrep: null }
-      : { focus: 'aim', intensity: 1, mapPrep: null };
-    const rng = new RNG(hashSeed(`timeskip-${team.id}-${cursor}`));
-    const result = applyWeeklyTraining(engineTeam, playerLookup, training, rng);
-    if (result.gains > 0 || result.regressions > 0) {
-      notes.push(`Week ending day ${cursor}: ${result.gains} attribute gains, ${result.regressions} regressions.`);
+  // Walk day-by-day so the daily recovery tick (fatigue down + morale drift)
+  // ACTUALLY fires for paid skips — the previous loop only ran the weekly
+  // training tick, leaving fatigue stuck across whole-week skips. Mirrors
+  // what autoTick.ts does for the silent 4-hour cadence so the two paths
+  // behave identically.
+  for (let dayOffset = 1; dayOffset <= days; dayOffset++) {
+    const absDay = startDay + dayOffset;
+    const dayStr = `skip-${team.id}-${absDay}`;
+    const dayRng = new RNG(hashSeed(dayStr));
+    dailyPlayerTick(playerLookup, dayStr, dayRng);
+    // Every 7th day from startDay → weekly training tick. Smart focus:
+    // rest if the squad is exhausted, low-intensity aim otherwise. Either
+    // way, no fatigue is ADDED — only removed (or zero net).
+    if (dayOffset % 7 === 0) {
+      const starters = team.playerIds.slice(0, 5).map((id) => playerLookup[id]).filter(Boolean);
+      const avgFatigue = starters.length
+        ? starters.reduce((s, p) => s + p.fatigue, 0) / starters.length
+        : 0;
+      const training: TrainingSetup = avgFatigue >= 60
+        ? { focus: 'rest', intensity: 1, mapPrep: null }
+        : { focus: 'aim', intensity: 1, mapPrep: null };
+      const rng = new RNG(hashSeed(`timeskip-${team.id}-${absDay}`));
+      const result = applyWeeklyTraining(engineTeam, playerLookup, training, rng);
+      if (result.gains > 0 || result.regressions > 0) {
+        notes.push(`Week ending day ${absDay}: ${result.gains} attribute gains, ${result.regressions} regressions.`);
+      }
+      for (const line of result.notes.slice(0, 2)) notes.push(`  ${line}`);
     }
-    // Pluck the first interesting line from the engine notes so the UI has
-    // some flavour without dumping every line.
-    for (const line of result.notes.slice(0, 2)) notes.push(`  ${line}`);
   }
 
   team.day = endDay;
