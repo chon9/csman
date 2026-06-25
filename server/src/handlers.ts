@@ -30,10 +30,14 @@ import {
   MASSAGE_COST,
   MAX_REFILLS_PER_DAY,
   MIN_REFILL_COST,
+  DRAGON_GATE_MAX_BET,
+  DRAGON_GATE_MIN_BET,
   MORALE_GAME_DELTAS,
   MORALE_GAME_PLAYS_PER_DAY,
   REFILL_COST_PER_DUEL,
   massageEffects,
+  type CardRank,
+  type DragonGateOutcome,
   type MassageMasseuse,
   type RpsChoice,
   type RpsOutcome,
@@ -1358,6 +1362,67 @@ export function handle(
           outcome,
           moraleDelta,
           playsLeft: Math.max(0, MORALE_GAME_PLAYS_PER_DAY - newPlays),
+        },
+      };
+    }
+
+    case 'play-dragon-gate': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const bet = Math.round(msg.bet);
+      if (!Number.isFinite(bet) || bet < DRAGON_GATE_MIN_BET || bet > DRAGON_GATE_MAX_BET) {
+        return {
+          kind: 'error',
+          code: 'bad-bet',
+          message: `Bet must be between $${DRAGON_GATE_MIN_BET.toLocaleString()} and $${DRAGON_GATE_MAX_BET.toLocaleString()}.`,
+        };
+      }
+      // Worst case (tiang) costs 2× bet — make sure the team can cover that
+      // before they even play, so a losing tiang doesn't go negative.
+      const worstCase = bet * 2;
+      if (team.money < worstCase) {
+        return {
+          kind: 'error',
+          code: 'insufficient-funds',
+          message: `Need $${worstCase.toLocaleString()} on hand to cover a possible tiang (2× bet). You have $${team.money.toLocaleString()}.`,
+        };
+      }
+      // Roll cards. Re-deal gates until they differ so "between" is possible.
+      const draw = (): CardRank => (1 + Math.floor(Math.random() * 13)) as CardRank;
+      let a: CardRank = draw();
+      let b: CardRank = draw();
+      let attempts = 0;
+      while (a === b && attempts++ < 25) b = draw();
+      // Defensive: if RNG conspired to dupe 25 times, force-bump by 1 wrap.
+      if (a === b) b = (((b % 13) + 1) as CardRank);
+      const gates: [CardRank, CardRank] = a < b ? [a, b] : [b, a];
+      const thirdCard = draw();
+
+      let outcome: DragonGateOutcome;
+      let delta: number;
+      if (thirdCard > gates[0] && thirdCard < gates[1]) {
+        outcome = 'win';
+        delta = bet;
+      } else if (thirdCard === gates[0] || thirdCard === gates[1]) {
+        outcome = 'tiang';
+        delta = -bet * 2;
+      } else {
+        outcome = 'miss';
+        delta = -bet;
+      }
+      team.money = Math.max(0, team.money + delta);
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      log(`dragon-gate: ${team.tag} bet $${bet} on [${gates[0]},${gates[1]}], drew ${thirdCard} → ${outcome} (${delta >= 0 ? '+' : ''}$${delta})`);
+      return {
+        kind: 'dragon-gate-result',
+        result: {
+          gates,
+          thirdCard,
+          outcome,
+          bet,
+          delta,
+          newMoney: team.money,
         },
       };
     }

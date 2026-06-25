@@ -180,6 +180,32 @@ export interface MoraleGameResult {
   playsLeft: number;
 }
 
+// ============ Dragon Gate (射龍門 / In-Between) ============
+
+/** Min/max bet on a single round. Unlimited rounds — the cap on plays
+ *  comes from the user's wallet, not a daily limit. */
+export const DRAGON_GATE_MIN_BET = 500;
+export const DRAGON_GATE_MAX_BET = 50_000;
+
+/** Card rank 1-13 (A=1, J=11, Q=12, K=13). Suits aren't simulated — they're
+ *  cosmetic if the client wants to show them, but the math only needs rank. */
+export type CardRank = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
+
+export type DragonGateOutcome = 'win' | 'tiang' | 'miss';
+
+export interface DragonGateResult {
+  /** Two gates — already sorted low→high. */
+  gates: [CardRank, CardRank];
+  /** The reveal card. */
+  thirdCard: CardRank;
+  outcome: DragonGateOutcome;
+  /** Bet amount entered by the player. */
+  bet: number;
+  /** Net money change. win: +bet, miss: -bet, tiang: -2×bet. */
+  delta: number;
+  newMoney: number;
+}
+
 // ============ Massage center (gacha-style spa visit) ============
 
 /** Cost per spa visit. Random class 1-10 masseuse, always reduces fatigue;
@@ -665,6 +691,8 @@ export type ClientMessage =
   | { kind: 'book-massage' }
   // ----- Morale mini-game: play one round of rock-paper-scissors -----
   | { kind: 'play-morale-game'; choice: RpsChoice }
+  // ----- Dragon Gate (in-between): single bet, server rolls 3 cards -----
+  | { kind: 'play-dragon-gate'; bet: number }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
@@ -758,6 +786,7 @@ export type ServerMessage =
   | { kind: 'player-expired'; playerId: string; nickname: string }
   | { kind: 'massage-booked'; outcome: MassageOutcome; cost: number; newMoney: number; nextEligibleGameDay: number }
   | { kind: 'morale-game-result'; result: MoraleGameResult }
+  | { kind: 'dragon-gate-result'; result: DragonGateResult }
   | { kind: 'case-list'; cases: CaseSummary[]; freeCaseId: string; freeCaseAvailable: boolean }
   | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
@@ -784,7 +813,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 22;
+export const PROTOCOL_VERSION = 23;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

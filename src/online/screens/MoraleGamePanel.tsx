@@ -1,7 +1,6 @@
-// Team-building mini-game. Rock-paper-scissors against the squad coach (a
-// uniformly random AI pick). Free; capped at MORALE_GAME_PLAYS_PER_DAY
-// rounds per in-game day. Designed as a reliable morale recovery tool —
-// losses cost nothing, ties give +1, wins give +2 (to all 5 starters).
+// Rock-paper-scissors team-building round. Lives inside OnlineMiniGamesScreen
+// as one of the tabs — no header, no back button. Free, capped per in-game
+// day. Outcome adjusts morale of the 5 starters.
 
 import { useOnline } from '../onlineStore';
 import {
@@ -9,7 +8,6 @@ import {
   MORALE_GAME_PLAYS_PER_DAY,
   type RpsChoice,
 } from '../protocol';
-import ToastStack from './ToastStack';
 
 const CHOICES: { id: RpsChoice; emoji: string; label: string }[] = [
   { id: 'rock', emoji: '🪨', label: 'Rock' },
@@ -17,35 +15,29 @@ const CHOICES: { id: RpsChoice; emoji: string; label: string }[] = [
   { id: 'scissors', emoji: '✂️', label: 'Scissors' },
 ];
 
-export default function OnlineMoraleGameScreen(): React.ReactElement | null {
+export default function MoraleGamePanel(): React.ReactElement | null {
   const team = useOnline((s) => s.team);
   const playsUsed = useOnline((s) => s.moraleGamePlaysUsed);
   const last = useOnline((s) => s.moraleGameLast);
   const session = useOnline((s) => s.moraleGameSession);
   const play = useOnline((s) => s.playMoraleGame);
-  const go = useOnline((s) => s.go);
 
   if (!team) return null;
   const playsLeft = Math.max(0, MORALE_GAME_PLAYS_PER_DAY - playsUsed);
   const canPlay = playsLeft > 0;
 
   return (
-    <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h2 style={{ margin: '0 0 4px' }}>Team Building — RPS</h2>
-          <div className="muted small">
-            Play rock-paper-scissors with the squad. Free, {MORALE_GAME_PLAYS_PER_DAY} rounds per in-game day.
-            Win <strong style={{ color: '#6ed09a' }}>+{MORALE_GAME_DELTAS.win}</strong>,
-            tie <strong style={{ color: '#f2c443' }}>+{MORALE_GAME_DELTAS.tie}</strong>,
-            loss <strong style={{ color: '#8b93a3' }}>{MORALE_GAME_DELTAS.loss > 0 ? `+${MORALE_GAME_DELTAS.loss}` : MORALE_GAME_DELTAS.loss}</strong>
-            {' '}morale to each of the 5 starters.
-          </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="panel" style={{ padding: 14 }}>
+        <div className="muted small">
+          Play rock-paper-scissors with the squad. Free, {MORALE_GAME_PLAYS_PER_DAY} rounds per in-game day.
+          Win <strong style={{ color: '#6ed09a' }}>+{MORALE_GAME_DELTAS.win}</strong>,
+          tie <strong style={{ color: '#f2c443' }}>+{MORALE_GAME_DELTAS.tie}</strong>,
+          loss <strong style={{ color: '#8b93a3' }}>{MORALE_GAME_DELTAS.loss > 0 ? `+${MORALE_GAME_DELTAS.loss}` : MORALE_GAME_DELTAS.loss}</strong>
+          {' '}morale to each of the 5 starters.
         </div>
-        <button className="btn" onClick={() => go('home')}>← Back</button>
       </div>
 
-      {/* ===== Pick area ===== */}
       <div className="panel" style={{ padding: 18 }}>
         <div className="panel-title">
           Your pick <span className="muted small">{playsLeft}/{MORALE_GAME_PLAYS_PER_DAY} rounds left this game-day</span>
@@ -80,7 +72,6 @@ export default function OnlineMoraleGameScreen(): React.ReactElement | null {
         </div>
       </div>
 
-      {/* ===== Last result ===== */}
       {last && (
         <div className="panel" style={{ padding: 16 }}>
           <div className="panel-title">Last round</div>
@@ -97,7 +88,6 @@ export default function OnlineMoraleGameScreen(): React.ReactElement | null {
         </div>
       )}
 
-      {/* ===== Today's session ===== */}
       {(session.wins + session.ties + session.losses) > 0 && (
         <div className="panel" style={{ padding: 14 }}>
           <div className="panel-title">Today's session</div>
@@ -109,8 +99,6 @@ export default function OnlineMoraleGameScreen(): React.ReactElement | null {
           </div>
         </div>
       )}
-
-      <ToastStack />
     </div>
   );
 }

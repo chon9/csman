@@ -19,6 +19,7 @@ import type {
   AdminUserRow,
   BoostCard,
   CaseSummary,
+  DragonGateResult,
   MassageOutcome,
   MoraleGameResult,
   RpsChoice,
@@ -44,7 +45,7 @@ import type {
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'morale-game';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -155,6 +156,12 @@ interface OnlineState {
   /** Rolling tally of today's session, cleared at next day. */
   moraleGameSession: { wins: number; ties: number; losses: number; totalMorale: number };
 
+  // ----- Dragon Gate (in-between) -----
+  /** Last round result for the reveal animation. */
+  dragonGateLast: DragonGateResult | null;
+  /** Running session totals (resets on reconnect — not persisted). */
+  dragonGateSession: { rounds: number; wins: number; misses: number; tiangs: number; netCash: number };
+
   // ----- Boosters -----
   /** Unapplied booster cards in inventory. */
   boosts: BoostCard[];
@@ -201,6 +208,7 @@ interface OnlineState {
   bookMassage: () => void;
   dismissMassageReveal: () => void;
   playMoraleGame: (choice: RpsChoice) => void;
+  playDragonGate: (bet: number) => void;
   listCases: () => void;
   openCase: (caseId: string) => void;
   openFreeCase: () => void;
@@ -343,6 +351,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   moraleGamePlaysUsed: 0,
   moraleGameLast: null,
   moraleGameSession: { wins: 0, ties: 0, losses: 0, totalMorale: 0 },
+  dragonGateLast: null,
+  dragonGateSession: { rounds: 0, wins: 0, misses: 0, tiangs: 0, netCash: 0 },
   tacticsPresets: [],
   news: [],
   directory: [],
@@ -790,6 +800,23 @@ export const useOnline = create<OnlineState>((set, get) => ({
           );
           break;
         }
+        case 'dragon-gate-result': {
+          const t = get().team;
+          const cur = get().dragonGateSession;
+          const next = {
+            rounds: cur.rounds + 1,
+            wins: cur.wins + (msg.result.outcome === 'win' ? 1 : 0),
+            misses: cur.misses + (msg.result.outcome === 'miss' ? 1 : 0),
+            tiangs: cur.tiangs + (msg.result.outcome === 'tiang' ? 1 : 0),
+            netCash: cur.netCash + msg.result.delta,
+          };
+          set({
+            team: t ? { ...t, money: msg.result.newMoney } : t,
+            dragonGateLast: msg.result,
+            dragonGateSession: next,
+          });
+          break;
+        }
         case 'morale-game-result': {
           const cur = get().moraleGameSession;
           const next = {
@@ -1009,6 +1036,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   playMoraleGame(choice) {
     get().client?.send({ kind: 'play-morale-game', choice });
+  },
+  playDragonGate(bet) {
+    get().client?.send({ kind: 'play-dragon-gate', bet });
   },
   listCases() {
     get().client?.send({ kind: 'list-cases' });
