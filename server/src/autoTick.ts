@@ -86,11 +86,16 @@ export function applyAutoTicks(db: DB, teamId: string, now: number = Date.now())
   const coachSkill = hiredCoach?.skill ?? 12;
   const engineTeam = teamForEngine(team, coachSkill);
 
+  // dailyPlayerTick passes `today` to addDays() when an injury rolls.
+  // That helper does `new Date(today + 'T00:00:00Z')`, so any non-ISO
+  // string explodes with "Invalid time value" the moment the random
+  // injury roll lands. Use the real wall-clock date — the per-day RNG
+  // seed gives all the entropy this loop needs.
+  const todayIso = new Date().toISOString().slice(0, 10);
   for (let i = 0; i < daysAdvanced; i++) {
     team.day += 1;
-    const dayStr = `auto-${team.id}-${team.day}`;
-    const dayRng = new RNG(hashSeed(dayStr));
-    dailyPlayerTick(playerLookup, dayStr, dayRng);
+    const dayRng = new RNG(hashSeed(`auto-${team.id}-${team.day}`));
+    dailyPlayerTick(playerLookup, todayIso, dayRng);
     if (team.day % 7 === 0) {
       // Smart focus: if the squad is exhausted, run a rest week (flat -18
       // fatigue + small morale lift) instead of stacking +4 fatigue from a

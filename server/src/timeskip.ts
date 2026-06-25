@@ -90,11 +90,16 @@ export function skipTime(
   // training tick, leaving fatigue stuck across whole-week skips. Mirrors
   // what autoTick.ts does for the silent 4-hour cadence so the two paths
   // behave identically.
+  // dailyPlayerTick uses `today` to compute injury return dates via addDays(),
+  // which calls `new Date(today + 'T00:00:00Z')`. A non-ISO string crashes
+  // the request with "Invalid time value" the moment an injury rolls.
+  // Pass the real wall-clock date; the per-iteration RNG seed gives the
+  // unique entropy this loop needs without overloading the date param.
+  const todayIso = new Date().toISOString().slice(0, 10);
   for (let dayOffset = 1; dayOffset <= days; dayOffset++) {
     const absDay = startDay + dayOffset;
-    const dayStr = `skip-${team.id}-${absDay}`;
-    const dayRng = new RNG(hashSeed(dayStr));
-    dailyPlayerTick(playerLookup, dayStr, dayRng);
+    const dayRng = new RNG(hashSeed(`skip-${team.id}-${absDay}`));
+    dailyPlayerTick(playerLookup, todayIso, dayRng);
     // Every 7th day from startDay → weekly training tick. Smart focus:
     // rest if the squad is exhausted, low-intensity aim otherwise. Either
     // way, no fatigue is ADDED — only removed (or zero net).

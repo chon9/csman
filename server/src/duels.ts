@@ -44,18 +44,52 @@ import type { TeamRow } from './db.ts';
 
 const REGIONS: Region[] = ['Europe', 'CIS', 'Americas', 'Asia'];
 
+// ~60 prefixes × ~20 suffixes = ~1200 unique team names. Mix of
+// CS-flavoured words (animals, weapons, ops codenames, mythological
+// figures, weather, regional flair) so the matchups feel varied. Plus
+// a small chance of a "one-word brand" (no suffix) for that real-CS feel
+// (Liquid, Astralis, Furia, etc.).
 const AI_NAME_PREFIXES = [
-  'Apex', 'Nova', 'Cobra', 'Phantom', 'Vector', 'Storm', 'Pulse', 'Reign',
-  'Vigil', 'Echo', 'Mirage', 'Helix', 'Forge', 'Tempest', 'Spectre', 'Vanta',
+  // Animals + predators
+  'Apex', 'Cobra', 'Falcon', 'Mamba', 'Lynx', 'Raven', 'Wolf', 'Tiger',
+  'Bison', 'Stag', 'Orca', 'Hawk', 'Viper', 'Jaguar', 'Wyvern', 'Drake',
+  // Tactical / military
+  'Vector', 'Vigil', 'Recon', 'Sentinel', 'Phalanx', 'Tactical', 'Squad-9',
+  'Bravo', 'Echo', 'Foxtrot', 'Kilo', 'Tango', 'Zulu', 'Onyx-7',
+  // Mythic / cosmic
+  'Nova', 'Phantom', 'Spectre', 'Hydra', 'Phoenix', 'Tempest', 'Helix', 'Vanta',
+  'Cipher', 'Mirage', 'Oblivion', 'Solaris', 'Lumen', 'Eclipse', 'Astral',
+  'Halo', 'Aegis', 'Specter', 'Genesis',
+  // Power / weather / industrial
+  'Pulse', 'Reign', 'Storm', 'Surge', 'Voltage', 'Fission', 'Forge',
+  'Anvil', 'Granite', 'Tungsten', 'Quartz', 'Ironclad', 'Carbon',
+  // Regional / cultural flair
+  'Saigon', 'Mekong', 'Manila', 'Kuala', 'Bangkok', 'Penang', 'Taipei',
+  'Sapporo', 'Tashkent', 'Almaty', 'Riga', 'Athens', 'Lisbon', 'Reykjavik',
 ];
 const AI_NAME_SUFFIXES = [
   'Esports', 'Gaming', 'Club', 'Collective', 'Squad', 'Project',
+  'Initiative', 'United', 'Coalition', 'Order', 'Division', 'Federation',
+  'Syndicate', 'Brigade', 'Foundation', 'Crew', 'Society', 'Dynasty',
+  'Legion', 'Vanguard',
+];
+/** Roll-once brands that show up sans suffix — gives ~20% of generated
+ *  teams the real-CS "one word" feel (think Liquid, Furia, Astralis). */
+const AI_BRAND_ONLY = [
+  'Liquid', 'Astralis', 'Furia', 'Verve', 'Eternity', 'Helios', 'Korona',
+  'Cobalt', 'Riot', 'Outlaws', 'Pacific', 'Atlas', 'Citadel', 'Cosmos',
+  'Diamond', 'Stratus', 'Catalyst', 'Aurora', 'Phantasm', 'Daydream',
 ];
 
 /** Build a synthetic Team record for an AI opponent. Not persisted —
  *  exists only inside the simulateMatch call. */
 function synthAiTeam(rng: RNG, region: Region): Team {
-  const name = `${rng.pick(AI_NAME_PREFIXES)} ${rng.pick(AI_NAME_SUFFIXES)}`;
+  // 20% chance: single-word brand (Liquid, Astralis, Furia vibe).
+  // Otherwise: prefix + suffix (Cobra Esports, Helios Coalition, etc.).
+  const brandOnly = rng.chance(0.2);
+  const name = brandOnly
+    ? rng.pick(AI_BRAND_ONLY)
+    : `${rng.pick(AI_NAME_PREFIXES)} ${rng.pick(AI_NAME_SUFFIXES)}`;
   const tag = name.split(' ')[0].slice(0, 4).toUpperCase();
   return {
     id: `ai-${Math.floor(rng.next() * 1e9).toString(36)}`,
