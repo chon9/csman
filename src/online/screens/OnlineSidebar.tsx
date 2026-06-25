@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import type { OnlineScreen } from '../onlineStore';
 import { publicOrigin } from '../serverUrl';
+import { formatGameAge } from '../dateHelpers';
 
 interface NavItem {
   id: OnlineScreen;
@@ -25,6 +26,7 @@ const PRIMARY: NavItem[] = [
   { id: 'boosters', label: 'Boosters', icon: '🎴' },
   { id: 'massage', label: 'Massage', icon: '💆' },
   { id: 'mini-games', label: 'Mini Games', icon: '🎮' },
+  { id: 'scout', label: 'Scout', icon: '🔬' },
   { id: 'history', label: 'History', icon: '📜' },
   { id: 'leaderboard', label: 'Leaderboard', icon: '📈' },
 ];
@@ -88,8 +90,8 @@ export default function OnlineSidebar(): React.ReactElement {
       {team && nextTickUtcMs > 0 && (
         <div className="osb-tick">
           <div className="osb-tick-row">
-            <span className="osb-tick-label">Game day</span>
-            <span className="osb-tick-value">{team.day}</span>
+            <span className="osb-tick-label">Game age</span>
+            <span className="osb-tick-value" title={`Day ${team.day}`}>{formatGameAge(team.day)}</span>
           </div>
           <div className="osb-tick-row">
             <span className="osb-tick-label">Next tick</span>

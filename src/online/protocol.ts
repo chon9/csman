@@ -777,7 +777,7 @@ export type ServerMessage =
   | { kind: 'coach-pool'; openCoaches: CoachListing[]; myCoach: CoachListing | null }
   | { kind: 'coach-hired'; coach: CoachListing }
   | { kind: 'sponsors'; offers: SponsorOffer[]; paid: { sponsorId: string; amount: number }[] }
-  | { kind: 'free-agent-minted'; player: Player; cost: number; tier: MintTier }
+  | { kind: 'player-scouted'; player: Player; cost: number; tier: MintTier; newMoney: number; strip: ScoutStripEntry[]; winnerIndex: number }
   // ----- Daily bonus + cases -----
   | { kind: 'daily-bonus-claimed'; amount: number; newMoney: number; nextClaimUtc: string }
   | { kind: 'duel-stats'; used: number; refillsUsed: number; cap: number; remaining: number }
@@ -813,7 +813,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 23;
+export const PROTOCOL_VERSION = 24;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past
@@ -824,45 +824,63 @@ export const RETIREMENT_AGE_THRESHOLD = 32;
 /** Sponsor payment cadence — auto-credit once per 30 real days while active. */
 export const SPONSOR_PAYMENT_INTERVAL_MS = 30 * 24 * 3600 * 1000;
 
-// ============ Mint tiers (pay-to-scout a fresh wonderkid) ============
+// ============ Scout tiers (pay-to-scout, direct-sign with case animation) ============
 
-/** Tiers the user can mint into the free-agent pool. */
+/** Gacha tiers — each scout commission rolls one player and signs them
+ *  directly to the caller's team on a 30-day contract. */
 export type MintTier = 'standard' | 'premium' | 'elite';
 
-/** Per-tier metadata — cost + label + flavour line + engine inputs. */
+/** Per-tier metadata. paRange is the PA window for the rolled player;
+ *  CA is rolled as a fraction of PA at sign time (server-side). */
 export const MINT_TIERS: Record<MintTier, {
   label: string;
   cost: number;
-  baseTier: 1 | 2 | 3 | 4 | 5; // passed to dbBuild
+  paRange: [number, number];   // hard PA window
   ageRange: [number, number];
-  paBonusRange: [number, number];
+  caFraction: [number, number]; // CA = PA × random in this range
+  color: string;                // tier accent on cards + strip border
   hint: string;
 }> = {
   standard: {
     label: 'Standard Scout',
     cost: 2_500,
-    baseTier: 4,
+    paRange: [100, 140],
     ageRange: [18, 22],
-    paBonusRange: [10, 25],
-    hint: 'A regional talent — solid attributes, modest ceiling.',
+    caFraction: [0.65, 0.85],   // CA 65-119 → some are matchday-ready
+    color: '#9aa0aa',
+    hint: 'A regional talent. Modest ceiling, ready to slot in.',
   },
   premium: {
     label: 'Premium Scout',
     cost: 10_000,
-    baseTier: 3,
+    paRange: [140, 170],
     ageRange: [16, 19],
-    paBonusRange: [25, 45],
-    hint: 'A real wonderkid — high PA, takes a season to develop.',
+    caFraction: [0.55, 0.75],   // CA 77-127 → developmental
+    color: '#4b69ff',
+    hint: 'A real wonderkid. Higher PA, room to grow.',
   },
   elite: {
     label: 'Elite Scout',
     cost: 35_000,
-    baseTier: 2,
+    paRange: [170, 200],
     ageRange: [16, 18],
-    paBonusRange: [40, 65],
-    hint: 'The next superstar. PA cap pushes 190+. Worth the price tag.',
+    caFraction: [0.50, 0.70],   // CA 85-140 → raw superstar
+    color: '#ffd700',
+    hint: 'The next superstar. PA caps over 190. Worth every cent.',
   },
 };
+
+/** Initial contract length (in duels) for a scouted player — short by
+ *  design so the user has to decide whether to renew. */
+export const SCOUT_CONTRACT_DUELS = 30;
+
+/** One tile on the scout reveal reel — slim render-only data. */
+export interface ScoutStripEntry {
+  nick: string;
+  role: string;
+  pa: number;
+  tier: MintTier;
+}
 /** Hard cap on per-team loan offer duration. */
 export const MAX_LOAN_DAYS = 21;
 /** Fatigue restored to each BENCH player every time the team plays a duel

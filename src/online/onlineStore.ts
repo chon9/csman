@@ -23,6 +23,7 @@ import type {
   MassageOutcome,
   MoraleGameResult,
   RpsChoice,
+  ScoutStripEntry,
   MarketListing,
   MatchHistoryEntry,
   MintTier,
@@ -45,7 +46,7 @@ import type {
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -141,6 +142,10 @@ interface OnlineState {
   // ----- Wall-clock auto-advance -----
   /** UTC ms of the next 4-hour boundary, when team.day will auto-tick +1. */
   nextTickUtcMs: number;
+
+  // ----- Scout (pay-to-mint with case-style reveal) -----
+  /** Last scout outcome — pops the reveal modal when set, null after dismiss. */
+  scoutReveal: { player: Player; tier: MintTier; cost: number; strip: ScoutStripEntry[]; winnerIndex: number } | null;
 
   // ----- Massage center -----
   /** Last massage outcome — pops a reveal modal when set, cleared on dismiss. */
@@ -241,6 +246,7 @@ interface OnlineState {
   refreshFreeAgents: () => void;
   signFreeAgent: (playerId: string, wage: number) => void;
   mintFreeAgent: (tier: MintTier) => void;
+  dismissScoutReveal: () => void;
   refreshChallenges: () => void;
   postChallenge: (stake: number, format: MatchFormat, message?: string) => void;
   cancelChallenge: (challengeId: string) => void;
@@ -346,6 +352,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   boosts: [],
   activeBoosts: {},
   boostReveal: null,
+  scoutReveal: null,
   massageReveal: null,
   massageNextEligibleDay: 0,
   moraleGamePlaysUsed: 0,
@@ -544,13 +551,17 @@ export const useOnline = create<OnlineState>((set, get) => ({
           client.send({ kind: 'refresh-state' });
           break;
         }
-        case 'free-agent-minted': {
-          pushToast(
-            'success',
-            `Scout report in — ${msg.player.nickname} (PA ${msg.player.potentialAbility}) joined the market for $${msg.cost.toLocaleString()}.`,
-          );
+        case 'player-scouted': {
+          const t = get().team;
+          // Optimistic state: deduct money + add to roster + cache the new
+          // player record. The reveal modal animates over a snapshot of the
+          // result; a refresh-state follows to re-sync canonical fields.
+          set({
+            team: t ? { ...t, money: msg.newMoney, playerIds: [...t.playerIds, msg.player.id] } : t,
+            players: { ...get().players, [msg.player.id]: msg.player },
+            scoutReveal: { player: msg.player, tier: msg.tier, cost: msg.cost, strip: msg.strip, winnerIndex: msg.winnerIndex },
+          });
           client.send({ kind: 'refresh-state' });
-          client.send({ kind: 'list-free-agents' });
           break;
         }
         case 'history': {
@@ -1155,6 +1166,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   mintFreeAgent(tier) {
     get().client?.send({ kind: 'mint-free-agent', tier });
+  },
+  dismissScoutReveal() {
+    set({ scoutReveal: null });
   },
 
   refreshChallenges() {

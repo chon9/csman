@@ -1183,16 +1183,27 @@ export function handle(
         };
       }
       team.money -= meta.cost;
-      db.setTeamMoneyDay(team.id, team.money, team.day);
       const startDate = new Date().toISOString().slice(0, 10);
-      const player = mintWonderkid(db, tier, startDate);
-      log(`mint(${tier}): ${team.tag} -$${meta.cost} → FA ${player.nickname} (PA ${player.potentialAbility})`);
+      // Direct-sign flow: roll the player straight onto the caller's team.
+      const scout = mintWonderkid(db, tier, team.id, startDate);
+      team.playerIds = [...team.playerIds, scout.player.id];
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      db.setTeamPlayers(team.id, team.playerIds);
+      log(`scout(${tier}): ${team.tag} -$${meta.cost} → ${scout.player.nickname} (CA ${scout.player.currentAbility}/PA ${scout.player.potentialAbility}, ${scout.player.role})`);
       const newsItem = db.publishNews(
         'transfer',
-        `${team.tag} commissioned a ${meta.label} — ${player.nickname} (${player.age}yo ${player.role}, PA ${player.potentialAbility}) hits the market.`,
+        `${team.tag} scouted ${scout.player.nickname} (${scout.player.age}yo ${scout.player.role}, CA ${scout.player.currentAbility}/PA ${scout.player.potentialAbility}) via ${meta.label}.`,
       );
       broadcast({ kind: 'news-item', item: newsItem as NewsItem });
-      return { kind: 'free-agent-minted', player, cost: meta.cost, tier };
+      return {
+        kind: 'player-scouted',
+        player: scout.player,
+        cost: meta.cost,
+        tier,
+        newMoney: team.money,
+        strip: scout.strip,
+        winnerIndex: scout.winnerIndex,
+      };
     }
 
     // ---------- Daily login bonus ----------

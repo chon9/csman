@@ -8,7 +8,7 @@ import { generateFreeAgentPool } from '../../src/data/faPool.ts';
 import { buildPlayer, type PlayerSpec, type TeamSpec } from '../../src/data/dbBuild.ts';
 import { NEWGEN_POOLS } from '../../src/data/newgenNames.ts';
 import { RNG, hashSeed } from '../../src/engine/rng.ts';
-import { CONTRACT_DUELS_INITIAL_FA, MINT_TIERS, type MintTier } from '../../src/online/protocol.ts';
+import { CONTRACT_DUELS_INITIAL_FA, MINT_TIERS, SCOUT_CONTRACT_DUELS, type MintTier, type ScoutStripEntry } from '../../src/online/protocol.ts';
 import type { Player, PlayerRole, Region } from '../../src/types.ts';
 import { ROSTERS_A } from '../../src/data/rostersA.ts';
 import { ROSTERS_B } from '../../src/data/rostersB.ts';
@@ -66,19 +66,32 @@ export function buildWageMap(players: Player[]): Record<string, number> {
 const MINT_REGIONS: Region[] = ['Europe', 'CIS', 'Americas', 'Asia'];
 const MINT_ROLES: PlayerRole[] = ['IGL', 'AWPer', 'Entry', 'Lurker', 'Support', 'Rifler', 'Anchor'];
 
+export interface ScoutResult {
+  player: Player;
+  strip: ScoutStripEntry[];
+  winnerIndex: number;
+}
+
+/** Where the winning tile lands in the strip — gives the animation enough
+ *  lead-in scrolling to feel like a real reveal. Mirrors the cs-cases value. */
+export const SCOUT_WINNER_INDEX = 55;
+const SCOUT_STRIP_LEN = 80;
+
 /**
- * Generate a brand-new free agent for the pay-to-scout flow. Persists the
- * player to SQLite with teamId=null and returns the saved record. Uses an
- * entropy-mixed seed so repeated mints in the same second still vary.
+ * Scout commission: rolls one player with PA in the tier's explicit window,
+ * CA as a fraction of PA, age in the tier's window, signs them DIRECTLY to
+ * the caller's team on a SCOUT_CONTRACT_DUELS deal. Returns the new Player
+ * plus a render-only strip of fake names for the cs-cases reveal animation.
+ *
+ * Caller is responsible for charging the cost + appending player.id to
+ * team.playerIds + db.setTeamPlayers + db.setTeamMoneyDay.
  */
-export function mintWonderkid(db: DB, tier: MintTier, startDate: string): Player {
+export function mintWonderkid(db: DB, tier: MintTier, teamId: string, startDate: string): ScoutResult {
   const meta = MINT_TIERS[tier];
-  const seedSrc = `mint-${tier}-${Date.now()}-${Math.random()}`;
+  const seedSrc = `scout-${tier}-${Date.now()}-${Math.random()}`;
   const rng = new RNG(hashSeed(seedSrc));
 
-  // Collision check against every existing player — both FAs and signed
-  // roster players share the same nickname pool, and a collision on either
-  // would trigger a UNIQUE constraint failure on insert.
+  // Avoid id/nick collisions across the entire players table.
   const { ids: usedIds, nicks: usedNicks } = db.loadAllPlayerKeys();
 
   const region = MINT_REGIONS[rng.int(0, MINT_REGIONS.length - 1)];
@@ -89,14 +102,17 @@ export function mintWonderkid(db: DB, tier: MintTier, startDate: string): Player
   let nick = rng.pick(pool.nicks);
   let attempts = 0;
   while (usedNicks.has(nick.toLowerCase()) && attempts++ < 20) nick = rng.pick(pool.nicks);
-  if (usedNicks.has(nick.toLowerCase())) {
-    nick = `${nick}_${seedSrc.slice(-4)}`;
-  }
+  if (usedNicks.has(nick.toLowerCase())) nick = `${nick}_${seedSrc.slice(-4)}`;
   const baseId = nick.toLowerCase().replace(/[^a-z0-9]+/g, '-');
   let id = baseId;
   let suffix = 0;
   while (usedIds.has(id)) id = `${baseId}-${++suffix}`;
+  usedIds.add(id);
+  usedNicks.add(nick.toLowerCase());
 
+  // Build the player via the standard pipeline — using whatever base tier
+  // is naturally close to the target PA. Then OVERRIDE potentialAbility +
+  // currentAbility to the explicit gacha-tier values.
   const spec: PlayerSpec = {
     nick,
     first: rng.pick(pool.first),
@@ -104,16 +120,47 @@ export function mintWonderkid(db: DB, tier: MintTier, startDate: string): Player
     nat: rng.pick(pool.nationalities),
     age,
     role,
-    tier: meta.baseTier,
+    tier: 3, // baseline shape; PA/CA get overridden below
   };
-  const player = buildPlayer(spec, null, startDate);
+  const player = buildPlayer(spec, teamId, startDate);
   player.id = id;
-  player.potentialAbility = Math.min(
-    200,
-    player.potentialAbility + rng.int(meta.paBonusRange[0], meta.paBonusRange[1]),
-  );
+  // PA: roll inside the tier's exact window.
+  const pa = rng.int(meta.paRange[0], meta.paRange[1]);
+  player.potentialAbility = Math.min(200, Math.max(40, pa));
+  // CA: random fraction of PA so younger / lower-tier rolls are clearly
+  // developmental but every scout produces SOMEONE who can play.
+  const frac = meta.caFraction[0] + rng.next() * (meta.caFraction[1] - meta.caFraction[0]);
+  player.currentAbility = Math.max(40, Math.min(player.potentialAbility, Math.round(pa * frac)));
+  player.squadTier = 'first';
+  // Short scout contract — give them 30 ranked duels before the renewal
+  // decision lands. Wage scales with rolled CA, same as buildPlayer would
+  // have done if it had seen this CA directly.
+  const scoutWage = Math.max(8000, Math.round((player.currentAbility * 300 - 20000) / 500) * 500);
+  player.contract = {
+    wage: scoutWage,
+    expires: new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().slice(0, 10),
+    buyout: Math.round(player.askingPrice * 1.2),
+    duelsRemaining: SCOUT_CONTRACT_DUELS,
+  };
   db.savePlayer(player);
-  return player;
+
+  // Build the reveal strip. Other tiles use plausible fake nicks (sampled
+  // from the same regional pool) so the scroll looks varied; winner sits
+  // at SCOUT_WINNER_INDEX. Tiles all carry the tier so the strip border
+  // matches the rolled rarity colour client-side.
+  const strip: ScoutStripEntry[] = [];
+  for (let i = 0; i < SCOUT_STRIP_LEN; i++) {
+    if (i === SCOUT_WINNER_INDEX) {
+      strip.push({ nick: player.nickname, role: player.role, pa: player.potentialAbility, tier });
+    } else {
+      const fakeNick = pool.nicks[rng.int(0, pool.nicks.length - 1)];
+      const fakeRole = MINT_ROLES[rng.int(0, MINT_ROLES.length - 1)];
+      const fakePa = rng.int(meta.paRange[0], meta.paRange[1]);
+      strip.push({ nick: fakeNick, role: fakeRole, pa: fakePa, tier });
+    }
+  }
+
+  return { player, strip, winnerIndex: SCOUT_WINNER_INDEX };
 }
 
 /**

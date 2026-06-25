@@ -33,6 +33,7 @@ import CoachesPanel from './CoachesPanel';
 import SponsorsPanel from './SponsorsPanel';
 import type { Player } from '../../types';
 import { fatigueTooltip, moraleTooltip } from '../recoveryHelpers';
+import { formatGameAge } from '../dateHelpers';
 
 export default function OnlineHomeScreen() {
   const team = useOnline((s) => s.team);
@@ -115,7 +116,7 @@ export default function OnlineHomeScreen() {
               <span style={{ color: 'var(--accent)' }}>{team.tag}</span> · {team.name}
             </h2>
             <div className="muted small">
-              {team.region} · owner <strong>{team.ownerNick}</strong> · day {team.day}
+              {team.region} · owner <strong>{team.ownerNick}</strong> · {formatGameAge(team.day)}
             </div>
           </div>
         </div>
