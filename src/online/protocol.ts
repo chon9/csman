@@ -647,6 +647,7 @@ export type ClientMessage =
   | { kind: 'list-loan-offers' }
   | { kind: 'accept-loan'; loanId: string }
   | { kind: 'decline-loan'; loanId: string }
+  | { kind: 'recall-loan'; loanId: string }
   // ----- Phase 9: HoF + coaches + sponsors -----
   | { kind: 'list-hof' }
   | { kind: 'list-coaches' }
@@ -783,7 +784,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 21;
+export const PROTOCOL_VERSION = 22;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past
@@ -835,6 +836,10 @@ export const MINT_TIERS: Record<MintTier, {
 };
 /** Hard cap on per-team loan offer duration. */
 export const MAX_LOAN_DAYS = 21;
+/** Penalty multiplier when the lender recalls an ACTIVE loan early — the
+ *  lender pays the borrower fee × (1 + this) to break the agreement.
+ *  0.5 → fee × 1.5 (50% on top of the original fee). */
+export const LOAN_RECALL_PENALTY_MULT = 0.5;
 /** Achievement kinds with human-readable labels. Server passes the label
  *  in the unlock event so the client can show the toast without a lookup. */
 export const ACHIEVEMENT_LABELS: Record<string, string> = {

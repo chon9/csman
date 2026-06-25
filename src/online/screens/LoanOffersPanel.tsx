@@ -4,6 +4,7 @@
 
 import { useEffect } from 'react';
 import { useOnline } from '../onlineStore';
+import { LOAN_RECALL_PENALTY_MULT } from '../protocol';
 
 function fmtAgo(ts: number): string {
   const m = Math.round((Date.now() - ts) / 60_000);
@@ -25,6 +26,7 @@ export default function LoanOffersPanel() {
   const listLoans = useOnline((s) => s.listLoanOffers);
   const accept = useOnline((s) => s.acceptLoan);
   const decline = useOnline((s) => s.declineLoan);
+  const recall = useOnline((s) => s.recallLoan);
   const team = useOnline((s) => s.team);
 
   useEffect(() => { listLoans(); }, [listLoans]);
@@ -67,18 +69,48 @@ export default function LoanOffersPanel() {
         <>
           <div className="muted small" style={{ marginTop: 10 }}>Outgoing:</div>
           <table className="table table-dense">
-            <thead><tr><th>Player</th><th>To</th><th className="num">Fee</th><th>Length</th><th>Status</th><th>Sent</th></tr></thead>
+            <thead><tr><th>Player</th><th>To</th><th className="num">Fee</th><th>Length</th><th>Status</th><th>Sent</th><th></th></tr></thead>
             <tbody>
-              {outgoing.map((l) => (
-                <tr key={l.id}>
-                  <td><strong>{l.playerNickname}</strong></td>
-                  <td>{l.toTeamTag}</td>
-                  <td className="num">${l.fee.toLocaleString()}</td>
-                  <td>{l.days}d</td>
-                  <td>{l.status === 'active' ? <span className="text-win">{fmtRemaining(l.endsAt)} left</span> : l.status}</td>
-                  <td className="muted small">{fmtAgo(l.offeredAt)}</td>
-                </tr>
-              ))}
+              {outgoing.map((l) => {
+                const recallCost = Math.max(0, Math.round(l.fee * (1 + LOAN_RECALL_PENALTY_MULT)));
+                return (
+                  <tr key={l.id}>
+                    <td><strong>{l.playerNickname}</strong></td>
+                    <td>{l.toTeamTag}</td>
+                    <td className="num">${l.fee.toLocaleString()}</td>
+                    <td>{l.days}d</td>
+                    <td>{l.status === 'active' ? <span className="text-win">{fmtRemaining(l.endsAt)} left</span> : l.status}</td>
+                    <td className="muted small">{fmtAgo(l.offeredAt)}</td>
+                    <td>
+                      {l.status === 'pending' && (
+                        <button
+                          className="btn btn-tiny btn-danger"
+                          title="Cancel this pending offer (free, before it's accepted)"
+                          onClick={() => {
+                            if (window.confirm(`Cancel offer for ${l.playerNickname}?`)) recall(l.id);
+                          }}
+                        >Cancel</button>
+                      )}
+                      {l.status === 'active' && (
+                        <button
+                          className="btn btn-tiny"
+                          disabled={!team || team.money < recallCost}
+                          title={
+                            team && team.money < recallCost
+                              ? `Need $${recallCost.toLocaleString()} to recall (fee + ${Math.round(LOAN_RECALL_PENALTY_MULT * 100)}% penalty)`
+                              : `Recall ${l.playerNickname} early — pay borrower $${recallCost.toLocaleString()}`
+                          }
+                          onClick={() => {
+                            if (window.confirm(`Recall ${l.playerNickname} early? Pay $${recallCost.toLocaleString()} to ${l.toTeamTag} (fee + ${Math.round(LOAN_RECALL_PENALTY_MULT * 100)}% penalty).`)) {
+                              recall(l.id);
+                            }
+                          }}
+                        >Recall · ${recallCost.toLocaleString()}</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </>

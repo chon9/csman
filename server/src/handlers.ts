@@ -39,6 +39,7 @@ import {
   type RpsOutcome,
   INITIAL_ROSTER_SIZE,
   MAX_DUEL_STAKE,
+  LOAN_RECALL_PENALTY_MULT,
   MAX_LOAN_DAYS,
   MAX_OPEN_GOALS,
   MAX_TACTICS_PRESETS,
@@ -1983,6 +1984,83 @@ export function handle(
       db.setLoanStatus(loan.id, 'declined');
       const payload = { ...loan, status: 'declined' as const, fromTeamTag: '', toTeamTag: '', playerNickname: '' };
       notifyTeam(loan.fromTeamId, { kind: 'loan-event', loan: payload });
+      return { kind: 'loan-event', loan: payload };
+    }
+
+    case 'recall-loan': {
+      // Lender-side cancel. Two paths:
+      //   pending → free cancel, status flips to 'declined'.
+      //   active  → lender pays borrower fee × (1 + penalty mult) to break
+      //             the agreement, player returns to lender's roster.
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const loan = db.loadLoan(msg.loanId);
+      if (!loan) return { kind: 'error', code: 'no-loan', message: 'Loan not found.' };
+      if (loan.fromTeamId !== conn.teamId) {
+        return { kind: 'error', code: 'not-yours', message: 'Only the lender can recall.' };
+      }
+      if (loan.status !== 'pending' && loan.status !== 'active') {
+        return { kind: 'error', code: 'bad-state', message: 'Loan already settled.' };
+      }
+
+      // --- Pending: just cancel, no money moves ---
+      if (loan.status === 'pending') {
+        db.setLoanStatus(loan.id, 'declined');
+        const lender = db.loadTeam(loan.fromTeamId);
+        const borrower = db.loadTeam(loan.toTeamId);
+        const player = db.loadPlayer(loan.playerId);
+        const payload = {
+          ...loan,
+          status: 'declined' as const,
+          fromTeamTag: lender?.tag ?? '???',
+          toTeamTag: borrower?.tag ?? '???',
+          playerNickname: player?.nickname ?? loan.playerId,
+        };
+        notifyTeam(loan.toTeamId, { kind: 'loan-event', loan: payload });
+        log(`loan recalled (pending): ${lender?.tag} cancelled offer for ${player?.nickname}`);
+        return { kind: 'loan-event', loan: payload };
+      }
+
+      // --- Active: charge penalty + return player ---
+      const lender = db.loadTeam(loan.fromTeamId);
+      const borrower = db.loadTeam(loan.toTeamId);
+      const player = db.loadPlayer(loan.playerId);
+      if (!lender || !borrower || !player) {
+        return { kind: 'error', code: 'stale', message: 'Loan parties missing.' };
+      }
+      const compensation = Math.max(0, Math.round(loan.fee * (1 + LOAN_RECALL_PENALTY_MULT)));
+      if (lender.money < compensation) {
+        return {
+          kind: 'error',
+          code: 'insufficient-funds',
+          message: `Recalling ${player.nickname} costs $${compensation.toLocaleString()} (fee + ${Math.round(LOAN_RECALL_PENALTY_MULT * 100)}% penalty). You have $${lender.money.toLocaleString()}.`,
+        };
+      }
+      // Move money: lender → borrower.
+      lender.money -= compensation;
+      borrower.money += compensation;
+      // Move player back, but only if they're actually still on the borrower
+      // (handles mid-loan transfers / sales gracefully — fall back to just
+      // closing the loan without rostering changes).
+      if (player.teamId === borrower.id) {
+        borrower.playerIds = borrower.playerIds.filter((id) => id !== player.id);
+        lender.playerIds = [...lender.playerIds, player.id];
+        player.teamId = lender.id;
+        db.setTeamPlayers(borrower.id, borrower.playerIds);
+        db.setTeamPlayers(lender.id, lender.playerIds);
+        db.persistPlayer(player);
+      }
+      db.setTeamMoneyDay(lender.id, lender.money, lender.day);
+      db.setTeamMoneyDay(borrower.id, borrower.money, borrower.day);
+      db.setLoanStatus(loan.id, 'returned');
+      const payload = {
+        ...loan,
+        status: 'returned' as const,
+        fromTeamTag: lender.tag,
+        toTeamTag: borrower.tag,
+        playerNickname: player.nickname,
+      };
+      notifyTeam(borrower.id, { kind: 'loan-event', loan: payload });
+      log(`loan recalled (active): ${lender.tag} ← ${borrower.tag} (${player.nickname}, paid $${compensation})`);
       return { kind: 'loan-event', loan: payload };
     }
 

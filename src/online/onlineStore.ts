@@ -279,6 +279,7 @@ interface OnlineState {
   listLoanOffers: () => void;
   acceptLoan: (loanId: string) => void;
   declineLoan: (loanId: string) => void;
+  recallLoan: (loanId: string) => void;
   // Phase 9 actions
   listHof: () => void;
   listCoaches: () => void;
@@ -1285,6 +1286,10 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   declineLoan(loanId) {
     get().client?.send({ kind: 'decline-loan', loanId });
+  },
+
+  recallLoan(loanId) {
+    get().client?.send({ kind: 'recall-loan', loanId });
   },
 
   listHof() {
