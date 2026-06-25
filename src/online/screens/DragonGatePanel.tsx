@@ -27,10 +27,21 @@ export default function DragonGatePanel(): React.ReactElement | null {
   // Reveal animation: when a new `last` arrives we hide the third card,
   // pause, then reveal it for the suspense beat.
   const [revealed, setRevealed] = useState(true);
-  const lastSeenId = useRef<DragonGateResult | null>(null);
+  // Track whether the user has dealt SINCE this panel mounted. If they
+  // navigate away and come back, `last` may still hold a previous result
+  // from the store — but we don't want to flash it (looks like the game
+  // auto-played a round on tab switch). Show the hand only after a real
+  // play happens in this session.
+  const [playedThisSession, setPlayedThisSession] = useState(false);
+  // Seed the ref to the CURRENT last on mount so the effect's diff check
+  // sees no change. Without this, the first effect run on a hot-mounted
+  // panel would clear `revealed` and re-run the suspense animation on
+  // stale data.
+  const lastSeenId = useRef<DragonGateResult | null>(last);
   useEffect(() => {
     if (!last || last === lastSeenId.current) return;
     lastSeenId.current = last;
+    setPlayedThisSession(true);
     setRevealed(false);
     const t = window.setTimeout(() => setRevealed(true), 900);
     return () => window.clearTimeout(t);
@@ -95,7 +106,9 @@ export default function DragonGatePanel(): React.ReactElement | null {
       </div>
 
       {/* ===== Last round ===== */}
-      {last && (
+      {/* Only render after the user has actually dealt in this session —
+          stops a stale `last` from the store flashing on tab switch. */}
+      {playedThisSession && last && (
         <div className="panel" style={{ padding: 16 }}>
           <div className="panel-title">Last hand</div>
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 14, marginTop: 12, flexWrap: 'wrap' }}>
