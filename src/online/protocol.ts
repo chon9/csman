@@ -836,6 +836,10 @@ export const MINT_TIERS: Record<MintTier, {
 };
 /** Hard cap on per-team loan offer duration. */
 export const MAX_LOAN_DAYS = 21;
+/** Fatigue restored to each BENCH player every time the team plays a duel
+ *  (rotation reward — bench rests while starters play). Both AI duels +
+ *  PvP qualify; scrims too, since they still use the starting 5. */
+export const BENCH_FATIGUE_RECOVERY_PER_DUEL = 8;
 /** Penalty multiplier when the lender recalls an ACTIVE loan early — the
  *  lender pays the borrower fee × (1 + this) to break the agreement.
  *  0.5 → fee × 1.5 (50% on top of the original fee). */

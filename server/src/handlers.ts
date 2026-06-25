@@ -39,6 +39,7 @@ import {
   type RpsOutcome,
   INITIAL_ROSTER_SIZE,
   MAX_DUEL_STAKE,
+  BENCH_FATIGUE_RECOVERY_PER_DUEL,
   LOAN_RECALL_PENALTY_MULT,
   MAX_LOAN_DAYS,
   MAX_OPEN_GOALS,
@@ -257,6 +258,21 @@ function restoreBoostSnapshot(player: Player, snapshot: Partial<PlayerAttributes
     if (snapshot[k] !== undefined) player.attributes[k] = snapshot[k]!;
   }
 }
+/** Recover fatigue on every bench player (slot 6+) while the starters
+ *  played. Mutates in place. Returns the players who actually moved so
+ *  the caller can persist exactly the changed records. */
+function rechargeBenchAfterDuel(rosterAll: Player[]): Player[] {
+  const moved: Player[] = [];
+  for (let i = 5; i < rosterAll.length; i++) {
+    const p = rosterAll[i];
+    if (!p || p.fatigue <= 0) continue;
+    const before = p.fatigue;
+    p.fatigue = Math.max(0, p.fatigue - BENCH_FATIGUE_RECOVERY_PER_DUEL);
+    if (p.fatigue !== before) moved.push(p);
+  }
+  return moved;
+}
+
 /** Tick down duelsLeft on every active boost in the roster. Clears the
  *  field entirely (and notifies via the supplied callback) when it hits 0. */
 function tickBoostsAfterDuel(
@@ -626,6 +642,11 @@ export function handle(
       for (const [p, snap] of boostSnapshots) restoreBoostSnapshot(p, snap);
       team.money = Math.max(0, team.money + duel.moneyDelta);
       db.setTeamMoneyDay(team.id, team.money, team.day);
+      // Bench players (slot 6+) recover fatigue while the starters played
+      // — same for scrims (still a team activity). Mutations are picked up
+      // by the post-duel `persistPlayer` loop further down, so no extra
+      // DB write is needed here.
+      rechargeBenchAfterDuel(players);
       // Tick the daily duel counter — scrims don't count toward the cap.
       if (!isScrim) {
         db.recordDuelUsed(team.id, gameDayKey);
@@ -968,6 +989,11 @@ export function handle(
       // Tick boost duels-left for both sides; push expiry notices per team.
       tickBoostsAfterDuel(challengerPlayers, (p) => notifyTeam(challenger.id, { kind: 'boost-expired', playerId: p.id }));
       tickBoostsAfterDuel(accepterPlayers, (p) => notifyTeam(accepter.id, { kind: 'boost-expired', playerId: p.id }));
+      // Bench recovery: slot 6+ on both sides recovers fatigue while their
+      // starters played. Persisted alongside the regular post-duel writes
+      // below, so no extra DB calls needed here.
+      rechargeBenchAfterDuel(challengerPlayers);
+      rechargeBenchAfterDuel(accepterPlayers);
       // Contract pacing for both sides' starters.
       const expiredCh = tickContractsAfterDuel(db, challenger, challengerPlayers.slice(0, 5));
       const expiredAc = tickContractsAfterDuel(db, accepter, accepterPlayers.slice(0, 5));
