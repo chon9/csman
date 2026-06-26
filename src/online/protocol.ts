@@ -206,6 +206,22 @@ export interface DragonGateResult {
   newMoney: number;
 }
 
+// ============ Async PvP matchmaking ("Quick Match") ============
+
+/** Primary CA-delta window for matchmaking. Opponent's total starter
+ *  CA must differ from yours by at most this much. ±100 is a meaningful
+ *  but still-fightable gap. */
+export const APVP_PRIMARY_DELTA = 100;
+/** Fallback window if the primary band yields zero candidates. ±200
+ *  keeps the matchmaker alive on a small server before giving up. */
+export const APVP_FALLBACK_DELTA = 200;
+/** Maps duelled in an async match — fixed BO1, fast turnaround. */
+export const APVP_FORMAT = 'BO1' as const;
+/** Stake bounds for async — slightly tighter than full PvP so the
+ *  matchmaker is always paying out something meaningful. */
+export const APVP_MIN_STAKE = 1_000;
+export const APVP_MAX_STAKE = 50_000;
+
 // ============ Streaming (Faceit pickup grind for cash) ============
 
 /** Fans contributed per CA point per player. CA dominates (proven ability
@@ -872,6 +888,8 @@ export type ClientMessage =
   | { kind: 'cashout-mines'; sessionId: string }
   // ----- Streaming: player runs a Faceit pickup, earns money from fans -----
   | { kind: 'stream-player'; playerId: string }
+  // ----- Quick Match: pick a stake, server finds a CA-balanced opponent -----
+  | { kind: 'find-async-match'; stake: number }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
@@ -999,7 +1017,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 28;
+export const PROTOCOL_VERSION = 29;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

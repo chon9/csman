@@ -295,6 +295,7 @@ interface OnlineState {
   dismissScoutReveal: () => void;
   refreshChallenges: () => void;
   postChallenge: (stake: number, format: MatchFormat, message?: string) => void;
+  findAsyncMatch: (stake: number) => void;
   cancelChallenge: (challengeId: string) => void;
   acceptChallenge: (challengeId: string) => void;
   refreshHistory: () => void;
@@ -1361,6 +1362,11 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   postChallenge(stake, format, message) {
     get().client?.send({ kind: 'post-challenge', stake, format, message });
+  },
+
+  findAsyncMatch(stake) {
+    set({ duelPending: true, errorBanner: null });
+    get().client?.send({ kind: 'find-async-match', stake });
   },
 
   cancelChallenge(challengeId) {

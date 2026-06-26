@@ -30,6 +30,11 @@ import {
   MASSAGE_COST,
   MAX_REFILLS_PER_DAY,
   MIN_REFILL_COST,
+  APVP_FALLBACK_DELTA,
+  APVP_FORMAT,
+  APVP_MAX_STAKE,
+  APVP_MIN_STAKE,
+  APVP_PRIMARY_DELTA,
   CRASH_MAX_BET,
   CRASH_MIN_BET,
   DRAGON_GATE_MAX_BET,
@@ -1139,6 +1144,255 @@ export function handle(
       }
       log(`PvP resolved: ${challenger.tag} vs ${accepter.tag} → winner ${duel.winnerTeamId === challenger.id ? challenger.tag : accepter.tag}`);
       return { kind: 'duel-result', outcome: accepterOutcome };
+    }
+
+    case 'find-async-match': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const me = db.loadTeam(conn.teamId);
+      if (!me) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const stake = Math.round(msg.stake);
+      if (!Number.isFinite(stake) || stake < APVP_MIN_STAKE || stake > APVP_MAX_STAKE) {
+        return {
+          kind: 'error',
+          code: 'bad-stake',
+          message: `Stake must be $${APVP_MIN_STAKE.toLocaleString()}–$${APVP_MAX_STAKE.toLocaleString()}.`,
+        };
+      }
+      if (me.playerIds.length < 5) {
+        return { kind: 'error', code: 'roster-incomplete', message: 'Need 5 players on the roster to queue.' };
+      }
+      if (me.money < stake) {
+        return {
+          kind: 'error',
+          code: 'insufficient-funds',
+          message: `Need $${stake.toLocaleString()} to cover the stake.`,
+        };
+      }
+      const myDayKey = `day-${me.day}`;
+      const myStats = db.getDuelStats(me.id, myDayKey);
+      if (myStats.used >= DAILY_DUEL_CAP) {
+        return {
+          kind: 'error',
+          code: 'duel-cap',
+          message: `You've hit your in-game-day duel cap (${DAILY_DUEL_CAP}). Refill or wait for the next tick.`,
+        };
+      }
+
+      // Compute the requesting team's total starter CA — the matchmaker
+      // window keys off this number.
+      const myPlayers = db.loadTeamPlayers(me.id);
+      const myStarters = myPlayers.slice(0, 5);
+      const myTotalCA = myStarters.reduce((s, p) => s + p.currentAbility, 0);
+
+      // Build the candidate pool. Pre-filter by money + roster size + not-me
+      // BEFORE the expensive per-team player loads.
+      const pool = db.loadMatchmakingPool(stake).filter((t) =>
+        t.id !== me.id && t.playerIds.length >= 5,
+      );
+      type Candidate = { teamId: string; tag: string; name: string; players: Player[]; totalCA: number };
+      const candidates: Candidate[] = [];
+      for (const t of pool) {
+        const players = db.loadTeamPlayers(t.id);
+        if (players.length < 5) continue;
+        const totalCA = players.slice(0, 5).reduce((s, p) => s + p.currentAbility, 0);
+        candidates.push({ teamId: t.id, tag: t.tag, name: t.name, players, totalCA });
+      }
+
+      // Pick winners by CA window. Try the strict primary band first; fall
+      // back to the wider band only if the primary yielded nothing.
+      const withinDelta = (delta: number): Candidate[] =>
+        candidates.filter((c) => Math.abs(c.totalCA - myTotalCA) <= delta);
+      let band = withinDelta(APVP_PRIMARY_DELTA);
+      let bandLabel = `±${APVP_PRIMARY_DELTA}`;
+      if (band.length === 0) {
+        band = withinDelta(APVP_FALLBACK_DELTA);
+        bandLabel = `±${APVP_FALLBACK_DELTA}`;
+      }
+      if (band.length === 0) {
+        return {
+          kind: 'error',
+          code: 'no-opponents',
+          message: `No teams within ±${APVP_FALLBACK_DELTA} total starter CA of you with $${stake.toLocaleString()} on hand. Try a lower stake or wait for the pool to grow.`,
+        };
+      }
+
+      // Shuffle, then walk picking the first opponent whose own duel cap
+      // hasn't been hit — natural throttle on popular teams getting drained.
+      for (let i = band.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [band[i], band[j]] = [band[j]!, band[i]!];
+      }
+      let oppCandidate: Candidate | null = null;
+      let opp: TeamRow | null = null;
+      for (const c of band) {
+        const oppRow = db.loadTeam(c.teamId);
+        if (!oppRow) continue;
+        const oppStats = db.getDuelStats(oppRow.id, `day-${oppRow.day}`);
+        if (oppStats.used >= DAILY_DUEL_CAP) continue;
+        oppCandidate = c;
+        opp = oppRow;
+        break;
+      }
+      if (!opp || !oppCandidate) {
+        return {
+          kind: 'error',
+          code: 'no-opponents-available',
+          message: 'All eligible opponents have hit their duel cap. Try again after the next 4-hour tick.',
+        };
+      }
+      const oppPlayers = oppCandidate.players;
+
+      // From here on the flow mirrors accept-challenge almost exactly, with
+      // the user as "challenger" + opp as "accepter".
+      const matchId = `apvp-${randomBytes(6).toString('hex')}`;
+      const snapshotStarter = (p: Player) => ({
+        currentAbility: p.currentAbility, form: p.form, morale: p.morale, fatigue: p.fatigue,
+      });
+      const myBaseline = myStarters.map(snapshotStarter);
+      const oppBaseline = oppPlayers.slice(0, 5).map(snapshotStarter);
+
+      const apvpBoostSnaps: Array<[Player, Partial<Player['attributes']> | null]> = [];
+      for (const p of myPlayers) apvpBoostSnaps.push([p, applyBoostToPlayer(p)]);
+      for (const p of oppPlayers) apvpBoostSnaps.push([p, applyBoostToPlayer(p)]);
+      const duel = runPvpDuel(
+        teamRowToEngineTeam(me),
+        myPlayers,
+        teamRowToEngineTeam(opp),
+        oppPlayers,
+        stake,
+        APVP_FORMAT,
+        matchId,
+        me.tactics,
+        opp.tactics,
+      );
+      for (const [p, snap] of apvpBoostSnaps) restoreBoostSnapshot(p, snap);
+
+      const meWon = duel.winnerTeamId === me.id;
+      if (meWon) {
+        me.money += stake;
+        opp.money = Math.max(0, opp.money - stake);
+      } else {
+        opp.money += stake;
+        me.money = Math.max(0, me.money - stake);
+      }
+      db.setTeamMoneyDay(me.id, me.money, me.day);
+      db.setTeamMoneyDay(opp.id, opp.money, opp.day);
+      db.recordDuelUsed(me.id, myDayKey);
+      db.recordDuelUsed(opp.id, `day-${opp.day}`);
+
+      tickBoostsAfterDuel(myPlayers, (p) => notifyTeam(me.id, { kind: 'boost-expired', playerId: p.id }));
+      tickBoostsAfterDuel(oppPlayers, (p) => notifyTeam(opp.id, { kind: 'boost-expired', playerId: p.id }));
+      rechargeBenchAfterDuel(myPlayers);
+      rechargeBenchAfterDuel(oppPlayers);
+      const expiredMine = tickContractsAfterDuel(db, me, myPlayers.slice(0, 5));
+      const expiredOpp = tickContractsAfterDuel(db, opp, oppPlayers.slice(0, 5));
+      for (const exp of expiredMine) {
+        log(`contract expired: ${me.tag} ← ${exp.nickname} now FA`);
+        const item = db.publishNews('transfer', `${exp.nickname} ran out of contract at ${me.tag} and walked to free agency.`);
+        broadcast({ kind: 'news-item', item: item as NewsItem });
+        notifyTeam(me.id, { kind: 'player-expired', playerId: exp.id, nickname: exp.nickname });
+      }
+      for (const exp of expiredOpp) {
+        log(`contract expired: ${opp.tag} ← ${exp.nickname} now FA`);
+        const item = db.publishNews('transfer', `${exp.nickname} ran out of contract at ${opp.tag} and walked to free agency.`);
+        broadcast({ kind: 'news-item', item: item as NewsItem });
+        notifyTeam(opp.id, { kind: 'player-expired', playerId: exp.id, nickname: exp.nickname });
+      }
+      for (const p of myPlayers) db.persistPlayer(p);
+      for (const p of oppPlayers) db.persistPlayer(p);
+      db.recordMatch({
+        id: matchId,
+        teamAId: me.id,
+        teamBId: opp.id,
+        teamATag: me.tag,
+        teamBTag: opp.tag,
+        winnerId: duel.winnerTeamId,
+        mapsA: duel.result.mapsA,
+        mapsB: duel.result.mapsB,
+        stake,
+        kind: 'pvp',
+        resultJson: JSON.stringify(stripFrames(duel.result)),
+      });
+      cacheLiveReplay(matchId, duel.result);
+      broadcast({
+        kind: 'live-match-feed',
+        entry: {
+          matchId,
+          kind: 'pvp',
+          teamATag: me.tag,
+          teamBTag: opp.tag,
+          mapsA: duel.result.mapsA,
+          mapsB: duel.result.mapsB,
+          context: `$${stake.toLocaleString()} Quick Match (${bandLabel} CA)`,
+          at: Date.now(),
+        },
+      });
+
+      // Season standings — both sides count, achievements too.
+      {
+        const season = db.currentSeason();
+        const myStanding = db.recordSeasonOutcome(season.seasonNo, me.id, meWon, meWon ? stake : -stake);
+        const oppStanding = db.recordSeasonOutcome(season.seasonNo, opp.id, !meWon, meWon ? -stake : stake);
+        const winnerStandings = meWon ? myStanding : oppStanding;
+        const winnerId = meWon ? me.id : opp.id;
+        if (winnerStandings.wins >= 1) tryUnlock(db, notifyTeam, winnerId, 'first_blood', ACHIEVEMENT_LABELS.first_blood);
+        if (winnerStandings.wins >= 10) tryUnlock(db, notifyTeam, winnerId, 'ten_wins', ACHIEVEMENT_LABELS.ten_wins, winnerStandings.wins);
+        if (winnerStandings.wins >= 50) tryUnlock(db, notifyTeam, winnerId, 'fifty_wins', ACHIEVEMENT_LABELS.fifty_wins, winnerStandings.wins);
+        if (winnerStandings.netMoney >= 100_000) tryUnlock(db, notifyTeam, winnerId, 'bankroll_100k', ACHIEVEMENT_LABELS.bankroll_100k, winnerStandings.netMoney);
+        const winnerAvgCA = (meWon ? myPlayers : oppPlayers).slice(0, 5).reduce((s, p) => s + p.currentAbility, 0) / 5;
+        const loserAvgCA = (meWon ? oppPlayers : myPlayers).slice(0, 5).reduce((s, p) => s + p.currentAbility, 0) / 5;
+        if (winnerAvgCA + 8 < loserAvgCA) {
+          tryUnlock(db, notifyTeam, winnerId, 'underdog_win', ACHIEVEMENT_LABELS.underdog_win);
+        }
+      }
+
+      // Push the duel-result to opponent + news headline at high stake.
+      const myLineupIds = myStarters.map((p) => p.id);
+      const oppLineupIds = oppPlayers.slice(0, 5).map((p) => p.id);
+      const buildSide = (own: typeof myBaseline, opp2: typeof oppBaseline, ownPlayers: Player[]) =>
+        buildDuelDiagnostics(
+          own.map((b, i) => ({ ...ownPlayers[i], ...b })) as Player[],
+          opp2.map((b, i) => ({ ...ownPlayers[i], ...b })) as Player[],
+        );
+      const myDiag = buildSide(myBaseline, oppBaseline, myPlayers);
+      const oppDiag = buildSide(oppBaseline, myBaseline, oppPlayers);
+      const myOutcome = {
+        result: duel.result,
+        opponentName: opp.name,
+        opponentTag: opp.tag,
+        moneyDelta: meWon ? stake : -stake,
+        newMoney: me.money,
+        summary: meWon
+          ? `Quick Match — beat ${opp.tag} ${duel.result.mapsA}-${duel.result.mapsB}. +$${stake.toLocaleString()}.`
+          : `Quick Match — lost to ${opp.tag} ${duel.result.mapsA}-${duel.result.mapsB}. -$${stake.toLocaleString()}.`,
+        userLineupIds: myLineupIds,
+        diagnostics: myDiag,
+      };
+      const oppOutcome = {
+        result: duel.result,
+        opponentName: me.name,
+        opponentTag: me.tag,
+        moneyDelta: meWon ? -stake : stake,
+        newMoney: opp.money,
+        summary: meWon
+          ? `${me.tag} found you in Quick Match — lost ${duel.result.mapsB}-${duel.result.mapsA}. -$${stake.toLocaleString()}.`
+          : `${me.tag} found you in Quick Match — beat them ${duel.result.mapsB}-${duel.result.mapsA}. +$${stake.toLocaleString()}.`,
+        userLineupIds: oppLineupIds,
+        diagnostics: oppDiag,
+      };
+      notifyTeam(opp.id, { kind: 'duel-result', outcome: oppOutcome });
+
+      if (stake >= 10_000) {
+        const winnerTag = meWon ? me.tag : opp.tag;
+        const loserTag = meWon ? opp.tag : me.tag;
+        const newsItem = db.publishNews(
+          'duel',
+          `${winnerTag} beat ${loserTag} ${Math.max(duel.result.mapsA, duel.result.mapsB)}-${Math.min(duel.result.mapsA, duel.result.mapsB)} in a $${stake.toLocaleString()} Quick Match.`,
+        );
+        broadcast({ kind: 'news-item', item: newsItem as NewsItem });
+      }
+      log(`async-pvp: ${me.tag} (CA ${myTotalCA}) vs ${opp.tag} (CA ${oppCandidate.totalCA}) within ${bandLabel} → ${meWon ? me.tag : opp.tag}`);
+      return { kind: 'duel-result', outcome: myOutcome };
     }
 
     // ---------- Phase 3: free agents ----------

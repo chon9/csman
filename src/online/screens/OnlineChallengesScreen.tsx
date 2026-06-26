@@ -6,11 +6,16 @@
 import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import {
+  APVP_MAX_STAKE,
+  APVP_MIN_STAKE,
+  APVP_PRIMARY_DELTA,
   MAX_DUEL_STAKE,
   MIN_DUEL_STAKE,
 } from '../protocol';
 import type { MatchFormat } from '../../types';
 import ToastStack from './ToastStack';
+
+const APVP_PRESETS = [1000, 2500, 5000, 10000, 25000, 50000];
 
 function timeAgo(ts: number): string {
   const secs = Math.round((Date.now() - ts) / 1000);
@@ -28,11 +33,13 @@ export default function OnlineChallengesScreen() {
   const post = useOnline((s) => s.postChallenge);
   const cancel = useOnline((s) => s.cancelChallenge);
   const accept = useOnline((s) => s.acceptChallenge);
+  const findAsyncMatch = useOnline((s) => s.findAsyncMatch);
   const go = useOnline((s) => s.go);
 
   const [stake, setStake] = useState(5_000);
   const [format, setFormat] = useState<MatchFormat>('BO1');
   const [message, setMessage] = useState('');
+  const [apvpStake, setApvpStake] = useState(5_000);
 
   useEffect(() => {
     refresh();
@@ -57,6 +64,54 @@ export default function OnlineChallengesScreen() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn" onClick={refresh}>Refresh</button>
           <button className="btn" onClick={() => go('home')}>← Back</button>
+        </div>
+      </div>
+
+      {/* ===== Quick Match (async PvP) ===== */}
+      <div
+        className="panel"
+        style={{
+          padding: 16,
+          background: 'linear-gradient(135deg, rgba(75,105,255,0.18) 0%, rgba(110,208,154,0.10) 100%)',
+          border: '1px solid rgba(109,229,255,0.30)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ flex: '1 1 240px' }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: 8 }}>
+              ⚡ Quick Match <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 999, background: 'rgba(110,255,179,0.22)', border: '1px solid rgba(110,255,179,0.55)', color: '#b8ffd9', letterSpacing: 1, fontWeight: 800 }}>ASYNC</span>
+            </div>
+            <div className="muted small" style={{ marginTop: 4, color: 'rgba(255,255,255,0.78)' }}>
+              Server pairs you with a random team within ±{APVP_PRIMARY_DELTA} total starter CA. No waiting, no posting — duels in seconds.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {APVP_PRESETS.filter((s) => s >= APVP_MIN_STAKE && s <= APVP_MAX_STAKE).map((s) => (
+              <button
+                key={s}
+                className={`btn btn-tiny ${apvpStake === s ? 'btn-accent' : ''}`}
+                onClick={() => setApvpStake(s)}
+              >${s.toLocaleString()}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, gap: 12, flexWrap: 'wrap' }}>
+          <span className="muted small" style={{ color: 'rgba(255,255,255,0.7)' }}>
+            Win <strong style={{ color: '#6ed09a' }}>+${apvpStake.toLocaleString()}</strong> · lose <strong style={{ color: '#e25555' }}>−${apvpStake.toLocaleString()}</strong> · counts toward your daily duel cap and PvP leaderboard.
+          </span>
+          <button
+            className="btn btn-accent"
+            disabled={duelPending || team.money < apvpStake || team.playerIds.length < 5}
+            onClick={() => findAsyncMatch(apvpStake)}
+            title={
+              team.playerIds.length < 5 ? 'Need 5 players on the roster' :
+              team.money < apvpStake ? `Need $${apvpStake.toLocaleString()} on hand` :
+              `Find an opponent at $${apvpStake.toLocaleString()}`
+            }
+            style={{ padding: '10px 22px', fontSize: 14, fontWeight: 700 }}
+          >
+            {duelPending ? 'Searching…' : '⚡ Find Match'}
+          </button>
         </div>
       </div>
 

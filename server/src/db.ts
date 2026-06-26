@@ -782,6 +782,29 @@ export function openDb(path: string) {
     return { ids, nicks };
   }
 
+  // Slim team enumeration for async-PvP matchmaking. We only need the
+  // fields the matchmaker filters on (money, roster count) plus the bare
+  // identity fields — full team rows would be 10× heavier.
+  const matchmakingPoolStmt = db.prepare(
+    `SELECT id, tag, name, region, money, player_ids
+     FROM teams
+     WHERE money >= ?
+     ORDER BY rowid ASC`,
+  );
+
+  function loadMatchmakingPool(minMoney: number): Array<{
+    id: string; tag: string; name: string; region: string; money: number; playerIds: string[];
+  }> {
+    const rows = matchmakingPoolStmt.all(minMoney) as Array<{
+      id: string; tag: string; name: string; region: string; money: number; player_ids: string;
+    }>;
+    return rows.map((r) => {
+      let ids: string[] = [];
+      try { ids = JSON.parse(r.player_ids ?? '[]') as string[]; } catch { /* empty roster */ }
+      return { id: r.id, tag: r.tag, name: r.name, region: r.region, money: r.money, playerIds: ids };
+    });
+  }
+
   // -------- Sessions --------
 
   const upsertSession = db.prepare(
@@ -1813,6 +1836,7 @@ export function openDb(path: string) {
     loadPlayer,
     loadTeamPlayers,
     loadAllPlayerKeys,
+    loadMatchmakingPool,
     issueSession,
     resolveSession,
     createListing,
