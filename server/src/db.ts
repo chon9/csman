@@ -338,6 +338,13 @@ export function openDb(path: string) {
   // Morale mini-game plays this in-game day (reset when day changes).
   tryAddColumn('teams', 'morale_game_day', 'INTEGER', '0');
   tryAddColumn('teams', 'morale_game_plays', 'INTEGER', '0');
+  // Lifetime counters used to drive the harder achievement tiers — never
+  // reset, monotonically increasing. Added defensively so the achievement
+  // unlocks can compare against a real running total even after season
+  // rollovers reset season_standings.
+  tryAddColumn('teams', 'lifetime_cases_opened', 'INTEGER', '0');
+  tryAddColumn('teams', 'lifetime_streams', 'INTEGER', '0');
+  tryAddColumn('teams', 'lifetime_tournaments_won', 'INTEGER', '0');
   // Skin inventory rows owned by this team — JSON-blob per skin instance.
   db.exec(`
     CREATE TABLE IF NOT EXISTS skin_inventory (
@@ -555,6 +562,31 @@ export function openDb(path: string) {
     const next = { used: 0, refillsUsed: cur.refillsUsed + 1 };
     setDuelCounters.run(todayKey, next.used, next.refillsUsed, teamId);
     return next;
+  }
+
+  // -------- Lifetime achievement counters --------
+
+  const bumpLifetimeCases = db.prepare(`UPDATE teams SET lifetime_cases_opened = COALESCE(lifetime_cases_opened, 0) + 1 WHERE id = ?`);
+  const getLifetimeCases = db.prepare(`SELECT lifetime_cases_opened FROM teams WHERE id = ?`);
+  const bumpLifetimeStreams = db.prepare(`UPDATE teams SET lifetime_streams = COALESCE(lifetime_streams, 0) + 1 WHERE id = ?`);
+  const getLifetimeStreams = db.prepare(`SELECT lifetime_streams FROM teams WHERE id = ?`);
+  const bumpLifetimeTournamentsWon = db.prepare(`UPDATE teams SET lifetime_tournaments_won = COALESCE(lifetime_tournaments_won, 0) + 1 WHERE id = ?`);
+  const getLifetimeTournamentsWon = db.prepare(`SELECT lifetime_tournaments_won FROM teams WHERE id = ?`);
+
+  function recordCaseOpened(teamId: string): number {
+    bumpLifetimeCases.run(teamId);
+    const r = getLifetimeCases.get(teamId) as { lifetime_cases_opened: number | null } | undefined;
+    return r?.lifetime_cases_opened ?? 0;
+  }
+  function recordStreamDone(teamId: string): number {
+    bumpLifetimeStreams.run(teamId);
+    const r = getLifetimeStreams.get(teamId) as { lifetime_streams: number | null } | undefined;
+    return r?.lifetime_streams ?? 0;
+  }
+  function recordTournamentWin(teamId: string): number {
+    bumpLifetimeTournamentsWon.run(teamId);
+    const r = getLifetimeTournamentsWon.get(teamId) as { lifetime_tournaments_won: number | null } | undefined;
+    return r?.lifetime_tournaments_won ?? 0;
   }
 
   // -------- Wall-clock auto-advance --------
@@ -1957,6 +1989,9 @@ export function openDb(path: string) {
     getDuelStats,
     recordDuelUsed,
     recordDuelRefill,
+    recordCaseOpened,
+    recordStreamDone,
+    recordTournamentWin,
     getAutoTickAnchor,
     setAutoTickAnchor,
     getLastMassageDay,

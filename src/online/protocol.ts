@@ -1238,15 +1238,76 @@ export const LOAN_RECALL_PENALTY_MULT = 0.5;
 /** Achievement kinds with human-readable labels. Server passes the label
  *  in the unlock event so the client can show the toast without a lookup. */
 export const ACHIEVEMENT_LABELS: Record<string, string> = {
+  // ===== Combat ladder (career duel wins) =====
   first_blood: '🩸 First Blood — won your first duel',
   ten_wins: '🔟 Veteran — 10 career duel wins',
   fifty_wins: '5️⃣0️⃣ Dynasty — 50 career duel wins',
+  hundred_wins: '💯 Centurion — 100 career duel wins',
+  two_fifty_wins: '🏛️ Legend — 250 career duel wins',
+  five_hundred_wins: '👑 Immortal — 500 career duel wins',
+
+  // ===== PvP-only ladder =====
+  pvp_first_blood: '⚔️ Live Opener — first PvP duel win against a real manager',
+  pvp_ten_wins: '⚔️ Brawler — 10 PvP wins',
+  pvp_fifty_wins: '⚔️ Gladiator — 50 PvP wins',
+  pvp_hundred_wins: '⚔️ Warlord — 100 PvP wins',
+
+  // ===== Streaks & domination =====
+  streak_5: '🔥 Heater — 5-duel win streak',
+  streak_10: '🔥 Untouchable — 10-duel win streak',
+  perfect_map: '🎯 16-0 — swept a map without dropping a round',
+  giant_slayer: '😱 Giant Slayer — beat a team with 40+ higher avg CA in PvP',
+  underdog_win: '😱 Cinderella — beat a team with a higher avg CA in PvP',
+
+  // ===== Tournament =====
   first_tournament: '🏆 Trophy Cabinet — won your first tournament',
-  first_fa_sign: '💼 Player Agent — signed your first free agent',
-  first_market_sale: '💰 Trader — closed your first market sale',
-  first_goal_reached: '🎯 Coach — first development goal hit',
+  five_tournaments: '🏆🏆 Serial Winner — won 5 tournaments',
+  twenty_tournaments: '🏆🏆🏆 Dynastic — won 20 tournaments',
+
+  // ===== Economy =====
   bankroll_100k: '💵 First $100k Profit — net duel earnings crossed $100,000',
-  underdog_win: '😱 Cinderella — beat a team with a higher avg CA in a PvP',
+  bankroll_500k: '💵 Half-Mil — net duel earnings crossed $500,000',
+  millionaire: '💰 Millionaire — held $1M on hand',
+  big_money: '💰 Big Money — held $5M on hand',
+  mogul: '💰 Mogul — held $10M on hand',
+
+  // ===== Roster / management =====
+  first_fa_sign: '💼 Player Agent — signed your first free agent',
+  full_roster: '🧑‍🤝‍🧑 Full Squad — held 12+ players at once',
+  first_goal_reached: '🎯 Coach — first development goal hit',
+  first_retire: '👴 End of an Era — first player retired into the HoF',
+  coached_up: '🎓 Headhunter — hired your first coach',
+  first_sponsor: '📣 Endorsed — signed your first sponsor',
+  first_loan: '🤝 Loaner — first loan accepted (either direction)',
+  first_market_sale: '💰 Trader — closed your first market sale',
+
+  // ===== Cases / skins (NFT loop) =====
+  case_opener: '📦 Case Opener — opened 100 cases',
+  case_addict: '📦📦 Case Addict — opened 500 cases',
+  covert_drop: '🔴 Covert! — first covert (red) skin dropped',
+  rare_special_drop: '🟡 Gold Knife — first rare-special drop',
+  white_float_drop: '✨ White Float — pulled a skin with float below 0.01',
+  first_trade_up: '⬆️ Trade-Up Artist — completed your first trade-up',
+  skin_seller_5: '🔄 Skin Flipper — closed 5 peer skin sales',
+
+  // ===== Streaming =====
+  first_stream: '📺 Live On Air — streamed your first session',
+  streamer_50: '📺 Influencer — streamed 50 times',
+  famous: '🌟 Famous — crossed 100k team fans',
+
+  // ===== Mini-games =====
+  crash_cashout_10x: '🚀 To The Moon — cashed out Crash at 10×+',
+  mines_perfect: '💎 Sweeper — cleared every safe tile in Mines',
+  dragon_in_between: '🐉 Dragon Slayer — first Dragon Gate win',
+
+  // ===== Social =====
+  first_profile_edit: '🎨 Branded — customised your team profile',
+  first_dm: '💬 Whisper — sent your first direct message',
+
+  // ===== Meta collector =====
+  collector_5: '🎖️ Hoarder — unlocked 5 achievements',
+  collector_15: '🎖️🎖️ Completionist-in-Training — unlocked 15 achievements',
+  collector_30: '🎖️🎖️🎖️ True Completionist — unlocked 30 achievements',
 };
 /** Cap on saved tactics presets per owner. */
 export const MAX_TACTICS_PRESETS = 10;

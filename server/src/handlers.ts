@@ -139,6 +139,91 @@ function tryUnlock(
     kind: 'achievement-unlocked',
     achievement: { teamId, kind, label, value, achievedAt: Date.now() },
   });
+  // Don't recurse on collector unlocks (they ARE collector unlocks).
+  if (kind === 'collector_5' || kind === 'collector_15' || kind === 'collector_30') return;
+  // Meta-collector tiers — every other unlock bumps the running count,
+  // so after a real unlock check the thresholds. Achievements is a small
+  // table per team, the lookup is cheap.
+  const total = db.loadAchievements(teamId).length;
+  if (total >= 5) tryUnlock(db, notifyTeam, teamId, 'collector_5', ACHIEVEMENT_LABELS.collector_5, total);
+  if (total >= 15) tryUnlock(db, notifyTeam, teamId, 'collector_15', ACHIEVEMENT_LABELS.collector_15, total);
+  if (total >= 30) tryUnlock(db, notifyTeam, teamId, 'collector_30', ACHIEVEMENT_LABELS.collector_30, total);
+}
+
+/** Run the full post-duel achievement gauntlet for one winning team. Covers
+ *  career-win ladder, PvP-only ladder, streaks, bankroll, current-cash
+ *  thresholds, perfect maps, and giant-slayer / underdog flags. Idempotent —
+ *  tryUnlock is a no-op for already-held achievements. */
+function applyPostDuelAchievements(
+  db: DB,
+  notifyTeam: NotifyTeam,
+  args: {
+    winnerTeamId: string;
+    winnerTeam: TeamRow;
+    isPvp: boolean;
+    winnerStandings: { wins: number; netMoney: number; streak: number };
+    winnerStarters: Player[];
+    loserStarters: Player[];
+    result: MatchResult;
+    /** Pass when PvP for the PvP-only ladder check. */
+    pvpWinsForWinner?: number;
+  },
+): void {
+  const { winnerTeamId, winnerTeam, isPvp, winnerStandings, winnerStarters, loserStarters, result, pvpWinsForWinner } = args;
+
+  // Career-win ladder.
+  const w = winnerStandings.wins;
+  if (w >= 1) tryUnlock(db, notifyTeam, winnerTeamId, 'first_blood', ACHIEVEMENT_LABELS.first_blood);
+  if (w >= 10) tryUnlock(db, notifyTeam, winnerTeamId, 'ten_wins', ACHIEVEMENT_LABELS.ten_wins, w);
+  if (w >= 50) tryUnlock(db, notifyTeam, winnerTeamId, 'fifty_wins', ACHIEVEMENT_LABELS.fifty_wins, w);
+  if (w >= 100) tryUnlock(db, notifyTeam, winnerTeamId, 'hundred_wins', ACHIEVEMENT_LABELS.hundred_wins, w);
+  if (w >= 250) tryUnlock(db, notifyTeam, winnerTeamId, 'two_fifty_wins', ACHIEVEMENT_LABELS.two_fifty_wins, w);
+  if (w >= 500) tryUnlock(db, notifyTeam, winnerTeamId, 'five_hundred_wins', ACHIEVEMENT_LABELS.five_hundred_wins, w);
+
+  // PvP-only ladder.
+  if (isPvp && typeof pvpWinsForWinner === 'number') {
+    const p = pvpWinsForWinner;
+    if (p >= 1) tryUnlock(db, notifyTeam, winnerTeamId, 'pvp_first_blood', ACHIEVEMENT_LABELS.pvp_first_blood);
+    if (p >= 10) tryUnlock(db, notifyTeam, winnerTeamId, 'pvp_ten_wins', ACHIEVEMENT_LABELS.pvp_ten_wins, p);
+    if (p >= 50) tryUnlock(db, notifyTeam, winnerTeamId, 'pvp_fifty_wins', ACHIEVEMENT_LABELS.pvp_fifty_wins, p);
+    if (p >= 100) tryUnlock(db, notifyTeam, winnerTeamId, 'pvp_hundred_wins', ACHIEVEMENT_LABELS.pvp_hundred_wins, p);
+  }
+
+  // Bankroll (season standings net money).
+  if (winnerStandings.netMoney >= 100_000) {
+    tryUnlock(db, notifyTeam, winnerTeamId, 'bankroll_100k', ACHIEVEMENT_LABELS.bankroll_100k, winnerStandings.netMoney);
+  }
+  if (winnerStandings.netMoney >= 500_000) {
+    tryUnlock(db, notifyTeam, winnerTeamId, 'bankroll_500k', ACHIEVEMENT_LABELS.bankroll_500k, winnerStandings.netMoney);
+  }
+
+  // Current-cash thresholds.
+  if (winnerTeam.money >= 1_000_000) tryUnlock(db, notifyTeam, winnerTeamId, 'millionaire', ACHIEVEMENT_LABELS.millionaire, winnerTeam.money);
+  if (winnerTeam.money >= 5_000_000) tryUnlock(db, notifyTeam, winnerTeamId, 'big_money', ACHIEVEMENT_LABELS.big_money, winnerTeam.money);
+  if (winnerTeam.money >= 10_000_000) tryUnlock(db, notifyTeam, winnerTeamId, 'mogul', ACHIEVEMENT_LABELS.mogul, winnerTeam.money);
+
+  // Streaks.
+  if (winnerStandings.streak >= 5) tryUnlock(db, notifyTeam, winnerTeamId, 'streak_5', ACHIEVEMENT_LABELS.streak_5, winnerStandings.streak);
+  if (winnerStandings.streak >= 10) tryUnlock(db, notifyTeam, winnerTeamId, 'streak_10', ACHIEVEMENT_LABELS.streak_10, winnerStandings.streak);
+
+  // PvP only: underdog / giant slayer based on starter CA gap.
+  if (isPvp && winnerStarters.length > 0 && loserStarters.length > 0) {
+    const wAvg = winnerStarters.reduce((s, p) => s + p.currentAbility, 0) / winnerStarters.length;
+    const lAvg = loserStarters.reduce((s, p) => s + p.currentAbility, 0) / loserStarters.length;
+    if (wAvg + 8 < lAvg) tryUnlock(db, notifyTeam, winnerTeamId, 'underdog_win', ACHIEVEMENT_LABELS.underdog_win);
+    if (wAvg + 40 < lAvg) tryUnlock(db, notifyTeam, winnerTeamId, 'giant_slayer', ACHIEVEMENT_LABELS.giant_slayer);
+  }
+
+  // Perfect map — any map with a 16-0 sweep in winner's favour.
+  const winnerIsA = result.teamAId === winnerTeamId;
+  for (const m of result.maps) {
+    const wScore = winnerIsA ? m.scoreA : m.scoreB;
+    const lScore = winnerIsA ? m.scoreB : m.scoreA;
+    if (wScore === 16 && lScore === 0) {
+      tryUnlock(db, notifyTeam, winnerTeamId, 'perfect_map', ACHIEVEMENT_LABELS.perfect_map);
+      break;
+    }
+  }
 }
 
 /** Compact list of every persisted team — used to populate the DM picker
@@ -324,9 +409,16 @@ function tickBoostsAfterDuel(
 
 /**
  * Decrement contract duels-remaining for each starter (top 5) of the team
- * roster, and free-agent any player whose counter hits 0. Mutates player
- * records + the team's playerIds list. Returns the list of expired players
- * so the caller can publish news + push notifications.
+ * roster. Two outcomes when the counter hits 0:
+ *
+ * - **On-loan player**: instead of going free-agent, the player is recalled
+ *   to the lender with the contract topped up to 1 duel — gives the lender
+ *   a buffer to renew before they lose them entirely. Loan is auto-closed
+ *   as 'returned' and both parties get pushed a loan-event + a news headline.
+ *   Recalled players do NOT appear in the returned `expired` list (they
+ *   didn't actually become free agents).
+ *
+ * - **Owned player**: existing behavior — flip to FA, drop from roster.
  *
  * Legacy contracts (no duelsRemaining field) are skipped — they're treated
  * as unlimited until the owner does something that re-issues the contract.
@@ -335,8 +427,12 @@ function tickContractsAfterDuel(
   db: DB,
   team: TeamRow,
   rosterStarters: Player[],
+  notifyTeam: NotifyTeam = () => {},
+  broadcast: Broadcast = () => {},
+  log: (s: string) => void = () => {},
 ): Player[] {
   const expired: Player[] = [];
+  const recalledIds = new Set<string>();
   for (const p of rosterStarters) {
     const c = p.contract;
     if (!c) continue;
@@ -347,18 +443,57 @@ function tickContractsAfterDuel(
       c.duelsRemaining = CONTRACT_DUELS_INITIAL_FA;
     }
     c.duelsRemaining -= 1;
-    if (c.duelsRemaining <= 0) {
-      // Contract done — flip to free agent, drop from roster.
-      p.teamId = null;
-      p.contract = null;
-      p.squadTier = 'reserve';
-      expired.push(p);
+    if (c.duelsRemaining > 0) continue;
+
+    // Contract burned out — check for active loan first.
+    const loan = db.loadOpenLoanForPlayer(p.id);
+    if (loan && loan.status === 'active' && loan.toTeamId === team.id) {
+      // Recall to lender with 1 duel buffer instead of releasing as FA.
+      const lender = db.loadTeam(loan.fromTeamId);
+      if (lender) {
+        team.playerIds = team.playerIds.filter((id) => id !== p.id);
+        if (!lender.playerIds.includes(p.id)) {
+          lender.playerIds = [...lender.playerIds, p.id];
+        }
+        p.teamId = lender.id;
+        c.duelsRemaining = 1;
+        db.setTeamPlayers(lender.id, lender.playerIds);
+        db.setTeamPlayers(team.id, team.playerIds);
+        db.setLoanStatus(loan.id, 'returned');
+        recalledIds.add(p.id);
+        log(`loan recall (contract burnout): ${team.tag} → ${lender.tag} (${p.nickname}, 1 duel left)`);
+        const item = db.publishNews(
+          'transfer',
+          `${p.nickname} returns to ${lender.tag} early — contract ran out while on loan at ${team.tag}. 1 duel left, renew fast.`,
+        );
+        broadcast({ kind: 'news-item', item: item as NewsItem });
+        const payload = {
+          ...loan, status: 'returned' as const,
+          fromTeamTag: lender.tag, toTeamTag: team.tag, playerNickname: p.nickname,
+        };
+        notifyTeam(lender.id, { kind: 'loan-event', loan: payload });
+        notifyTeam(team.id, { kind: 'loan-event', loan: payload });
+        continue;
+      }
+      // Lender no longer exists — fall through to FA path.
     }
+
+    // Standard expiry — flip to free agent, drop from roster.
+    p.teamId = null;
+    p.contract = null;
+    p.squadTier = 'reserve';
+    expired.push(p);
   }
   if (expired.length > 0) {
     const expiredIds = new Set(expired.map((p) => p.id));
     team.playerIds = team.playerIds.filter((id) => !expiredIds.has(id));
     db.setTeamPlayers(team.id, team.playerIds);
+  }
+  // Persist any player records mutated by the recall path — caller's
+  // post-duel db.persistPlayer loop covers borrower-side starters but
+  // not the now-relocated player record itself in edge cases.
+  for (const p of rosterStarters) {
+    if (recalledIds.has(p.id)) db.persistPlayer(p);
   }
   return expired;
 }
@@ -688,7 +823,7 @@ export function handle(
           notifyTeam(team.id, { kind: 'boost-expired', playerId: p.id });
         });
         // Contract pacing — only the 5 starters paid match wages here.
-        const expired = tickContractsAfterDuel(db, team, players.slice(0, 5));
+        const expired = tickContractsAfterDuel(db, team, players.slice(0, 5), notifyTeam, broadcast, log);
         for (const exp of expired) {
           log(`contract expired: ${team.tag} ← ${exp.nickname} now FA`);
           const item = db.publishNews('transfer', `${exp.nickname} ran out of contract at ${team.tag} and walked to free agency.`);
@@ -740,11 +875,17 @@ export function handle(
           duel.result.winnerId === team.id,
           duel.moneyDelta,
         );
-        // Achievement checks against the cumulative season standings.
-        if (standings.wins >= 1) tryUnlock(db, notifyTeam, team.id, 'first_blood', ACHIEVEMENT_LABELS.first_blood);
-        if (standings.wins >= 10) tryUnlock(db, notifyTeam, team.id, 'ten_wins', ACHIEVEMENT_LABELS.ten_wins, standings.wins);
-        if (standings.wins >= 50) tryUnlock(db, notifyTeam, team.id, 'fifty_wins', ACHIEVEMENT_LABELS.fifty_wins, standings.wins);
-        if (standings.netMoney >= 100_000) tryUnlock(db, notifyTeam, team.id, 'bankroll_100k', ACHIEVEMENT_LABELS.bankroll_100k, standings.netMoney);
+        if (duel.result.winnerId === team.id) {
+          applyPostDuelAchievements(db, notifyTeam, {
+            winnerTeamId: team.id,
+            winnerTeam: team,
+            isPvp: false, // AI duel — no PvP-only ladder credit
+            winnerStandings: standings,
+            winnerStarters: players.slice(0, 5),
+            loserStarters: duel.opponentPlayers.slice(0, 5),
+            result: duel.result,
+          });
+        }
       }
       log(`${isScrim ? 'Scrim' : 'AI duel'}: ${team.tag} vs ${duel.opponentTag} → ${duel.moneyDelta > 0 ? 'WIN' : duel.moneyDelta < 0 ? 'LOSS' : 'NEUTRAL'} ($${duel.moneyDelta})`);
       // Build diagnostics from the baseline snapshot — what the user fielded
@@ -820,6 +961,9 @@ export function handle(
         notifyTeam(team.id, { kind: 'player-retired', playerId: r.playerId, nickname: r.nickname, lastAge: r.lastAge });
         const newsItem = db.publishNews('other', `${r.nickname} retires from competitive play at ${r.lastAge}. Inducted into the Hall of Fame.`);
         broadcast({ kind: 'news-item', item: newsItem as NewsItem });
+      }
+      if (ret.retired.length > 0) {
+        tryUnlock(db, notifyTeam, team.id, 'first_retire', ACHIEVEMENT_LABELS.first_retire);
       }
       for (const p of players) db.persistPlayer(p);
       log(`time-skip: +${ts.daysAdvanced}d, -$${ts.cost} (day ${ts.newDay}), ${ts.devChanges.length} dev moves, ${ts.goalsReached.length} goals reached, ${ret.retired.length} retired`);
@@ -1031,8 +1175,8 @@ export function handle(
       rechargeBenchAfterDuel(challengerPlayers);
       rechargeBenchAfterDuel(accepterPlayers);
       // Contract pacing for both sides' starters.
-      const expiredCh = tickContractsAfterDuel(db, challenger, challengerPlayers.slice(0, 5));
-      const expiredAc = tickContractsAfterDuel(db, accepter, accepterPlayers.slice(0, 5));
+      const expiredCh = tickContractsAfterDuel(db, challenger, challengerPlayers.slice(0, 5), notifyTeam, broadcast, log);
+      const expiredAc = tickContractsAfterDuel(db, accepter, accepterPlayers.slice(0, 5), notifyTeam, broadcast, log);
       for (const exp of expiredCh) {
         log(`contract expired: ${challenger.tag} ← ${exp.nickname} now FA`);
         const item = db.publishNews('transfer', `${exp.nickname} ran out of contract at ${challenger.tag} and walked to free agency.`);
@@ -1084,19 +1228,20 @@ export function handle(
         const cS = db.recordSeasonOutcome(season.seasonNo, challenger.id, challengerWon, challengerWon ? challenge.stake : -challenge.stake);
         const aS = db.recordSeasonOutcome(season.seasonNo, accepter.id, !challengerWon, challengerWon ? -challenge.stake : challenge.stake);
         const winnerStandings = challengerWon ? cS : aS;
-        const winnerId = challengerWon ? challenger.id : accepter.id;
-        if (winnerStandings.wins >= 1) tryUnlock(db, notifyTeam, winnerId, 'first_blood', ACHIEVEMENT_LABELS.first_blood);
-        if (winnerStandings.wins >= 10) tryUnlock(db, notifyTeam, winnerId, 'ten_wins', ACHIEVEMENT_LABELS.ten_wins, winnerStandings.wins);
-        if (winnerStandings.wins >= 50) tryUnlock(db, notifyTeam, winnerId, 'fifty_wins', ACHIEVEMENT_LABELS.fifty_wins, winnerStandings.wins);
-        if (winnerStandings.netMoney >= 100_000) tryUnlock(db, notifyTeam, winnerId, 'bankroll_100k', ACHIEVEMENT_LABELS.bankroll_100k, winnerStandings.netMoney);
-        // Underdog check: winner's avg CA was lower than loser's.
-        const winnerAvgCA = (challengerWon ? challengerPlayers : accepterPlayers)
-          .slice(0, 5).reduce((s, p) => s + p.currentAbility, 0) / 5;
-        const loserAvgCA = (challengerWon ? accepterPlayers : challengerPlayers)
-          .slice(0, 5).reduce((s, p) => s + p.currentAbility, 0) / 5;
-        if (winnerAvgCA + 8 < loserAvgCA) {
-          tryUnlock(db, notifyTeam, winnerId, 'underdog_win', ACHIEVEMENT_LABELS.underdog_win);
-        }
+        const winnerTeam = challengerWon ? challenger : accepter;
+        const loserPlayers = challengerWon ? accepterPlayers : challengerPlayers;
+        const winnerPlayers = challengerWon ? challengerPlayers : accepterPlayers;
+        const winnerPvp = db.loadPvpStandingsForTeam(season.startedAt, winnerTeam.id);
+        applyPostDuelAchievements(db, notifyTeam, {
+          winnerTeamId: winnerTeam.id,
+          winnerTeam,
+          isPvp: true,
+          winnerStandings,
+          winnerStarters: winnerPlayers.slice(0, 5),
+          loserStarters: loserPlayers.slice(0, 5),
+          result: duel.result,
+          pvpWinsForWinner: winnerPvp.pvpWins,
+        });
       }
 
       // Push duel-result to BOTH sides. The challenger sees it via notifyTeam;
@@ -1304,7 +1449,7 @@ export function handle(
       // recharge, contract tick, condition persist.
       tickBoostsAfterDuel(myPlayers, (p) => notifyTeam(me.id, { kind: 'boost-expired', playerId: p.id }));
       rechargeBenchAfterDuel(myPlayers);
-      const expiredMine = tickContractsAfterDuel(db, me, myPlayers.slice(0, 5));
+      const expiredMine = tickContractsAfterDuel(db, me, myPlayers.slice(0, 5), notifyTeam, broadcast, log);
       for (const exp of expiredMine) {
         log(`contract expired: ${me.tag} ← ${exp.nickname} now FA`);
         const item = db.publishNews('transfer', `${exp.nickname} ran out of contract at ${me.tag} and walked to free agency.`);
@@ -1348,24 +1493,29 @@ export function handle(
         },
       });
 
-      // Season standings — both sides count, achievements too. Net-money
-      // tracking uses the asymmetric deltas (defender's "loss" is 0, not
-      // -stake) so the leaderboard reflects what actually moved.
+      // Season standings — both sides count. Net-money tracking uses the
+      // asymmetric deltas (defender's "loss" is 0, not -stake) so the
+      // leaderboard reflects what actually moved. Run the full achievement
+      // gauntlet on the winning side.
       {
         const season = db.currentSeason();
         const myStanding = db.recordSeasonOutcome(season.seasonNo, me.id, meWon, myDelta);
         const oppStanding = db.recordSeasonOutcome(season.seasonNo, opp.id, !meWon, oppDelta);
         const winnerStandings = meWon ? myStanding : oppStanding;
-        const winnerId = meWon ? me.id : opp.id;
-        if (winnerStandings.wins >= 1) tryUnlock(db, notifyTeam, winnerId, 'first_blood', ACHIEVEMENT_LABELS.first_blood);
-        if (winnerStandings.wins >= 10) tryUnlock(db, notifyTeam, winnerId, 'ten_wins', ACHIEVEMENT_LABELS.ten_wins, winnerStandings.wins);
-        if (winnerStandings.wins >= 50) tryUnlock(db, notifyTeam, winnerId, 'fifty_wins', ACHIEVEMENT_LABELS.fifty_wins, winnerStandings.wins);
-        if (winnerStandings.netMoney >= 100_000) tryUnlock(db, notifyTeam, winnerId, 'bankroll_100k', ACHIEVEMENT_LABELS.bankroll_100k, winnerStandings.netMoney);
-        const winnerAvgCA = (meWon ? myPlayers : oppPlayers).slice(0, 5).reduce((s, p) => s + p.currentAbility, 0) / 5;
-        const loserAvgCA = (meWon ? oppPlayers : myPlayers).slice(0, 5).reduce((s, p) => s + p.currentAbility, 0) / 5;
-        if (winnerAvgCA + 8 < loserAvgCA) {
-          tryUnlock(db, notifyTeam, winnerId, 'underdog_win', ACHIEVEMENT_LABELS.underdog_win);
-        }
+        const winnerTeam = meWon ? me : opp;
+        const winnerPlayers = meWon ? myPlayers : oppPlayers;
+        const loserPlayers = meWon ? oppPlayers : myPlayers;
+        const winnerPvp = db.loadPvpStandingsForTeam(season.startedAt, winnerTeam.id);
+        applyPostDuelAchievements(db, notifyTeam, {
+          winnerTeamId: winnerTeam.id,
+          winnerTeam,
+          isPvp: true,
+          winnerStandings,
+          winnerStarters: winnerPlayers.slice(0, 5),
+          loserStarters: loserPlayers.slice(0, 5),
+          result: duel.result,
+          pvpWinsForWinner: winnerPvp.pvpWins,
+        });
       }
 
       // Push the duel-result to opponent + news headline at high stake.
@@ -1463,6 +1613,9 @@ export function handle(
       );
       broadcast({ kind: 'news-item', item: newsItem as NewsItem });
       tryUnlock(db, notifyTeam, team.id, 'first_fa_sign', ACHIEVEMENT_LABELS.first_fa_sign);
+      if (team.playerIds.length >= 12) {
+        tryUnlock(db, notifyTeam, team.id, 'full_roster', ACHIEVEMENT_LABELS.full_roster, team.playerIds.length);
+      }
       return { kind: 'free-agent-signed', player, wage };
     }
 
@@ -1723,6 +1876,9 @@ export function handle(
       }
       team.money = Math.max(0, team.money + delta);
       db.setTeamMoneyDay(team.id, team.money, team.day);
+      if (outcome === 'win') {
+        tryUnlock(db, notifyTeam, team.id, 'dragon_in_between', ACHIEVEMENT_LABELS.dragon_in_between);
+      }
       log(`dragon-gate: ${team.tag} bet $${bet} on [${gates[0]},${gates[1]}], drew ${thirdCard} → ${outcome} (${delta >= 0 ? '+' : ''}$${delta})`);
       return {
         kind: 'dragon-gate-result',
@@ -1805,6 +1961,9 @@ export function handle(
         db.setTeamMoneyDay(team.id, team.money, team.day);
       }
       closeCrashSession(session.sessionId);
+      if (outcome === 'cashout' && lockedMultiplier >= 10) {
+        tryUnlock(db, notifyTeam, team.id, 'crash_cashout_10x', ACHIEVEMENT_LABELS.crash_cashout_10x, Math.floor(lockedMultiplier));
+      }
       log(`crash-cashout: ${team.tag} ${outcome} at ${lockedMultiplier}x (crashAt=${session.crashAt}x) delta=${delta >= 0 ? '+' : ''}${delta}`);
       return {
         kind: 'crash-result',
@@ -1911,6 +2070,7 @@ export function handle(
         team.money += payout;
         db.setTeamMoneyDay(team.id, team.money, team.day);
         closeMinesSession(session.sessionId);
+        tryUnlock(db, notifyTeam, team.id, 'mines_perfect', ACHIEVEMENT_LABELS.mines_perfect, session.mineCount);
         log(`mines-clear: ${team.tag} cleared every safe tile @ ${mult}x → +$${delta}`);
         return {
           kind: 'mines-result',
@@ -2031,20 +2191,56 @@ export function handle(
         }
       }
 
-      // Handle contract expiry from this stream.
+      // Handle contract expiry from this stream. Same recall-to-lender rule
+      // as duels: if the streaming player is on loan, the lender gets them
+      // back with 1 duel left instead of losing them to FA.
       let expired = false;
+      let recalled = false;
       if (contract && typeof contract.duelsRemaining === 'number' && contract.duelsRemaining <= 0) {
-        player.teamId = null;
-        player.contract = null;
-        player.squadTier = 'reserve';
-        team.playerIds = team.playerIds.filter((id) => id !== player.id);
-        db.setTeamPlayers(team.id, team.playerIds);
-        expired = true;
+        const loan = db.loadOpenLoanForPlayer(player.id);
+        if (loan && loan.status === 'active' && loan.toTeamId === team.id) {
+          const lender = db.loadTeam(loan.fromTeamId);
+          if (lender) {
+            team.playerIds = team.playerIds.filter((id) => id !== player.id);
+            if (!lender.playerIds.includes(player.id)) {
+              lender.playerIds = [...lender.playerIds, player.id];
+            }
+            player.teamId = lender.id;
+            contract.duelsRemaining = 1;
+            db.setTeamPlayers(lender.id, lender.playerIds);
+            db.setTeamPlayers(team.id, team.playerIds);
+            db.setLoanStatus(loan.id, 'returned');
+            recalled = true;
+            const item = db.publishNews(
+              'transfer',
+              `${player.nickname} returns to ${lender.tag} early — contract ran out while streaming on loan at ${team.tag}. 1 duel left, renew fast.`,
+            );
+            broadcast({ kind: 'news-item', item: item as NewsItem });
+            const payload = {
+              ...loan, status: 'returned' as const,
+              fromTeamTag: lender.tag, toTeamTag: team.tag, playerNickname: player.nickname,
+            };
+            notifyTeam(lender.id, { kind: 'loan-event', loan: payload });
+            notifyTeam(team.id, { kind: 'loan-event', loan: payload });
+          }
+        }
+        if (!recalled) {
+          player.teamId = null;
+          player.contract = null;
+          player.squadTier = 'reserve';
+          team.playerIds = team.playerIds.filter((id) => id !== player.id);
+          db.setTeamPlayers(team.id, team.playerIds);
+          expired = true;
+        }
       }
 
       team.money += payout;
       db.setTeamMoneyDay(team.id, team.money, team.day);
       db.persistPlayer(player);
+      const totalStreams = db.recordStreamDone(team.id);
+      tryUnlock(db, notifyTeam, team.id, 'first_stream', ACHIEVEMENT_LABELS.first_stream);
+      if (totalStreams >= 50) tryUnlock(db, notifyTeam, team.id, 'streamer_50', ACHIEVEMENT_LABELS.streamer_50, totalStreams);
+      if (teamFans >= 100_000) tryUnlock(db, notifyTeam, team.id, 'famous', ACHIEVEMENT_LABELS.famous, teamFans);
 
       log(`stream: ${team.tag} ${player.nickname} +$${payout} (${viewers.toLocaleString()} viewers, fans ${teamFans})${trainingGained ? ` +1 ${trainingGained.attr}` : ''}${expired ? ' [contract expired]' : ''}`);
 
@@ -2162,6 +2358,19 @@ export function handle(
       // Stamp first-owner history entry — provenance trail starts here.
       result.instance.history = [{ teamId: team.id, teamTag: team.tag, at: Date.now() }];
       db.addSkin(team.id, result.instance.id, JSON.stringify(result.instance));
+      // Achievement gauntlet for cases — lifetime count + rarity/float drops.
+      const totalCases = db.recordCaseOpened(team.id);
+      if (totalCases >= 100) tryUnlock(db, notifyTeam, team.id, 'case_opener', ACHIEVEMENT_LABELS.case_opener, totalCases);
+      if (totalCases >= 500) tryUnlock(db, notifyTeam, team.id, 'case_addict', ACHIEVEMENT_LABELS.case_addict, totalCases);
+      if (result.instance.rarity === 'covert') {
+        tryUnlock(db, notifyTeam, team.id, 'covert_drop', ACHIEVEMENT_LABELS.covert_drop);
+      }
+      if (result.instance.rarity === 'rare-special') {
+        tryUnlock(db, notifyTeam, team.id, 'rare_special_drop', ACHIEVEMENT_LABELS.rare_special_drop);
+      }
+      if (typeof result.instance.float === 'number' && result.instance.float < 0.01) {
+        tryUnlock(db, notifyTeam, team.id, 'white_float_drop', ACHIEVEMENT_LABELS.white_float_drop);
+      }
       log(`case(${caseId}): ${team.tag} ${isFree ? '[FREE]' : `-$${cost}`} → ${result.instance.weapon} ${result.instance.name} (${result.instance.rarity}, $${result.instance.marketValue})`);
       return {
         kind: 'case-opened',
@@ -2358,6 +2567,7 @@ export function handle(
       }
       output.history = [{ teamId: team.id, teamTag: team.tag, at: Date.now() }];
       db.addSkin(team.id, output.id, JSON.stringify(output));
+      tryUnlock(db, notifyTeam, team.id, 'first_trade_up', ACHIEVEMENT_LABELS.first_trade_up);
       log(`trade-up: ${team.tag} burned 10×${rarity} → ${output.rarity} ${output.weapon} ${output.name} #${output.serial ?? '?'} (float ${output.float?.toFixed(4)})`);
       return {
         kind: 'skin-trade-up',
@@ -2576,6 +2786,9 @@ export function handle(
       const tag = conn.teamId ? db.loadTeam(conn.teamId)?.tag : undefined;
       const stored = db.appendChatMessage(channel, conn.nickname, tag, text.slice(0, 280));
       broadcast({ kind: 'chat-message', message: stored });
+      if (channel.startsWith('dm:') && conn.teamId) {
+        tryUnlock(db, notifyTeam, conn.teamId, 'first_dm', ACHIEVEMENT_LABELS.first_dm);
+      }
       return null;
     }
 
@@ -2865,6 +3078,7 @@ export function handle(
       db.updateTeamProfile(conn.teamId, msg.fields);
       const updated = db.loadTeam(conn.teamId);
       if (!updated) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      tryUnlock(db, notifyTeam, conn.teamId, 'first_profile_edit', ACHIEVEMENT_LABELS.first_profile_edit);
       return { kind: 'profile-updated', team: teamRowToOnline(updated) };
     }
 
@@ -2962,6 +3176,8 @@ export function handle(
         fromTeamTag: lender.tag, toTeamTag: borrower.tag, playerNickname: player.nickname,
       };
       notifyTeam(lender.id, { kind: 'loan-event', loan: payload });
+      tryUnlock(db, notifyTeam, borrower.id, 'first_loan', ACHIEVEMENT_LABELS.first_loan);
+      tryUnlock(db, notifyTeam, lender.id, 'first_loan', ACHIEVEMENT_LABELS.first_loan);
       log(`loan accepted: ${lender.tag} → ${borrower.tag} (${player.nickname}, ends in ${loan.days}d)`);
       return { kind: 'loan-event', loan: payload };
     }
@@ -3085,6 +3301,7 @@ export function handle(
       db.setTeamMoneyDay(team.id, team.money, team.day);
       db.hireCoach(coach.id, team.id);
       log(`coach hired: ${team.tag} <- ${coach.name} (skill ${coach.skill})`);
+      tryUnlock(db, notifyTeam, team.id, 'coached_up', ACHIEVEMENT_LABELS.coached_up);
       const updated = db.loadCoach(coach.id)!;
       return { kind: 'coach-hired', coach: updated };
     }
@@ -3114,6 +3331,7 @@ export function handle(
       if (msg.accept && team) {
         team.money += sponsor.monthlyAmount;
         db.setTeamMoneyDay(team.id, team.money, team.day);
+        tryUnlock(db, notifyTeam, team.id, 'first_sponsor', ACHIEVEMENT_LABELS.first_sponsor);
       }
       return {
         kind: 'sponsors',
@@ -3140,6 +3358,9 @@ export function handle(
             );
             broadcast({ kind: 'news-item', item: newsItem as NewsItem });
             tryUnlock(db, notifyTeam, champ.teamId, 'first_tournament', ACHIEVEMENT_LABELS.first_tournament);
+            const tWins = db.recordTournamentWin(champ.teamId);
+            if (tWins >= 5) tryUnlock(db, notifyTeam, champ.teamId, 'five_tournaments', ACHIEVEMENT_LABELS.five_tournaments, tWins);
+            if (tWins >= 20) tryUnlock(db, notifyTeam, champ.teamId, 'twenty_tournaments', ACHIEVEMENT_LABELS.twenty_tournaments, tWins);
           }
         }
       }, broadcast);
