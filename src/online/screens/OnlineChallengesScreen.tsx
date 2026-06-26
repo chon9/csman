@@ -84,7 +84,7 @@ export default function OnlineChallengesScreen() {
             </div>
             <div className="muted small" style={{ marginTop: 4, color: 'rgba(255,255,255,0.78)' }}>
               Server pairs you with a random team within ±{APVP_PRIMARY_DELTA} total starter CA. No waiting, no posting — duels in seconds.
-              Defender risks nothing (only wins {Math.round(APVP_DEFENDER_WIN_SHARE * 100)}% of the stake on upset) — you carry the full risk.
+              Defender risks nothing — no cash lost, no fatigue, no contract burn. Only wins {Math.round(APVP_DEFENDER_WIN_SHARE * 100)}% of the stake on an upset. You carry the full risk.
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

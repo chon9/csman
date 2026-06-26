@@ -1291,26 +1291,24 @@ export function handle(
       // take fatigue / contract effects since the team genuinely played.
       db.recordDuelUsed(me.id, myDayKey);
 
+      // Challenger-side post-duel: full effects — boost tick, bench
+      // recharge, contract tick, condition persist.
       tickBoostsAfterDuel(myPlayers, (p) => notifyTeam(me.id, { kind: 'boost-expired', playerId: p.id }));
-      tickBoostsAfterDuel(oppPlayers, (p) => notifyTeam(opp.id, { kind: 'boost-expired', playerId: p.id }));
       rechargeBenchAfterDuel(myPlayers);
-      rechargeBenchAfterDuel(oppPlayers);
       const expiredMine = tickContractsAfterDuel(db, me, myPlayers.slice(0, 5));
-      const expiredOpp = tickContractsAfterDuel(db, opp, oppPlayers.slice(0, 5));
       for (const exp of expiredMine) {
         log(`contract expired: ${me.tag} ← ${exp.nickname} now FA`);
         const item = db.publishNews('transfer', `${exp.nickname} ran out of contract at ${me.tag} and walked to free agency.`);
         broadcast({ kind: 'news-item', item: item as NewsItem });
         notifyTeam(me.id, { kind: 'player-expired', playerId: exp.id, nickname: exp.nickname });
       }
-      for (const exp of expiredOpp) {
-        log(`contract expired: ${opp.tag} ← ${exp.nickname} now FA`);
-        const item = db.publishNews('transfer', `${exp.nickname} ran out of contract at ${opp.tag} and walked to free agency.`);
-        broadcast({ kind: 'news-item', item: item as NewsItem });
-        notifyTeam(opp.id, { kind: 'player-expired', playerId: exp.id, nickname: exp.nickname });
-      }
       for (const p of myPlayers) db.persistPlayer(p);
-      for (const p of oppPlayers) db.persistPlayer(p);
+      // Defender-side post-duel: NOTHING. No contract decrement, no
+      // fatigue/morale persistence, no boost tick — async PvP must not
+      // be a way to drain an offline team's roster. The engine mutated
+      // oppPlayers in memory during the sim, but we deliberately skip
+      // db.persistPlayer for them so those mutations evaporate. Money +
+      // season standings still apply (those are team-row writes).
       db.recordMatch({
         id: matchId,
         teamAId: me.id,
@@ -1388,8 +1386,8 @@ export function handle(
         moneyDelta: oppDelta,
         newMoney: opp.money,
         summary: meWon
-          ? `${me.tag} found you in Quick Match — lost ${duel.result.mapsB}-${duel.result.mapsA}. No cash lost (defender bonus only on wins).`
-          : `${me.tag} found you in Quick Match — beat them ${duel.result.mapsB}-${duel.result.mapsA}. +$${defenderBonus.toLocaleString()} defender bonus (10% of stake).`,
+          ? `${me.tag} found you in Quick Match — lost ${duel.result.mapsB}-${duel.result.mapsA}. No cash lost, no fatigue / contract impact (you didn't opt in).`
+          : `${me.tag} found you in Quick Match — beat them ${duel.result.mapsB}-${duel.result.mapsA}. +$${defenderBonus.toLocaleString()} defender bonus, no fatigue / contract impact.`,
         userLineupIds: oppLineupIds,
         diagnostics: oppDiag,
       };
