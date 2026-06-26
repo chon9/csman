@@ -28,6 +28,7 @@ export default function OnlineMatchViewer() {
   const won = r.winnerId === team.id;
   const userMaps = userIsA ? r.mapsA : r.mapsB;
   const oppMaps = userIsA ? r.mapsB : r.mapsA;
+  const oppTag = userIsA ? (viewing.teamBTag || 'opp') : (viewing.teamATag || 'opp');
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -37,7 +38,7 @@ export default function OnlineMatchViewer() {
             {won ? 'VICTORY' : 'DEFEAT'}
           </div>
           <h2 style={{ margin: '4px 0' }}>
-            {team.tag} {userMaps} — {oppMaps} {userIsA ? r.teamBId : r.teamAId}
+            {team.tag} {userMaps} — {oppMaps} {oppTag}
           </h2>
           <div className="muted small">
             {r.maps.map((m) => `${m.map} ${m.scoreA}-${m.scoreB}`).join('  •  ')}
@@ -69,7 +70,7 @@ export default function OnlineMatchViewer() {
                 <div
                   key={idx}
                   className={`round-cell ${userWonRound ? 'round-win' : 'round-loss'}`}
-                  title={`R${round.roundNo}: ${round.winnerTeamId === team.id ? team.tag : 'opp'} via ${round.reason}`}
+                  title={`R${round.roundNo}: ${round.winnerTeamId === team.id ? team.tag : oppTag} via ${round.reason}`}
                 >
                   {round.roundNo}
                 </div>
@@ -80,12 +81,12 @@ export default function OnlineMatchViewer() {
           {/* Per-player scoreboard, both sides side-by-side. */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 12 }}>
             <SidePanel
-              title={userIsA ? team.tag : `Team A`}
+              title={userIsA ? team.tag : (viewing.teamATag || 'Team A')}
               rows={Object.values(m.playerStats).filter((s) => playerOnTeam(s.playerId, players, userIsA ? team.id : null))}
               resolveName={(id) => players[id]?.nickname ?? id}
             />
             <SidePanel
-              title={userIsA ? `Team B` : team.tag}
+              title={userIsA ? (viewing.teamBTag || 'Team B') : team.tag}
               rows={Object.values(m.playerStats).filter((s) => !playerOnTeam(s.playerId, players, userIsA ? team.id : null))}
               resolveName={(id) => players[id]?.nickname ?? id}
             />

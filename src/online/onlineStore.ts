@@ -107,7 +107,7 @@ interface OnlineState {
   myChallenges: PvpChallenge[];
   history: MatchHistoryEntry[];
   /** The match currently being viewed in the replay screen — null when not viewing. */
-  viewing: { matchId: string; result: MatchResult } | null;
+  viewing: { matchId: string; result: MatchResult; teamATag: string; teamBTag: string } | null;
 
   // ----- leaderboard (Phase 4) -----
   leaderboardSeason: SeasonInfo | null;
@@ -128,7 +128,7 @@ interface OnlineState {
   lastDevChanges: DevChange[];
   showDevReport: boolean;
   /** Latest live-replay frames cached server-side — null if expired. */
-  liveReplay: { matchId: string; result: import('../types').MatchResult } | null;
+  liveReplay: { matchId: string; result: import('../types').MatchResult; teamATag: string; teamBTag: string } | null;
   /** Chat history (whole-server snapshot — clients filter per channel). */
   chatHistory: ChatMessage[];
   chatOpen: boolean;
@@ -574,7 +574,18 @@ export const useOnline = create<OnlineState>((set, get) => ({
             set({
               duelPending: false,
               team: moneyPatch,
-              liveReplay: { matchId: msg.outcome.result.matchId, result: msg.outcome.result },
+              // Locked PvP path: derive tags from our team + the
+              // server-supplied opponent tag in the outcome.
+              liveReplay: {
+                matchId: msg.outcome.result.matchId,
+                result: msg.outcome.result,
+                teamATag: team && msg.outcome.result.teamAId === team.id
+                  ? team.tag
+                  : (msg.outcome.opponentTag ?? '?'),
+                teamBTag: team && msg.outcome.result.teamBId === team.id
+                  ? team.tag
+                  : (msg.outcome.opponentTag ?? '?'),
+              },
               pendingDuelResult: msg.outcome,
               screen: 'replay',
             });
@@ -678,7 +689,10 @@ export const useOnline = create<OnlineState>((set, get) => ({
           break;
         }
         case 'match-detail': {
-          set({ viewing: { matchId: msg.matchId, result: msg.result }, screen: 'viewer' });
+          set({
+            viewing: { matchId: msg.matchId, result: msg.result, teamATag: msg.teamATag, teamBTag: msg.teamBTag },
+            screen: 'viewer',
+          });
           break;
         }
         case 'tactics-saved': {
@@ -704,7 +718,10 @@ export const useOnline = create<OnlineState>((set, get) => ({
           break;
         }
         case 'live-replay': {
-          set({ liveReplay: { matchId: msg.matchId, result: msg.result }, screen: 'replay' });
+          set({
+            liveReplay: { matchId: msg.matchId, result: msg.result, teamATag: msg.teamATag, teamBTag: msg.teamBTag },
+            screen: 'replay',
+          });
           break;
         }
         case 'live-replay-expired': {

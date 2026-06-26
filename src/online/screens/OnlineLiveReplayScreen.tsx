@@ -265,7 +265,10 @@ export default function OnlineLiveReplayScreen() {
       <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <h2 style={{ margin: '0 0 4px' }}>
-            Replay — {team.tag} {userIsA ? r.mapsA : r.mapsB} — {userIsA ? r.mapsB : r.mapsA} {pendingDuelResult?.opponentTag ?? 'opp'}
+            {/* No final score in the title — the whole point of the replay is
+                the suspense. Live in-progress score lives in the subline below
+                and only reveals as rounds play out. */}
+            Replay — {team.tag} <span className="muted">vs</span> {userIsA ? (replay.teamBTag || 'opp') : (replay.teamATag || 'opp')}
           </h2>
           <div className="muted small" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span>Map {mapIdx + 1}/{r.maps.length} · {curMap?.map}</span>
@@ -368,8 +371,8 @@ export default function OnlineLiveReplayScreen() {
         <div className="panel" style={{ padding: 10 }}>
           <div className="md-bottom-scoreboards">
             {[
-              { rosterIds: teamABoard, tag: userIsA ? team.tag : 'OPP', side: teamASide },
-              { rosterIds: teamBBoard, tag: userIsA ? 'OPP' : team.tag, side: teamBSide },
+              { rosterIds: teamABoard, tag: userIsA ? team.tag : (replay.teamATag || 'OPP'), side: teamASide },
+              { rosterIds: teamBBoard, tag: userIsA ? (replay.teamBTag || 'OPP') : team.tag, side: teamBSide },
             ].map((board, bi) => (
               <table key={bi} className="sb-table md-bottom-sb">
                 <thead>

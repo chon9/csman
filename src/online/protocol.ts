@@ -1068,13 +1068,13 @@ export type ServerMessage =
   | { kind: 'free-agents'; players: Player[]; suggestedWageById: Record<string, number> }
   | { kind: 'free-agent-signed'; player: Player; wage: number }
   | { kind: 'history'; matches: MatchHistoryEntry[] }
-  | { kind: 'match-detail'; matchId: string; result: MatchResult }
+  | { kind: 'match-detail'; matchId: string; result: MatchResult; teamATag: string; teamBTag: string }
   // ----- Phase 4 -----
   | { kind: 'tactics-saved'; tactics: Partial<Tactics> }
   | { kind: 'lineup-saved'; playerIds: string[] }
   | { kind: 'leaderboard'; season: SeasonInfo; rows: LeaderboardRow[]; me: MyStandings; pvpRows: PvpLeaderRow[]; myPvp: MyPvpStandings }
   // ----- Phase 5 -----
-  | { kind: 'live-replay'; matchId: string; result: MatchResult }
+  | { kind: 'live-replay'; matchId: string; result: MatchResult; teamATag: string; teamBTag: string }
   | { kind: 'live-replay-expired'; matchId: string }
   | { kind: 'chat-history'; messages: ChatMessage[] }
   | { kind: 'chat-message'; message: ChatMessage }

@@ -2481,7 +2481,13 @@ export function handle(
         return { kind: 'error', code: 'forbidden', message: 'Match belongs to a different team.' };
       }
       const result = JSON.parse(row.result_json) as MatchResult;
-      return { kind: 'match-detail', matchId: msg.matchId, result };
+      return {
+        kind: 'match-detail',
+        matchId: msg.matchId,
+        result,
+        teamATag: row.team_a_tag,
+        teamBTag: row.team_b_tag,
+      };
     }
 
     // ---------- Phase 4: tactics, lineup, leaderboard ----------
@@ -2539,7 +2545,20 @@ export function handle(
       if (!cached) {
         return { kind: 'live-replay-expired', matchId: msg.matchId };
       }
-      return { kind: 'live-replay', matchId: msg.matchId, result: cached };
+      // Tags live on the match_history row (recorded just before cache).
+      // Fall back to the live team rows if for some reason history is empty.
+      const row = db.loadMatch(msg.matchId);
+      let teamATag = row?.team_a_tag ?? '';
+      let teamBTag = row?.team_b_tag ?? '';
+      if (!teamATag) teamATag = db.loadTeam(cached.teamAId)?.tag ?? '?';
+      if (!teamBTag) teamBTag = db.loadTeam(cached.teamBId)?.tag ?? '?';
+      return {
+        kind: 'live-replay',
+        matchId: msg.matchId,
+        result: cached,
+        teamATag,
+        teamBTag,
+      };
     }
 
     // ---------- Phase 5: chat ----------
