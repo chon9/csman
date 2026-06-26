@@ -16,14 +16,20 @@ export function TeamTag({ teamId, tag, accent }: { teamId: string; tag: string; 
   const isLoading = loading === teamId;
   return (
     <button
-      className="link-btn"
       onClick={(e) => { e.stopPropagation(); fetchTeamProfile(teamId); }}
       disabled={isLoading}
       title={`View ${tag} profile`}
       style={{
+        // No className — the global .link-btn floats right, which would
+        // break any inline layout the tag is dropped into (notably the
+        // live-feed "TSF 1-0 JULY" score line).
         background: 'transparent',
         border: 'none',
         padding: 0,
+        margin: 0,
+        font: 'inherit',
+        float: 'none',
+        display: 'inline',
         cursor: isLoading ? 'wait' : 'pointer',
         color: accent ?? 'var(--accent)',
         fontWeight: 700,

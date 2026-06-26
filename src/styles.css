@@ -6103,6 +6103,13 @@ input[type='range'] {
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   font-size: 12.5px;
 }
+.livefeed-score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
 .livefeed-kind {
   font-size: 9.5px;
   font-weight: 700;
