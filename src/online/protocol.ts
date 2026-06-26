@@ -206,6 +206,73 @@ export interface DragonGateResult {
   newMoney: number;
 }
 
+// ============ Streaming (Faceit pickup grind for cash) ============
+
+/** Fans contributed per CA point per player. CA dominates (proven ability
+ *  pulls eyeballs); PA gives a smaller "hype/wonderkid" bump. Both sides
+ *  use this formula so the client can render the fans counter without a
+ *  server roundtrip. */
+export const STREAM_FANS_PER_CA = 50;
+export const STREAM_FANS_PER_PA = 25;
+
+/** Fatigue added to the streaming player per session. Slightly less than
+ *  a duel — streaming is sit-down play, not full LAN performance. */
+export const STREAM_FATIGUE_COST = 12;
+/** Player fatigue ceiling — at/above this they're too burnt to stream.
+ *  Forces rotation across the roster instead of grinding a single ace. */
+export const STREAM_MAX_FATIGUE = 75;
+/** Contract duels burned per stream. Streaming counts as match reps —
+ *  treat the duels-remaining cost the same as a real duel so a heavy
+ *  streamer still has to renew. */
+export const STREAM_CONTRACT_COST = 1;
+/** Base payout multiplier on (CA + PA). Tuned so a top player on a
+ *  100k-fan team earns ~$10-18k per stream after variance. */
+export const STREAM_PAYOUT_PER_ABILITY = 30;
+/** Fraction of the team's fan count added to the payout per stream. */
+export const STREAM_PAYOUT_PER_FAN = 0.05;
+/** Variance band on the final payout — ±20% randomness keeps each stream
+ *  from feeling deterministic. */
+export const STREAM_PAYOUT_JITTER = 0.2;
+/** Morale bump per stream — players love being in front of fans. */
+export const STREAM_MORALE_DELTA = 1;
+/** Chance any given stream upgrades one of the streamer's gameplay
+ *  attributes by +1 (capped at PA-derived ceiling). Makes streaming a
+ *  viable slow-drip training method on top of being income. */
+export const STREAM_TRAINING_CHANCE = 0.5;
+
+/** Fans contributed by one player — pure function, both sides compute. */
+export function fansForPlayer(p: { currentAbility: number; potentialAbility: number }): number {
+  return Math.round(p.currentAbility * STREAM_FANS_PER_CA + p.potentialAbility * STREAM_FANS_PER_PA);
+}
+
+/** Total team fan count = sum of per-player fans across the whole roster.
+ *  Bench contributes too — fans care about the brand, not just starters. */
+export function fansForRoster(players: { currentAbility: number; potentialAbility: number }[]): number {
+  let total = 0;
+  for (const p of players) total += fansForPlayer(p);
+  return total;
+}
+
+export interface StreamResult {
+  playerId: string;
+  /** Stream viewers — flavor number for the reveal modal, derived from
+   *  the player's solo fan contribution × variance. */
+  viewers: number;
+  /** Net money change (always positive — streaming is paid work). */
+  payout: number;
+  /** Fatigue added to the player (positive). */
+  fatigueDelta: number;
+  /** Morale change (positive — fan love). */
+  moraleDelta: number;
+  /** Duels remaining on the player's contract AFTER this stream. */
+  duelsRemaining: number;
+  newMoney: number;
+  /** If a training tick fired, the attribute key and new value; else null. */
+  trainingGained: { attr: string; newValue: number } | null;
+  /** Snapshot of total team fans at stream time, for the reveal banner. */
+  teamFans: number;
+}
+
 // ============ Mines (Stake-style risk-management grid) ============
 
 /** Fixed grid size — 5×5 = 25 tiles. */
@@ -780,6 +847,8 @@ export type ClientMessage =
   | { kind: 'start-mines'; bet: number; mineCount: number }
   | { kind: 'pick-mine-tile'; sessionId: string; tileIndex: number }
   | { kind: 'cashout-mines'; sessionId: string }
+  // ----- Streaming: player runs a Faceit pickup, earns money from fans -----
+  | { kind: 'stream-player'; playerId: string }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
@@ -880,6 +949,7 @@ export type ServerMessage =
   /** Sent per safe reveal — round continues, user may pick again or cash out. */
   | { kind: 'mines-tile-revealed'; sessionId: string; tileIndex: number; multiplier: number; safePicks: number }
   | { kind: 'mines-result'; result: MinesResult }
+  | { kind: 'stream-result'; result: StreamResult }
   | { kind: 'case-list'; cases: CaseSummary[]; freeCaseId: string; freeCaseAvailable: boolean }
   | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
@@ -906,7 +976,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 26;
+export const PROTOCOL_VERSION = 27;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

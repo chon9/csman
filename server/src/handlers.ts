@@ -39,6 +39,15 @@ import {
   MINES_MAX_MINES,
   MINES_MIN_BET,
   MINES_MIN_MINES,
+  STREAM_CONTRACT_COST,
+  STREAM_FATIGUE_COST,
+  STREAM_MAX_FATIGUE,
+  STREAM_MORALE_DELTA,
+  STREAM_PAYOUT_JITTER,
+  STREAM_PAYOUT_PER_ABILITY,
+  STREAM_PAYOUT_PER_FAN,
+  STREAM_TRAINING_CHANCE,
+  fansForRoster,
   minesMultiplier,
   MORALE_GAME_DELTAS,
   MORALE_GAME_PLAYS_PER_DAY,
@@ -1677,6 +1686,106 @@ export function handle(
           newMoney: team.money,
           mineIndices,
           safePicks,
+        },
+      };
+    }
+
+    case 'stream-player': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const player = db.loadPlayer(msg.playerId);
+      if (!player || player.teamId !== team.id) {
+        return { kind: 'error', code: 'not-your-player', message: 'Player not on your roster.' };
+      }
+      if (player.fatigue >= STREAM_MAX_FATIGUE) {
+        return {
+          kind: 'error',
+          code: 'too-fatigued',
+          message: `${player.nickname} is too tired to stream (fatigue ${Math.round(player.fatigue)} ≥ ${STREAM_MAX_FATIGUE}). Rest first.`,
+        };
+      }
+      // Contract gate — streaming counts as match reps, same as a duel.
+      // Legacy contracts (no duelsRemaining) are treated as unlimited for
+      // streaming too; the duel-time backfill applies on the next duel.
+      const contract = player.contract;
+      if (contract && typeof contract.duelsRemaining === 'number' && contract.duelsRemaining < STREAM_CONTRACT_COST) {
+        return {
+          kind: 'error',
+          code: 'no-contract',
+          message: `${player.nickname}'s contract has no duels left — renew before streaming.`,
+        };
+      }
+      // Fans drive payout. Sum over the WHOLE roster (bench fans count
+      // too — they're part of the brand the streamer is repping).
+      const rosterAll = db.loadTeamPlayers(team.id);
+      const teamFans = fansForRoster(rosterAll);
+      const jitter = 1 + (Math.random() * 2 - 1) * STREAM_PAYOUT_JITTER;
+      const payoutBase = (player.currentAbility + player.potentialAbility) * STREAM_PAYOUT_PER_ABILITY + teamFans * STREAM_PAYOUT_PER_FAN;
+      const payout = Math.max(100, Math.round(payoutBase * jitter));
+      // Viewers = flavour text for the reveal — drives off the streamer's
+      // solo pull, jittered separately so payout and viewers don't always
+      // move in lockstep.
+      const viewerJitter = 0.7 + Math.random() * 0.6;
+      const viewers = Math.max(50, Math.round((player.currentAbility * 60 + player.potentialAbility * 25) * viewerJitter / 10));
+
+      // Apply effects to the player record.
+      player.fatigue = Math.min(100, player.fatigue + STREAM_FATIGUE_COST);
+      player.morale = Math.min(20, player.morale + STREAM_MORALE_DELTA);
+      if (contract && typeof contract.duelsRemaining === 'number') {
+        contract.duelsRemaining -= STREAM_CONTRACT_COST;
+      }
+
+      // Training tick — small chance of +1 to a random gameplay attr,
+      // capped at PA-derived ceiling (PA/10 → 20 max). Slow drip, but
+      // free training on top of the cash income.
+      let trainingGained: { attr: string; newValue: number } | null = null;
+      if (Math.random() < STREAM_TRAINING_CHANCE) {
+        const attrPool = ['aim', 'reflexes', 'positioning', 'gameSense', 'clutch'] as const;
+        const pick = attrPool[Math.floor(Math.random() * attrPool.length)]!;
+        const cap = Math.min(20, Math.floor(player.potentialAbility / 10));
+        const current = player.attributes[pick] ?? 0;
+        if (current < cap) {
+          player.attributes[pick] = current + 1;
+          trainingGained = { attr: pick, newValue: current + 1 };
+        }
+      }
+
+      // Handle contract expiry from this stream.
+      let expired = false;
+      if (contract && typeof contract.duelsRemaining === 'number' && contract.duelsRemaining <= 0) {
+        player.teamId = null;
+        player.contract = null;
+        player.squadTier = 'reserve';
+        team.playerIds = team.playerIds.filter((id) => id !== player.id);
+        db.setTeamPlayers(team.id, team.playerIds);
+        expired = true;
+      }
+
+      team.money += payout;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      db.persistPlayer(player);
+
+      log(`stream: ${team.tag} ${player.nickname} +$${payout} (${viewers.toLocaleString()} viewers, fans ${teamFans})${trainingGained ? ` +1 ${trainingGained.attr}` : ''}${expired ? ' [contract expired]' : ''}`);
+
+      if (expired) {
+        const item = db.publishNews('transfer', `${player.nickname} streamed out their final contract day at ${team.tag} and walked to free agency.`);
+        broadcast({ kind: 'news-item', item: item as NewsItem });
+        notifyTeam(team.id, { kind: 'player-expired', playerId: player.id, nickname: player.nickname });
+      }
+
+      return {
+        kind: 'stream-result',
+        result: {
+          playerId: player.id,
+          viewers,
+          payout,
+          fatigueDelta: STREAM_FATIGUE_COST,
+          moraleDelta: STREAM_MORALE_DELTA,
+          duelsRemaining: contract?.duelsRemaining ?? 0,
+          newMoney: team.money,
+          trainingGained,
+          teamFans,
         },
       };
     }

@@ -22,6 +22,7 @@ import type {
   CrashResult,
   DragonGateResult,
   MinesResult,
+  StreamResult,
   MassageOutcome,
   MoraleGameResult,
   RpsChoice,
@@ -48,7 +49,7 @@ import type {
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -194,6 +195,12 @@ interface OnlineState {
   /** Running session tally. */
   minesSession: { rounds: number; cashouts: number; busts: number; netCash: number };
 
+  // ----- Streaming -----
+  /** Pops a reveal modal when set, cleared on dismiss. */
+  streamReveal: StreamResult | null;
+  /** Running tally for the current session. */
+  streamSession: { streams: number; totalEarned: number; trainingHits: number };
+
   // ----- Boosters -----
   /** Unapplied booster cards in inventory. */
   boosts: BoostCard[];
@@ -246,6 +253,8 @@ interface OnlineState {
   startMines: (bet: number, mineCount: number) => void;
   pickMineTile: (tileIndex: number) => void;
   cashoutMines: () => void;
+  streamPlayer: (playerId: string) => void;
+  dismissStreamReveal: () => void;
   listCases: () => void;
   openCase: (caseId: string) => void;
   openFreeCase: () => void;
@@ -398,6 +407,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   minesActive: null,
   minesLast: null,
   minesSession: { rounds: 0, cashouts: 0, busts: 0, netCash: 0 },
+  streamReveal: null,
+  streamSession: { streams: 0, totalEarned: 0, trainingHits: 0 },
   tacticsPresets: [],
   news: [],
   directory: [],
@@ -948,6 +959,23 @@ export const useOnline = create<OnlineState>((set, get) => ({
           });
           break;
         }
+        case 'stream-result': {
+          const t = get().team;
+          const cur = get().streamSession;
+          set({
+            team: t ? { ...t, money: msg.result.newMoney } : t,
+            streamReveal: msg.result,
+            streamSession: {
+              streams: cur.streams + 1,
+              totalEarned: cur.totalEarned + msg.result.payout,
+              trainingHits: cur.trainingHits + (msg.result.trainingGained ? 1 : 0),
+            },
+          });
+          // Refresh state so the roster table shows the new fatigue/morale
+          // values + decremented contract counter.
+          client.send({ kind: 'refresh-state' });
+          break;
+        }
         case 'morale-game-result': {
           const cur = get().moraleGameSession;
           const next = {
@@ -1191,6 +1219,12 @@ export const useOnline = create<OnlineState>((set, get) => ({
     const active = get().minesActive;
     if (!active) return;
     get().client?.send({ kind: 'cashout-mines', sessionId: active.sessionId });
+  },
+  streamPlayer(playerId) {
+    get().client?.send({ kind: 'stream-player', playerId });
+  },
+  dismissStreamReveal() {
+    set({ streamReveal: null });
   },
   listCases() {
     get().client?.send({ kind: 'list-cases' });

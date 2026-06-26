@@ -26,6 +26,7 @@ const PRIMARY: NavItem[] = [
   { id: 'boosters', label: 'Boosters', icon: '🎴' },
   { id: 'massage', label: 'Massage', icon: '💆' },
   { id: 'mini-games', label: 'Mini Games', icon: '🎮' },
+  { id: 'streaming', label: 'Streaming', icon: '📺' },
   { id: 'scout', label: 'Scout', icon: '🔬' },
   { id: 'history', label: 'History', icon: '📜' },
   { id: 'leaderboard', label: 'Leaderboard', icon: '📈' },
