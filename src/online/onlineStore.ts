@@ -19,6 +19,7 @@ import type {
   AdminUserRow,
   BoostCard,
   CaseSummary,
+  CrashResult,
   DragonGateResult,
   MassageOutcome,
   MoraleGameResult,
@@ -167,6 +168,15 @@ interface OnlineState {
   /** Running session totals (resets on reconnect — not persisted). */
   dragonGateSession: { rounds: number; wins: number; misses: number; tiangs: number; netCash: number };
 
+  // ----- Crash / Rocket -----
+  /** Active round — null while idle. Client uses `startedAt` to drive the
+   *  local RAF multiplier curve; server is authoritative on resolution. */
+  crashActive: { sessionId: string; bet: number; startedAt: number; clockOffsetMs: number } | null;
+  /** Last resolved round — drives the "Last round" panel. */
+  crashLast: CrashResult | null;
+  /** Running session tally for the user's current sitting. */
+  crashSession: { rounds: number; cashouts: number; busts: number; netCash: number };
+
   // ----- Boosters -----
   /** Unapplied booster cards in inventory. */
   boosts: BoostCard[];
@@ -214,6 +224,8 @@ interface OnlineState {
   dismissMassageReveal: () => void;
   playMoraleGame: (choice: RpsChoice) => void;
   playDragonGate: (bet: number) => void;
+  startCrash: (bet: number) => void;
+  cashoutCrash: () => void;
   listCases: () => void;
   openCase: (caseId: string) => void;
   openFreeCase: () => void;
@@ -360,6 +372,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   moraleGameSession: { wins: 0, ties: 0, losses: 0, totalMorale: 0 },
   dragonGateLast: null,
   dragonGateSession: { rounds: 0, wins: 0, misses: 0, tiangs: 0, netCash: 0 },
+  crashActive: null,
+  crashLast: null,
+  crashSession: { rounds: 0, cashouts: 0, busts: 0, netCash: 0 },
   tacticsPresets: [],
   news: [],
   directory: [],
@@ -828,6 +843,43 @@ export const useOnline = create<OnlineState>((set, get) => ({
           });
           break;
         }
+        case 'crash-started': {
+          const t = get().team;
+          // clockOffsetMs: positive = server clock is ahead of ours. Use it
+          // to render a multiplier curve that lines up with what the server
+          // computes at cashout, so the UI doesn't lock in a number that
+          // visually differs from the payout.
+          const clockOffsetMs = msg.serverNowMs - Date.now();
+          set({
+            team: t ? { ...t, money: msg.newMoney } : t,
+            crashActive: {
+              sessionId: msg.sessionId,
+              bet: msg.bet,
+              startedAt: msg.startedAt,
+              clockOffsetMs,
+            },
+            // Clear the prior result while a new round is active.
+            crashLast: null,
+          });
+          break;
+        }
+        case 'crash-result': {
+          const t = get().team;
+          const cur = get().crashSession;
+          const next = {
+            rounds: cur.rounds + 1,
+            cashouts: cur.cashouts + (msg.result.outcome === 'cashout' ? 1 : 0),
+            busts: cur.busts + (msg.result.outcome === 'bust' ? 1 : 0),
+            netCash: cur.netCash + msg.result.delta,
+          };
+          set({
+            team: t ? { ...t, money: msg.result.newMoney } : t,
+            crashActive: null,
+            crashLast: msg.result,
+            crashSession: next,
+          });
+          break;
+        }
         case 'morale-game-result': {
           const cur = get().moraleGameSession;
           const next = {
@@ -1050,6 +1102,14 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   playDragonGate(bet) {
     get().client?.send({ kind: 'play-dragon-gate', bet });
+  },
+  startCrash(bet) {
+    get().client?.send({ kind: 'start-crash', bet });
+  },
+  cashoutCrash() {
+    const active = get().crashActive;
+    if (!active) return;
+    get().client?.send({ kind: 'cashout-crash', sessionId: active.sessionId });
   },
   listCases() {
     get().client?.send({ kind: 'list-cases' });

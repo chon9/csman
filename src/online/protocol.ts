@@ -206,6 +206,39 @@ export interface DragonGateResult {
   newMoney: number;
 }
 
+// ============ Crash / Rocket (gambling — rising multiplier) ============
+
+/** Min/max bet on a single Crash round. Same band as Dragon Gate so the
+ *  hub feels consistent. */
+export const CRASH_MIN_BET = 500;
+export const CRASH_MAX_BET = 50_000;
+/** Multiplier growth: e^(rate * elapsed_ms). At 2× every 10 s the curve
+ *  feels punchy without making >10× a routine event. */
+export const CRASH_GROWTH_RATE_PER_MS = Math.log(2) / 10_000;
+/** Chance the round insta-crashes at 1.0× — visible loss vibe to nudge
+ *  conservative cash-outs. */
+export const CRASH_INSTANT_BUST_CHANCE = 0.01;
+/** Provable-fair-style house edge on the long-tail distribution (1% =
+ *  E[payout] ≈ 0.99 × bet across all rounds). */
+export const CRASH_HOUSE_EDGE = 0.01;
+
+/** Outcome shape returned when a Crash round resolves (either user cashed
+ *  out before the bust point or rode it past). */
+export interface CrashResult {
+  sessionId: string;
+  outcome: 'cashout' | 'bust';
+  /** Multiplier locked in. For 'cashout' this is what we paid out at;
+   *  for 'bust' it's the secret crash point (revealed post-bust). */
+  multiplier: number;
+  /** The hidden crash point — revealed regardless of outcome so the
+   *  player can see how far they could've gone. */
+  crashAt: number;
+  bet: number;
+  /** Net change. cashout: +bet × (multiplier − 1); bust: −bet. */
+  delta: number;
+  newMoney: number;
+}
+
 // ============ Massage center (gacha-style spa visit) ============
 
 /** Cost per spa visit. Random class 1-10 masseuse, always reduces fatigue;
@@ -693,6 +726,9 @@ export type ClientMessage =
   | { kind: 'play-morale-game'; choice: RpsChoice }
   // ----- Dragon Gate (in-between): single bet, server rolls 3 cards -----
   | { kind: 'play-dragon-gate'; bet: number }
+  // ----- Crash / Rocket: server picks bust point, client cashes out live -----
+  | { kind: 'start-crash'; bet: number }
+  | { kind: 'cashout-crash'; sessionId: string }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
@@ -787,6 +823,8 @@ export type ServerMessage =
   | { kind: 'massage-booked'; outcome: MassageOutcome; cost: number; newMoney: number; nextEligibleGameDay: number }
   | { kind: 'morale-game-result'; result: MoraleGameResult }
   | { kind: 'dragon-gate-result'; result: DragonGateResult }
+  | { kind: 'crash-started'; sessionId: string; bet: number; startedAt: number; serverNowMs: number; newMoney: number }
+  | { kind: 'crash-result'; result: CrashResult }
   | { kind: 'case-list'; cases: CaseSummary[]; freeCaseId: string; freeCaseAvailable: boolean }
   | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
@@ -813,7 +851,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 24;
+export const PROTOCOL_VERSION = 25;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

@@ -30,6 +30,8 @@ import {
   MASSAGE_COST,
   MAX_REFILLS_PER_DAY,
   MIN_REFILL_COST,
+  CRASH_MAX_BET,
+  CRASH_MIN_BET,
   DRAGON_GATE_MAX_BET,
   DRAGON_GATE_MIN_BET,
   MORALE_GAME_DELTAS,
@@ -147,6 +149,7 @@ import { BOOST_CARD_LIBRARY, BOOST_PACK_COST, BOOST_PACK_ODDS } from '../../src/
 import type { PlayerAttributes } from '../../src/types.ts';
 import type { SkinInstance } from '../../src/types.ts';
 import { cacheLiveReplay, getLiveReplay } from './liveState.ts';
+import { closeSession as closeCrashSession, getSession as getCrashSession, multiplierAt as crashMultiplierAt, openSession as openCrashSession } from './crashSessions.ts';
 import { applyAutoTicks, nextAutoTickUtcMs } from './autoTick.ts';
 import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorPayouts } from './serverTick.ts';
 import {
@@ -1432,6 +1435,85 @@ export function handle(
           thirdCard,
           outcome,
           bet,
+          delta,
+          newMoney: team.money,
+        },
+      };
+    }
+
+    case 'start-crash': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const bet = Math.round(msg.bet);
+      if (!Number.isFinite(bet) || bet < CRASH_MIN_BET || bet > CRASH_MAX_BET) {
+        return {
+          kind: 'error',
+          code: 'bad-bet',
+          message: `Bet must be between $${CRASH_MIN_BET.toLocaleString()} and $${CRASH_MAX_BET.toLocaleString()}.`,
+        };
+      }
+      if (team.money < bet) {
+        return {
+          kind: 'error',
+          code: 'insufficient-funds',
+          message: `Need $${bet.toLocaleString()} on hand. You have $${team.money.toLocaleString()}.`,
+        };
+      }
+      // Deduct the bet up-front — bust path then just leaves it gone, cashout
+      // path adds back bet × multiplier (net = bet × (m − 1)).
+      team.money -= bet;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      const session = openCrashSession(team.id, bet);
+      log(`crash-start: ${team.tag} bet $${bet}, crashAt=${session.crashAt}x (hidden)`);
+      return {
+        kind: 'crash-started',
+        sessionId: session.sessionId,
+        bet,
+        startedAt: session.startedAt,
+        serverNowMs: Date.now(),
+        newMoney: team.money,
+      };
+    }
+
+    case 'cashout-crash': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const session = getCrashSession(msg.sessionId);
+      if (!session || session.teamId !== conn.teamId) {
+        return { kind: 'error', code: 'no-session', message: 'No active Crash round.' };
+      }
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const now = Date.now();
+      const liveMultiplier = crashMultiplierAt(session.startedAt, now);
+      let outcome: 'cashout' | 'bust';
+      let lockedMultiplier: number;
+      let delta: number;
+      // If the live multiplier has already passed the secret crash point,
+      // the rocket already exploded — too late to cash out. Bet is gone.
+      if (liveMultiplier >= session.crashAt) {
+        outcome = 'bust';
+        lockedMultiplier = session.crashAt;
+        delta = -session.bet;
+      } else {
+        outcome = 'cashout';
+        lockedMultiplier = liveMultiplier;
+        const payout = Math.round(session.bet * lockedMultiplier);
+        // delta = payout − bet (bet was already deducted at start).
+        delta = payout - session.bet;
+        team.money += payout;
+        db.setTeamMoneyDay(team.id, team.money, team.day);
+      }
+      closeCrashSession(session.sessionId);
+      log(`crash-cashout: ${team.tag} ${outcome} at ${lockedMultiplier}x (crashAt=${session.crashAt}x) delta=${delta >= 0 ? '+' : ''}${delta}`);
+      return {
+        kind: 'crash-result',
+        result: {
+          sessionId: session.sessionId,
+          outcome,
+          multiplier: lockedMultiplier,
+          crashAt: session.crashAt,
+          bet: session.bet,
           delta,
           newMoney: team.money,
         },

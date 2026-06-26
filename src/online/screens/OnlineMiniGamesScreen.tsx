@@ -6,13 +6,15 @@ import { useState } from 'react';
 import { useOnline } from '../onlineStore';
 import MoraleGamePanel from './MoraleGamePanel';
 import DragonGatePanel from './DragonGatePanel';
+import CrashPanel from './CrashPanel';
 import ToastStack from './ToastStack';
 
-type Tab = 'rps' | 'dragon-gate';
+type Tab = 'rps' | 'dragon-gate' | 'crash';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'rps', label: 'Rock Paper Scissor', icon: '✊' },
   { id: 'dragon-gate', label: '🐉 Dragon Gate', icon: '🐉' },
+  { id: 'crash', label: 'Crash', icon: '🚀' },
 ];
 
 export default function OnlineMiniGamesScreen(): React.ReactElement | null {
@@ -52,6 +54,7 @@ export default function OnlineMiniGamesScreen(): React.ReactElement | null {
       {/* ===== Active tab body ===== */}
       {tab === 'rps' && <MoraleGamePanel />}
       {tab === 'dragon-gate' && <DragonGatePanel />}
+      {tab === 'crash' && <CrashPanel />}
 
       <ToastStack />
     </div>
