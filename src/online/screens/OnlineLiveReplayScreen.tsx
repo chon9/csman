@@ -265,7 +265,7 @@ export default function OnlineLiveReplayScreen() {
       <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <h2 style={{ margin: '0 0 4px' }}>
-            Replay — {team.tag} {userIsA ? r.mapsA : r.mapsB} — {userIsA ? r.mapsB : r.mapsA} opp
+            Replay — {team.tag} {userIsA ? r.mapsA : r.mapsB} — {userIsA ? r.mapsB : r.mapsA} {pendingDuelResult?.opponentTag ?? 'opp'}
           </h2>
           <div className="muted small" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span>Map {mapIdx + 1}/{r.maps.length} · {curMap?.map}</span>
