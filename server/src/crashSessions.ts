@@ -21,9 +21,6 @@ export interface CrashSession {
   startedAt: number;
   /** Secret multiplier at which the rocket explodes. Always ≥ 1.0. */
   crashAt: number;
-  /** Auto-bust timer handle. Cleared on cashout so the bust callback
-   *  doesn't fire after a successful payout. */
-  bustTimer: NodeJS.Timeout | null;
 }
 
 const sessions = new Map<string, CrashSession>();
@@ -62,13 +59,9 @@ export function openSession(teamId: string, bet: number): CrashSession {
   // Cancel any stale open session for this team — refusing to open a new
   // one if the client somehow lost track of the old session would be bad
   // UX. We just drop it; the bet was already deducted on the previous
-  // open call, so nothing to refund. Clear the prior timer too so it
-  // doesn't fire against the new round.
+  // open call, so nothing to refund.
   for (const [id, s] of sessions.entries()) {
-    if (s.teamId === teamId) {
-      if (s.bustTimer) clearTimeout(s.bustTimer);
-      sessions.delete(id);
-    }
+    if (s.teamId === teamId) sessions.delete(id);
   }
   const session: CrashSession = {
     sessionId: randomBytes(8).toString('hex'),
@@ -76,7 +69,6 @@ export function openSession(teamId: string, bet: number): CrashSession {
     bet,
     startedAt: Date.now(),
     crashAt: rollCrashPoint(),
-    bustTimer: null,
   };
   sessions.set(session.sessionId, session);
   return session;
@@ -87,22 +79,57 @@ export function getSession(sessionId: string): CrashSession | null {
 }
 
 export function closeSession(sessionId: string): void {
-  const s = sessions.get(sessionId);
-  if (s?.bustTimer) clearTimeout(s.bustTimer);
   sessions.delete(sessionId);
 }
 
-/** ms from session start until the secret crash point is reached, using
- *  the same exponential curve the client renders. */
-export function msUntilBust(session: CrashSession): number {
-  return Math.max(0, Math.log(session.crashAt) / CRASH_GROWTH_RATE_PER_MS);
+/** Iterate every active session — used by the global bust ticker. */
+export function activeSessions(): IterableIterator<CrashSession> {
+  return sessions.values();
 }
 
-/** Attach a bust timer to the session. Fires the callback at the exact
- *  moment the multiplier curve hits crashAt. Caller is responsible for
- *  checking the session still exists when the callback fires (the user
- *  may have cashed out, in which case the timer was cleared). */
-export function scheduleBust(session: CrashSession, callback: () => void): void {
-  const delay = msUntilBust(session);
-  session.bustTimer = setTimeout(callback, delay);
+/**
+ * Boot the global bust ticker. Every `intervalMs` real ms, the server
+ * walks all active Crash sessions, computes the live multiplier from its
+ * own clock, and fires `onBust` for any whose curve has crossed `crashAt`.
+ * This is what makes the bust authoritative: there's no client-side timer
+ * the user can spoof. Even if a cashout message is in flight when the
+ * tick fires, the bust wins — we delete the session before invoking
+ * the callback so a racing cashout handler will see "no session" and
+ * reject as a stale request.
+ *
+ * 50 ms ≈ 20 Hz — sub-frame precision for bust detection while still
+ * being cheap (one Map iteration per tick, typically <10 entries).
+ */
+let bustTicker: NodeJS.Timeout | null = null;
+
+export function startBustTicker(
+  intervalMs: number,
+  onBust: (session: CrashSession) => void,
+): void {
+  if (bustTicker) clearInterval(bustTicker);
+  bustTicker = setInterval(() => {
+    const now = Date.now();
+    for (const session of sessions.values()) {
+      const m = multiplierAt(session.startedAt, now);
+      if (m >= session.crashAt) {
+        // Remove first so a racing cashout will fail the "session exists"
+        // check rather than double-resolving the round.
+        sessions.delete(session.sessionId);
+        try {
+          onBust(session);
+        } catch (err) {
+          // Don't let one bad callback take down the ticker for everyone.
+          console.error('[crash-ticker] onBust threw', err);
+        }
+      }
+    }
+  }, intervalMs);
+  bustTicker.unref();
+}
+
+export function stopBustTicker(): void {
+  if (bustTicker) {
+    clearInterval(bustTicker);
+    bustTicker = null;
+  }
 }

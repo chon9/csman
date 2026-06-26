@@ -15,6 +15,7 @@ import { openDb } from './db.ts';
 import { handle, newConnSession, type ConnSession } from './handlers.ts';
 import { handleHttp } from './httpRoutes.ts';
 import { backfillLegacyContracts, sanitizePlayerAges, seedRealNamePool } from './freeAgents.ts';
+import { startBustTicker as startCrashBustTicker } from './crashSessions.ts';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../src/online/protocol.ts';
 
 const PORT = Number(process.env.CSM_PORT ?? 8787);
@@ -102,6 +103,29 @@ function onlineTeamCount(): number {
 setInterval(() => {
   broadcastAll({ kind: 'presence', onlineTeams: onlineTeamCount() });
 }, 15_000).unref();
+
+// Crash / Rocket bust ticker. 20 Hz poll over all open Crash sessions —
+// the moment any session's live multiplier crosses its secret crashAt,
+// the server pushes a bust result to that team's sockets and removes the
+// session. Cashout still works while the rocket is alive; once the tick
+// removes the session, cashout will see "no session" and reject.
+startCrashBustTicker(50, (session) => {
+  const team = db.loadTeam(session.teamId);
+  if (!team) return;
+  console.log(`[csm:crash] autobust ${team.tag} at ${session.crashAt}x (bet $${session.bet} lost)`);
+  notifyTeam(session.teamId, {
+    kind: 'crash-result',
+    result: {
+      sessionId: session.sessionId,
+      outcome: 'bust',
+      multiplier: session.crashAt,
+      crashAt: session.crashAt,
+      bet: session.bet,
+      delta: -session.bet,
+      newMoney: team.money,
+    },
+  });
+});
 
 function bindTeamSocket(ws: WebSocket, teamId: string): void {
   let set = socketsByTeam.get(teamId);

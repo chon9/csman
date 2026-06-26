@@ -149,7 +149,7 @@ import { BOOST_CARD_LIBRARY, BOOST_PACK_COST, BOOST_PACK_ODDS } from '../../src/
 import type { PlayerAttributes } from '../../src/types.ts';
 import type { SkinInstance } from '../../src/types.ts';
 import { cacheLiveReplay, getLiveReplay } from './liveState.ts';
-import { closeSession as closeCrashSession, getSession as getCrashSession, multiplierAt as crashMultiplierAt, openSession as openCrashSession, scheduleBust as scheduleCrashBust } from './crashSessions.ts';
+import { closeSession as closeCrashSession, getSession as getCrashSession, multiplierAt as crashMultiplierAt, openSession as openCrashSession } from './crashSessions.ts';
 import { applyAutoTicks, nextAutoTickUtcMs } from './autoTick.ts';
 import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorPayouts } from './serverTick.ts';
 import {
@@ -1465,39 +1465,10 @@ export function handle(
       team.money -= bet;
       db.setTeamMoneyDay(team.id, team.money, team.day);
       const session = openCrashSession(team.id, bet);
-      // Schedule the auto-bust. If the user never clicks Cash Out, this
-      // fires exactly when the multiplier curve hits the secret crash
-      // point and pushes the bust outcome to all of the team's sockets.
-      const sessionTeamId = team.id;
-      const sessionId = session.sessionId;
-      const sessionBet = session.bet;
-      const sessionCrashAt = session.crashAt;
-      scheduleCrashBust(session, () => {
-        // Guard: the user may have cashed out between schedule and fire;
-        // the cashout handler clears the timer, but a still-pending fire
-        // could race with a just-completed cashout.
-        const live = getCrashSession(sessionId);
-        if (!live) return;
-        const lateTeam = db.loadTeam(sessionTeamId);
-        if (!lateTeam) {
-          closeCrashSession(sessionId);
-          return;
-        }
-        closeCrashSession(sessionId);
-        log(`crash-autobust: ${lateTeam.tag} rocket exploded at ${sessionCrashAt}x (bet $${sessionBet} lost)`);
-        notifyTeam(sessionTeamId, {
-          kind: 'crash-result',
-          result: {
-            sessionId,
-            outcome: 'bust',
-            multiplier: sessionCrashAt,
-            crashAt: sessionCrashAt,
-            bet: sessionBet,
-            delta: -sessionBet,
-            newMoney: lateTeam.money,
-          },
-        });
-      });
+      // No per-session timer here — index.ts boots a global tick loop that
+      // polls all open sessions at ~20 Hz and pushes the bust the moment
+      // a session's multiplier crosses crashAt. Server is sole authority,
+      // no client-side timing involved in the bust decision.
       log(`crash-start: ${team.tag} bet $${bet}, crashAt=${session.crashAt}x (hidden)`);
       return {
         kind: 'crash-started',
