@@ -1,23 +1,11 @@
 // Connect screen — first thing the user sees in online mode. Collects
-// server URL + nickname + PIN, fires off the hello message. Persists the
-// last-used server URL to localStorage so reconnecting is one click.
+// nickname + PIN, fires off the hello message. Server URL is auto-derived
+// from the page origin (wsOrigin) — no manual entry needed for the single
+// hosted deployment.
 
 import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import { wsOrigin } from '../serverUrl';
-
-const LAST_SERVER_KEY = 'csm-online-last-server';
-
-function defaultServerUrl(): string {
-  try {
-    const saved = localStorage.getItem(LAST_SERVER_KEY);
-    if (saved) return saved;
-  } catch { /* ignore */ }
-  // wsOrigin() resolves to wss://<host> behind a Caddy / reverse proxy and
-  // ws://<host>:8787 for raw-IP / local dev. One source of truth keeps
-  // production + dev connect URLs in sync without manual editing.
-  return wsOrigin();
-}
 
 export default function ConnectScreen({ onBack }: { onBack: () => void }) {
   const connectTo = useOnline((s) => s.connectTo);
@@ -26,7 +14,6 @@ export default function ConnectScreen({ onBack }: { onBack: () => void }) {
   const log = useOnline((s) => s.log);
   const clearError = useOnline((s) => s.clearError);
 
-  const [serverUrl, setServerUrl] = useState(defaultServerUrl);
   const [nickname, setNickname] = useState('');
   const [pin, setPin] = useState('');
   const [touched, setTouched] = useState(false);
@@ -35,15 +22,13 @@ export default function ConnectScreen({ onBack }: { onBack: () => void }) {
 
   const pinValid = /^\d{4,8}$/.test(pin);
   const nickValid = nickname.trim().length >= 2 && nickname.trim().length <= 24;
-  const urlValid = serverUrl.startsWith('ws://') || serverUrl.startsWith('wss://');
-  const canSubmit = pinValid && nickValid && urlValid && status !== 'connecting';
+  const canSubmit = pinValid && nickValid && status !== 'connecting';
 
   function handleConnect(e: React.FormEvent): void {
     e.preventDefault();
     setTouched(true);
     if (!canSubmit) return;
-    try { localStorage.setItem(LAST_SERVER_KEY, serverUrl); } catch { /* ignore */ }
-    connectTo(serverUrl.trim(), nickname.trim(), pin.trim());
+    connectTo(wsOrigin(), nickname.trim(), pin.trim());
   }
 
   return (
@@ -54,27 +39,9 @@ export default function ConnectScreen({ onBack }: { onBack: () => void }) {
           <span className="menu-brand-cs">CS2</span>
           <span className="menu-brand-mgr">MANAGER · ONLINE</span>
         </div>
-        <div className="menu-tagline">Connect to a multiplayer server.</div>
+        <div className="menu-tagline">Sign in to play.</div>
 
         <form className="menu-buttons" onSubmit={handleConnect} style={{ gap: 12 }}>
-          <label className="field">
-            <span className="field-label">Server URL</span>
-            <input
-              className="input"
-              type="text"
-              autoComplete="off"
-              spellCheck={false}
-              value={serverUrl}
-              onChange={(e) => setServerUrl(e.target.value)}
-              placeholder="ws://your-lightsail-ip:8787"
-            />
-            {touched && !urlValid && (
-              <span className="muted small" style={{ color: '#e25555' }}>
-                Must start with ws:// or wss://
-              </span>
-            )}
-          </label>
-
           <label className="field">
             <span className="field-label">Nickname</span>
             <input
@@ -141,8 +108,8 @@ export default function ConnectScreen({ onBack }: { onBack: () => void }) {
         )}
       </div>
       <div className="menu-footer">
-        <span>Online (Beta) · Phase 1</span>
-        <span>Per-team clock · LAN/Internet ready</span>
+        <span>Online · live multiplayer</span>
+        <span>Per-team clock · auto-advances every 4h UTC</span>
       </div>
     </div>
   );

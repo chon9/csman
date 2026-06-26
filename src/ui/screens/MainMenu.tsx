@@ -39,23 +39,27 @@ export default function MainMenu({
 
         {panel === 'main' && (
           <div className="menu-buttons">
+            <button className="menu-btn menu-btn-online" onClick={onOnline}>
+              <span className="menu-btn-online-pulse" aria-hidden />
+              <span className="menu-btn-label">
+                Play Online
+                <span className="menu-btn-online-badge">LIVE</span>
+              </span>
+              <span className="menu-btn-sub">Duel real managers · cross-team transfers · tournaments · gambling mini-games</span>
+            </button>
             {save && (
               <button className="menu-btn menu-btn-primary" onClick={tryLoad}>
                 <span className="menu-btn-label">Continue Career</span>
-                <span className="menu-btn-sub">Pick up where you left off</span>
+                <span className="menu-btn-sub">Pick up where you left off (single player)</span>
               </button>
             )}
             <button className="menu-btn" onClick={onNewCareer}>
               <span className="menu-btn-label">New Career</span>
-              <span className="menu-btn-sub">Pick a team and start a fresh save</span>
+              <span className="menu-btn-sub">Single-player — pick a team and start a fresh save</span>
             </button>
             <button className="menu-btn" disabled={!save} onClick={onLoadSelected}>
               <span className="menu-btn-label">Load / Manage Save</span>
               <span className="menu-btn-sub">{save ? 'Inspect or delete the current save' : 'No save yet'}</span>
-            </button>
-            <button className="menu-btn" onClick={onOnline}>
-              <span className="menu-btn-label">Play Online <span className="muted small">(Beta)</span></span>
-              <span className="menu-btn-sub">Connect to a multiplayer server — duels vs other teams + AI</span>
             </button>
             <button className="menu-btn" onClick={() => setPanel('settings')}>
               <span className="menu-btn-label">Settings</span>
