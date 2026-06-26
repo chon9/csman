@@ -23,6 +23,7 @@ import OnlineSidebar from './online/screens/OnlineSidebar';
 import ChatWidget from './online/screens/ChatWidget';
 import DevReportModal from './online/screens/DevReportModal';
 import LiveFeedWidget from './online/screens/LiveFeedWidget';
+import TeamProfileModal from './online/screens/TeamProfileModal';
 import Sidebar from './ui/Sidebar';
 import TopBar from './ui/TopBar';
 import MatchDayScreen from './ui/match/MatchDayScreen';
@@ -155,6 +156,9 @@ export default function App() {
         {onlineScreen !== 'home' && <ChatWidget />}
         {onlineScreen !== 'home' && <DevReportModal />}
         {onlineScreen !== 'home' && <LiveFeedWidget />}
+        {/* Team-profile modal lives at the shell level so any clickable
+            team tag on any screen can open it. */}
+        <TeamProfileModal />
       </div>
     );
   }

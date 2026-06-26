@@ -7,6 +7,7 @@ import { useOnline } from '../onlineStore';
 import type { MatchHistoryEntry } from '../protocol';
 import { publicOrigin } from '../serverUrl';
 import ToastStack from './ToastStack';
+import { TeamTag } from './TeamProfileModal';
 
 function timeAgo(ts: number): string {
   const days = Math.round((Date.now() - ts) / 86400000);
@@ -36,11 +37,12 @@ export default function OnlineHistoryScreen() {
   const rows = history.map((m) => {
     const userIsA = m.teamAId === team.id;
     const oppTag = userIsA ? m.teamBTag : m.teamATag;
+    const oppTeamId = userIsA ? m.teamBId : m.teamAId;
     const userScore = userIsA ? m.mapsA : m.mapsB;
     const oppScore = userIsA ? m.mapsB : m.mapsA;
     const won = m.winnerId === team.id;
     const moneyDelta = won ? m.stake : -m.stake;
-    return { m, oppTag, userScore, oppScore, won, moneyDelta };
+    return { m, oppTag, oppTeamId, userScore, oppScore, won, moneyDelta };
   });
 
   const wins = rows.filter((r) => r.won).length;
@@ -84,10 +86,10 @@ export default function OnlineHistoryScreen() {
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ m, oppTag, userScore, oppScore, won, moneyDelta }: { m: MatchHistoryEntry; oppTag: string; userScore: number; oppScore: number; won: boolean; moneyDelta: number; }) => (
+              {rows.map(({ m, oppTag, oppTeamId, userScore, oppScore, won, moneyDelta }: { m: MatchHistoryEntry; oppTag: string; oppTeamId: string | null; userScore: number; oppScore: number; won: boolean; moneyDelta: number; }) => (
                 <tr key={m.id}>
                   <td style={{ color: outcomeColor(won), fontWeight: 800 }}>{won ? 'W' : 'L'}</td>
-                  <td><strong>{oppTag}</strong></td>
+                  <td>{oppTeamId ? <TeamTag teamId={oppTeamId} tag={oppTag} /> : <strong>{oppTag}</strong>}</td>
                   <td><span className="muted small">{m.kind === 'ai' ? 'AI' : 'PvP'}</span></td>
                   <td className="muted small">{m.mapsA + m.mapsB >= 2 ? 'BO3+' : 'BO1'}</td>
                   <td className="num">{userScore}-{oppScore}</td>

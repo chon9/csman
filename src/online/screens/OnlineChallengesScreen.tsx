@@ -15,6 +15,7 @@ import {
 } from '../protocol';
 import type { MatchFormat } from '../../types';
 import ToastStack from './ToastStack';
+import { TeamTag } from './TeamProfileModal';
 
 const APVP_PRESETS = [1000, 2500, 5000, 10000, 25000, 50000];
 
@@ -227,7 +228,7 @@ export default function OnlineChallengesScreen() {
                 const canAfford = team.money >= c.stake;
                 return (
                   <tr key={c.id}>
-                    <td><strong>{c.challengerTag}</strong></td>
+                    <td><TeamTag teamId={c.challengerTeamId} tag={c.challengerTag} /></td>
                     <td className="muted">{c.challengerNick}</td>
                     <td>{c.format}</td>
                     <td className="num">${c.stake.toLocaleString()}</td>

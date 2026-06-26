@@ -55,6 +55,54 @@ export interface TeamProfileFields {
   youtubeUrl?: string;
 }
 
+/** Public-roster snapshot of one player — scrubbed for the click-to-view
+ *  enemy team profile. No attributes / contract / condition fields:
+ *  scouting another team should reveal HEADLINE stats, not let you read
+ *  their full sheet. */
+export interface PublicPlayer {
+  id: string;
+  nickname: string;
+  firstName: string;
+  lastName: string;
+  role: string;
+  nationality: string;
+  age: number;
+  currentAbility: number;
+  potentialAbility: number;
+}
+
+/** Scrubbed snapshot of any team — what a manager sees when they click
+ *  on an enemy team's tag anywhere in the app. Includes profile fluff,
+ *  roster headlines, and recent season standings + PvP record. */
+export interface PublicTeamProfile {
+  id: string;
+  name: string;
+  tag: string;
+  region: Region;
+  ownerNick: string;
+  /** Branding fields the owner has set on their profile editor. */
+  bio?: string;
+  primaryColor?: string;
+  twitchUrl?: string;
+  twitterUrl?: string;
+  youtubeUrl?: string;
+  /** Total fans (derived from full-roster CA + PA via fansForRoster). */
+  fans: number;
+  starters: PublicPlayer[];
+  reserves: PublicPlayer[];
+  /** Total starter CA — handy for matchmaking decisions. */
+  totalStarterCA: number;
+  /** Current-season win/loss + PvP-only win/loss. */
+  seasonWins: number;
+  seasonLosses: number;
+  pvpWins: number;
+  pvpLosses: number;
+  /** Achievements unlocked (counts only — don't dump full payload). */
+  achievementsUnlocked: number;
+  /** Days since team creation. Aesthetic flavor for the profile header. */
+  ageInDays: number;
+}
+
 // ============ Daily bonus + case opening ============
 
 /** Fixed daily login bonus credited to the team's money on claim. */
@@ -704,6 +752,10 @@ export interface LiveFeedEntry {
   kind: 'ai' | 'pvp' | 'tournament';
   teamATag: string;
   teamBTag: string;
+  /** Team A is always a real team (the duel initiator). */
+  teamAId: string;
+  /** Team B is null when the opponent was an AI (no clickable profile). */
+  teamBId: string | null;
   mapsA: number;
   mapsB: number;
   /** Optional context label (e.g. "Daily Open · Quarterfinal"). */
@@ -837,6 +889,9 @@ export interface DuelOutcome {
   /** Opponent label for the result screen — synthetic AI team OR live team tag. */
   opponentName: string;
   opponentTag: string;
+  /** Opponent team id when they're a real team (PvP / Quick Match);
+   *  null when it was a synthetic AI opponent (no clickable profile). */
+  opponentTeamId?: string | null;
   /** +stake on win, −stake on loss. */
   moneyDelta: number;
   newMoney: number;
@@ -954,6 +1009,8 @@ export type ClientMessage =
   | { kind: 'stream-player'; playerId: string }
   // ----- Quick Match: pick a stake, server finds a CA-balanced opponent -----
   | { kind: 'find-async-match'; stake: number }
+  // ----- Click-to-view enemy team profile (scrubbed roster + standings) -----
+  | { kind: 'fetch-team-profile'; teamId: string }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
@@ -1036,6 +1093,7 @@ export type ServerMessage =
   | { kind: 'achievements'; entries: Achievement[] }
   | { kind: 'achievement-unlocked'; achievement: Achievement }
   | { kind: 'profile-updated'; team: OnlineTeam }
+  | { kind: 'team-profile'; profile: PublicTeamProfile }
   | { kind: 'loan-offers'; incoming: LoanOffer[]; outgoing: LoanOffer[] }
   | { kind: 'loan-event'; loan: LoanOffer }
   // ----- Phase 9 -----
@@ -1093,7 +1151,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 30;
+export const PROTOCOL_VERSION = 31;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

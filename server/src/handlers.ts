@@ -723,6 +723,8 @@ export function handle(
           kind: 'ai',
           teamATag: team.tag,
           teamBTag: duel.opponentTag,
+          teamAId: team.id,
+          teamBId: null, // AI opponent — no clickable profile
           mapsA: duel.result.mapsA,
           mapsB: duel.result.mapsB,
           context: isScrim ? 'Scrim' : `$${stake.toLocaleString()} duel`,
@@ -765,6 +767,7 @@ export function handle(
           result: duel.result,
           opponentName: duel.opponentName,
           opponentTag: duel.opponentTag,
+          opponentTeamId: null, // AI opponent — no clickable profile
           moneyDelta: duel.moneyDelta,
           newMoney: team.money,
           summary: duel.summary,
@@ -1065,6 +1068,8 @@ export function handle(
           kind: 'pvp',
           teamATag: challenger.tag,
           teamBTag: accepter.tag,
+          teamAId: challenger.id,
+          teamBId: accepter.id,
           mapsA: duel.result.mapsA,
           mapsB: duel.result.mapsB,
           context: `$${challenge.stake.toLocaleString()} PvP`,
@@ -1114,6 +1119,7 @@ export function handle(
         result: duel.result,
         opponentName: accepter.name,
         opponentTag: accepter.tag,
+        opponentTeamId: accepter.id,
         moneyDelta: accepterWon ? -challenge.stake : challenge.stake,
         newMoney: challenger.money,
         summary: accepterWon
@@ -1126,6 +1132,7 @@ export function handle(
         result: duel.result,
         opponentName: challenger.name,
         opponentTag: challenger.tag,
+        opponentTeamId: challenger.id,
         moneyDelta: accepterWon ? challenge.stake : -challenge.stake,
         newMoney: accepter.money,
         summary: accepterWon
@@ -1330,6 +1337,8 @@ export function handle(
           kind: 'pvp',
           teamATag: me.tag,
           teamBTag: opp.tag,
+          teamAId: me.id,
+          teamBId: opp.id,
           mapsA: duel.result.mapsA,
           mapsB: duel.result.mapsB,
           context: `$${stake.toLocaleString()} Quick Match (${bandLabel} CA)`,
@@ -1371,6 +1380,7 @@ export function handle(
         result: duel.result,
         opponentName: opp.name,
         opponentTag: opp.tag,
+        opponentTeamId: opp.id,
         moneyDelta: myDelta,
         newMoney: me.money,
         summary: meWon
@@ -1383,6 +1393,7 @@ export function handle(
         result: duel.result,
         opponentName: me.name,
         opponentTag: me.tag,
+        opponentTeamId: me.id,
         moneyDelta: oppDelta,
         newMoney: opp.money,
         summary: meWon
@@ -2684,6 +2695,61 @@ export function handle(
       // The DM picker filters out the requesting team's own entry.
       const teams = listAllTeamsCompact(db);
       return { kind: 'online-teams', teams };
+    }
+
+    case 'fetch-team-profile': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const target = db.loadTeam(msg.teamId);
+      if (!target) return { kind: 'error', code: 'no-team', message: 'Team not found.' };
+      const roster = db.loadTeamPlayers(target.id);
+      // Scrub each player down to the public profile shape — no attributes,
+      // contract, fatigue, morale, etc. Scouting another team should be a
+      // headline read, not let you copy their full sheet.
+      const scrub = (p: Player) => ({
+        id: p.id,
+        nickname: p.nickname,
+        firstName: p.firstName,
+        lastName: p.lastName,
+        role: p.role,
+        nationality: p.nationality,
+        age: Math.round(p.age * 100) / 100,
+        currentAbility: p.currentAbility,
+        potentialAbility: p.potentialAbility,
+      });
+      const starters = roster.slice(0, 5).map(scrub);
+      const reserves = roster.slice(5).map(scrub);
+      const totalStarterCA = starters.reduce((s, p) => s + p.currentAbility, 0);
+      const fans = fansForRoster(roster);
+      const season = db.currentSeason();
+      const seasonStandings = db.loadTeamStandings(season.seasonNo, target.id);
+      const pvpStandings = db.loadPvpStandingsForTeam(season.startedAt, target.id);
+      const achievementsUnlocked = db.loadAchievements(target.id).length;
+      const ageInDays = Math.max(0, Math.floor((Date.now() - target.createdAt) / (24 * 3600 * 1000)));
+      return {
+        kind: 'team-profile',
+        profile: {
+          id: target.id,
+          name: target.name,
+          tag: target.tag,
+          region: target.region,
+          ownerNick: target.ownerNick,
+          bio: target.bio,
+          primaryColor: target.primaryColor,
+          twitchUrl: target.twitchUrl,
+          twitterUrl: target.twitterUrl,
+          youtubeUrl: target.youtubeUrl,
+          fans,
+          starters,
+          reserves,
+          totalStarterCA,
+          seasonWins: seasonStandings.wins,
+          seasonLosses: seasonStandings.losses,
+          pvpWins: pvpStandings.pvpWins,
+          pvpLosses: pvpStandings.pvpLosses,
+          achievementsUnlocked,
+          ageInDays,
+        },
+      };
     }
 
     // ---------- Phase 7: cross-server team export / import ----------

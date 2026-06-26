@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import ToastStack from './ToastStack';
+import { TeamTag } from './TeamProfileModal';
 
 type SortKey = 'price' | 'ca' | 'age' | 'pa';
 type Tab = 'listings' | 'free-agents';
@@ -198,7 +199,7 @@ export default function OnlineMarketScreen() {
                       <strong>{p?.nickname ?? l.playerId}</strong>{' '}
                       <span className="muted small">{p?.firstName} {p?.lastName}</span>
                     </td>
-                    <td className="muted">{l.sellerTeamTag}</td>
+                    <td><TeamTag teamId={l.sellerTeamId} tag={l.sellerTeamTag} /></td>
                     <td>{p?.role ?? '—'}</td>
                     <td className="muted">{p?.nationality ?? '—'}</td>
                     <td>{p?.age ?? '—'}</td>

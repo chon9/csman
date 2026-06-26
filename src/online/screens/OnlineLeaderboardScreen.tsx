@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import ToastStack from './ToastStack';
+import { TeamTag } from './TeamProfileModal';
 
 type Tab = 'pvp' | 'overall';
 
@@ -164,7 +165,7 @@ export default function OnlineLeaderboardScreen() {
                     return (
                       <tr key={r.teamId} className={isMe ? 'row-user' : ''}>
                         <td><strong>{rankBadge(r.rank)}</strong></td>
-                        <td><strong style={{ color: 'var(--accent)' }}>{r.teamTag}</strong></td>
+                        <td><TeamTag teamId={r.teamId} tag={r.teamTag} /></td>
                         <td className="muted">{r.teamName}</td>
                         <td className="num">{r.pvpWins}</td>
                         <td className="num">{r.pvpLosses}</td>
@@ -234,7 +235,7 @@ export default function OnlineLeaderboardScreen() {
                     return (
                       <tr key={r.teamId} className={isMe ? 'row-user' : ''}>
                         <td><strong>{rankBadge(r.rank)}</strong></td>
-                        <td><strong style={{ color: 'var(--accent)' }}>{r.teamTag}</strong></td>
+                        <td><TeamTag teamId={r.teamId} tag={r.teamTag} /></td>
                         <td className="muted">{r.teamName}</td>
                         <td className="num">{r.wins}</td>
                         <td className="num">{r.losses}</td>

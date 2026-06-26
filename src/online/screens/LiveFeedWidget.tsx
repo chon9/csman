@@ -4,6 +4,7 @@
 // cache window the user just gets a toast and falls back to History.
 
 import { useOnline } from '../onlineStore';
+import { TeamTag } from './TeamProfileModal';
 
 function fmtAgo(ts: number): string {
   const s = Math.round((Date.now() - ts) / 1000);
@@ -44,7 +45,9 @@ export default function LiveFeedWidget() {
             <div key={e.matchId} className="livefeed-line">
               <span className={`livefeed-kind ${kindCls}`}>{e.kind.toUpperCase()}</span>
               <span className="livefeed-score">
-                <strong>{e.teamATag}</strong> {e.mapsA}-{e.mapsB} <strong>{e.teamBTag}</strong>
+                <TeamTag teamId={e.teamAId} tag={e.teamATag} />
+                {' '}{e.mapsA}-{e.mapsB}{' '}
+                {e.teamBId ? <TeamTag teamId={e.teamBId} tag={e.teamBTag} /> : <strong>{e.teamBTag}</strong>}
               </span>
               {e.context && <span className="muted small">· {e.context}</span>}
               <span className="muted small" style={{ marginLeft: 'auto' }}>{fmtAgo(e.at)}</span>

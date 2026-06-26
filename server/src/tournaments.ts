@@ -284,6 +284,8 @@ function runBracket(
             kind: 'tournament',
             teamATag: teamA.tag,
             teamBTag: teamB.tag,
+            teamAId: teamA.id,
+            teamBId: teamB.id,
             mapsA: duel.result.mapsA,
             mapsB: duel.result.mapsB,
             context: `${tournamentName} · ${roundLabel}`,

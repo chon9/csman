@@ -13,6 +13,7 @@ import type {
   HoFEntry,
   LeaderboardRow,
   MyPvpStandings,
+  PublicTeamProfile,
   PvpLeaderRow,
   LiveFeedEntry,
   LoanOffer,
@@ -109,6 +110,12 @@ interface OnlineState {
   /** PvP-only leaderboard (derived from match_history, AI excluded). */
   pvpLeaderRows: PvpLeaderRow[];
   myPvpStandings: MyPvpStandings | null;
+  /** Pop-up team profile (any team — your own or an enemy's). Set by
+   *  clicking a team tag anywhere in the app; cleared on dismiss. */
+  viewingTeamProfile: PublicTeamProfile | null;
+  /** True while a fetch-team-profile is in flight (so the click target
+   *  can disable / show a spinner). */
+  teamProfileLoading: string | null;
 
   // ----- Phase 5: live replay, chat, tournaments, dev arcs -----
   /** Most recent dev-arc payload (used to drive the growth-report modal). */
@@ -309,6 +316,8 @@ interface OnlineState {
   refreshChallenges: () => void;
   postChallenge: (stake: number, format: MatchFormat, message?: string) => void;
   findAsyncMatch: (stake: number) => void;
+  fetchTeamProfile: (teamId: string) => void;
+  dismissTeamProfile: () => void;
   cancelChallenge: (challengeId: string) => void;
   acceptChallenge: (challengeId: string) => void;
   refreshHistory: () => void;
@@ -391,6 +400,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   myStandings: null,
   pvpLeaderRows: [],
   myPvpStandings: null,
+  viewingTeamProfile: null,
+  teamProfileLoading: null,
   lastDevChanges: [],
   showDevReport: false,
   liveReplay: null,
@@ -760,6 +771,10 @@ export const useOnline = create<OnlineState>((set, get) => ({
         case 'profile-updated': {
           set({ team: msg.team });
           pushToast('success', 'Profile saved.');
+          break;
+        }
+        case 'team-profile': {
+          set({ viewingTeamProfile: msg.profile, teamProfileLoading: null });
           break;
         }
         case 'loan-offers': {
@@ -1434,6 +1449,13 @@ export const useOnline = create<OnlineState>((set, get) => ({
   findAsyncMatch(stake) {
     set({ duelPending: true, errorBanner: null });
     get().client?.send({ kind: 'find-async-match', stake });
+  },
+  fetchTeamProfile(teamId) {
+    set({ teamProfileLoading: teamId });
+    get().client?.send({ kind: 'fetch-team-profile', teamId });
+  },
+  dismissTeamProfile() {
+    set({ viewingTeamProfile: null });
   },
 
   cancelChallenge(challengeId) {

@@ -4,6 +4,7 @@
 
 import { useOnline } from '../onlineStore';
 import type { DuelOutcome } from '../protocol';
+import { TeamTag } from './TeamProfileModal';
 
 export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
   const dismiss = useOnline((s) => s.dismissDuelResult);
@@ -42,7 +43,10 @@ export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
         <div className="modal-head">
           <h3 style={{ color: won ? '#6ed09a' : '#e25555' }}>
-            {won ? 'VICTORY' : 'DEFEAT'} — {team.tag} {result.mapsA}-{result.mapsB} {outcome.opponentTag}
+            {won ? 'VICTORY' : 'DEFEAT'} — {team.tag} {result.mapsA}-{result.mapsB}{' '}
+            {outcome.opponentTeamId
+              ? <TeamTag teamId={outcome.opponentTeamId} tag={outcome.opponentTag} />
+              : outcome.opponentTag}
           </h3>
           <button className="link-btn" onClick={dismiss}>close ✕</button>
         </div>
