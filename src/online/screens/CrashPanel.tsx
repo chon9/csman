@@ -13,6 +13,7 @@ import {
   CRASH_MIN_BET,
   type CrashResult,
 } from '../protocol';
+import { play as playSound, unlockAudio } from '../../sound/soundManager';
 
 const PRESET_BETS = [500, 1000, 5000, 10000, 25000, 50000];
 
@@ -46,26 +47,37 @@ export default function CrashPanel(): React.ReactElement | null {
 
   // RAF loop: while a round is active, update the displayed multiplier
   // ~60×/s using the same curve the server will use to compute payout.
+  // Side gig: emit a throttled rising-tick sound while the rocket flies.
   useEffect(() => {
     if (!active) {
       setDisplayMultiplier(1.0);
       return;
     }
     let raf = 0;
+    let lastTickAt = 0;
     const tick = (): void => {
       const serverNow = Date.now() + active.clockOffsetMs;
       setDisplayMultiplier(multiplierAt(active.startedAt, serverNow));
+      // Sound: tick every ~250ms so the audio matches the visual climb
+      // without spamming the audio graph.
+      const nowMs = performance.now();
+      if (nowMs - lastTickAt > 250) {
+        playSound('tick');
+        lastTickAt = nowMs;
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [active]);
 
-  // Mark "played this session" when a NEW result lands.
+  // Mark "played this session" when a NEW result lands + play the
+  // resolution sound (cha-ching on cashout, low rumble on bust).
   useEffect(() => {
     if (!last || last === lastSeenRef.current) return;
     lastSeenRef.current = last;
     setPlayedThisSession(true);
+    playSound(last.outcome === 'cashout' ? 'sponsor-signed' : 'bomb-plant');
   }, [last]);
 
   if (!team) return null;
@@ -168,7 +180,7 @@ export default function CrashPanel(): React.ReactElement | null {
         <button
           className="btn btn-accent"
           disabled={!canStart}
-          onClick={() => start(bet)}
+          onClick={() => { unlockAudio(); playSound('tick'); start(bet); }}
           title={disabledReason || `Launch — risk $${bet.toLocaleString()}`}
           style={{ marginTop: 12, padding: '10px 16px', fontSize: 14 }}
         >

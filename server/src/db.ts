@@ -621,19 +621,48 @@ export function openDb(path: string) {
   }
 
   // ----- Skin serial allocator -----
+  //
+  // Global mint counter — every case open / souvenir / trade-up gets a
+  // unique sequential serial (#1, #2, #3, …) regardless of which skin
+  // dropped. Implemented as a single row keyed by '__global__'. The
+  // (per-skinId) variant was confusing because every fresh skin showed
+  // #0001 on small servers — there were just no prior mints of THAT
+  // exact skin yet. A monotonically growing global number reads as a
+  // true "you're the Nth person ever to mint here" provenance label.
+  //
+  // The skinId param is kept on the signature so callers in caseOpening
+  // (single-player + online) don't need to change, but it's ignored.
 
+  const GLOBAL_SERIAL_KEY = '__global__';
   const getSerialCounter = db.prepare(`SELECT minted FROM skin_serial_counters WHERE skin_id = ?`);
   const upsertSerialCounter = db.prepare(
     `INSERT INTO skin_serial_counters (skin_id, minted) VALUES (?, 1)
      ON CONFLICT(skin_id) DO UPDATE SET minted = minted + 1`,
   );
 
-  /** Atomically increment + return the next serial number for the given
-   *  skinId. First mint of a skinId returns 1, second returns 2, etc. */
-  function allocateSkinSerial(skinId: string): number {
-    upsertSerialCounter.run(skinId);
-    const row = getSerialCounter.get(skinId) as { minted: number } | undefined;
+  /** Atomically increment + return the next global serial. The skinId
+   *  param is accepted for callsite compatibility but ignored. */
+  function allocateSkinSerial(_skinId: string): number {
+    upsertSerialCounter.run(GLOBAL_SERIAL_KEY);
+    const row = getSerialCounter.get(GLOBAL_SERIAL_KEY) as { minted: number } | undefined;
     return row?.minted ?? 1;
+  }
+
+  // One-shot init: if the global counter row hasn't been seeded yet but
+  // per-skinId counters already exist from the pre-global era, sum them
+  // up so post-migration mints don't recycle low numbers. Idempotent —
+  // runs at most once per database lifetime.
+  {
+    const globalRow = getSerialCounter.get(GLOBAL_SERIAL_KEY) as { minted: number } | undefined;
+    if (!globalRow) {
+      const sumRow = db.prepare(
+        `SELECT COALESCE(SUM(minted), 0) AS total FROM skin_serial_counters WHERE skin_id != ?`,
+      ).get(GLOBAL_SERIAL_KEY) as { total: number };
+      if (sumRow.total > 0) {
+        db.prepare(`INSERT INTO skin_serial_counters (skin_id, minted) VALUES (?, ?)`)
+          .run(GLOBAL_SERIAL_KEY, sumRow.total);
+      }
+    }
   }
 
   // ----- Skin transfer (used by peer marketplace + future loan-like flows) -----

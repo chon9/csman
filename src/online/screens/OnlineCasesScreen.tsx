@@ -6,6 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import { RARITY_COLOR, RARITY_LABEL } from '../../sim/caseOpening';
+import { play as playSound, unlockAudio } from '../../sound/soundManager';
 import {
   SKIN_MARKET_COMMISSION,
   SKIN_MARKET_MAX_PRICE,
@@ -264,7 +265,7 @@ export default function OnlineCasesScreen() {
           myListings={myListings}
           myMoney={team.money}
           myTeamId={team.id}
-          onBuy={buySkinListing}
+          onBuy={(id) => { unlockAudio(); playSound('sponsor-signed'); buySkinListing(id); }}
           onUnlist={unlistSkin}
           onRefresh={refreshSkinMarket}
         />
@@ -565,6 +566,18 @@ function TradeUpPanel({
 
 function TradeUpRevealModal({ onClose }: { onClose: () => void }): React.ReactElement | null {
   const reveal = useOnline((s) => s.tradeUpReveal);
+  // Stinger on mount — the trade-up doesn't have a spin animation, just
+  // a result reveal, so we play the bell immediately and stack the rare
+  // fanfare on top for high-rarity outputs.
+  useEffect(() => {
+    unlockAudio();
+    playSound('case-reveal');
+    if (reveal && (reveal.output.rarity === 'covert' || reveal.output.rarity === 'rare-special')) {
+      const t = window.setTimeout(() => playSound('case-rare'), 250);
+      return () => window.clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   if (!reveal) return null;
   const { output, outputFloat } = reveal;
   const color = RARITY_COLOR[output.rarity];
@@ -647,11 +660,30 @@ function CaseOpenModal({ strip, winnerIndex, instance, onReveal, onClose }: Case
     el.style.transition = `transform ${ANIM_MS}ms cubic-bezier(0.05, 0.65, 0.15, 1)`;
     el.style.transform = `translateX(-${target}px)`;
 
+    // Audio: unlock context (browsers gate audio behind user gesture, and
+    // the open-case click counts) then schedule the tick cadence + final
+    // reveal stinger. Matches the single-player CasesScreen pattern.
+    unlockAudio();
+    const tickTimers: number[] = [];
+    let t = 0;
+    while (t < ANIM_MS - 100) {
+      const at = t;
+      tickTimers.push(window.setTimeout(() => playSound('case-tick'), at));
+      const progress = t / ANIM_MS;
+      const eased = 55 + Math.pow(progress, 1.6) * 290;
+      t += eased;
+    }
+
     const revealTimer = window.setTimeout(() => {
       setRevealed(true);
       onRevealRef.current();
+      playSound('case-reveal');
+      if (instance.rarity === 'covert' || instance.rarity === 'rare-special') {
+        window.setTimeout(() => playSound('case-rare'), 250);
+      }
     }, ANIM_MS + 200);
-    return () => window.clearTimeout(revealTimer);
+    tickTimers.push(revealTimer);
+    return () => { for (const id of tickTimers) window.clearTimeout(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

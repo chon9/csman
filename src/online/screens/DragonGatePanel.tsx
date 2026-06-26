@@ -14,6 +14,7 @@ import {
   type CardRank,
   type DragonGateResult,
 } from '../protocol';
+import { play as playSound, unlockAudio } from '../../sound/soundManager';
 
 const PRESET_BETS = [500, 1000, 5000, 10000, 25000, 50000];
 
@@ -43,7 +44,17 @@ export default function DragonGatePanel(): React.ReactElement | null {
     lastSeenId.current = last;
     setPlayedThisSession(true);
     setRevealed(false);
-    const t = window.setTimeout(() => setRevealed(true), 900);
+    // Card-flip tick when the reveal lands + outcome-matched stinger
+    // a beat later to sync with the visual flip.
+    playSound('tick');
+    const t = window.setTimeout(() => {
+      setRevealed(true);
+      playSound(
+        last.outcome === 'win' ? 'round-win' :
+        last.outcome === 'tiang' ? 'bomb-plant' :
+        'round-loss',
+      );
+    }, 900);
     return () => window.clearTimeout(t);
   }, [last]);
 
@@ -97,7 +108,7 @@ export default function DragonGatePanel(): React.ReactElement | null {
         <button
           className="btn btn-accent"
           disabled={!canBet}
-          onClick={() => play(bet)}
+          onClick={() => { unlockAudio(); playSound('tick'); play(bet); }}
           title={disabledReason || `Deal — risk $${bet.toLocaleString()}`}
           style={{ marginTop: 12, padding: '10px 16px', fontSize: 14 }}
         >

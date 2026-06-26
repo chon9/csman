@@ -2,12 +2,14 @@
 // as one of the tabs — no header, no back button. Free, capped per in-game
 // day. Outcome adjusts morale of the 5 starters.
 
+import { useEffect, useRef } from 'react';
 import { useOnline } from '../onlineStore';
 import {
   MORALE_GAME_DELTAS,
   MORALE_GAME_PLAYS_PER_DAY,
   type RpsChoice,
 } from '../protocol';
+import { play as playSound, unlockAudio } from '../../sound/soundManager';
 
 const CHOICES: { id: RpsChoice; emoji: string; label: string }[] = [
   { id: 'rock', emoji: '🪨', label: 'Rock' },
@@ -21,6 +23,18 @@ export default function MoraleGamePanel(): React.ReactElement | null {
   const last = useOnline((s) => s.moraleGameLast);
   const session = useOnline((s) => s.moraleGameSession);
   const play = useOnline((s) => s.playMoraleGame);
+
+  // Outcome stinger when a new result arrives.
+  const lastSeenRef = useRef(last);
+  useEffect(() => {
+    if (!last || last === lastSeenRef.current) return;
+    lastSeenRef.current = last;
+    playSound(
+      last.outcome === 'win' ? 'round-win' :
+      last.outcome === 'tie' ? 'inbox' :
+      'round-loss',
+    );
+  }, [last]);
 
   if (!team) return null;
   const playsLeft = Math.max(0, MORALE_GAME_PLAYS_PER_DAY - playsUsed);
@@ -46,7 +60,7 @@ export default function MoraleGamePanel(): React.ReactElement | null {
           {CHOICES.map((c) => (
             <button
               key={c.id}
-              onClick={() => canPlay && play(c.id)}
+              onClick={() => { if (canPlay) { unlockAudio(); playSound('tick'); play(c.id); } }}
               disabled={!canPlay}
               title={!canPlay ? `Out of plays — wait for the next in-game day tick.` : `Play ${c.label}`}
               style={{

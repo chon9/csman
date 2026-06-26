@@ -7,7 +7,7 @@
 // tiles it has already picked, plus the full mine layout once the round
 // ends (for visual closure).
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import {
   MINES_GRID_SIZE,
@@ -17,6 +17,7 @@ import {
   MINES_MIN_MINES,
   minesMultiplier,
 } from '../protocol';
+import { play as playSound, unlockAudio } from '../../sound/soundManager';
 
 const PRESET_BETS = [500, 1000, 5000, 10000, 25000, 50000];
 const PRESET_MINES = [1, 3, 5, 10, 24];
@@ -32,6 +33,21 @@ export default function MinesPanel(): React.ReactElement | null {
 
   const [bet, setBet] = useState(1000);
   const [mineCount, setMineCount] = useState(3);
+
+  // Sound on tile reveal (server-confirmed) — chime on each new safe pick.
+  const prevSafeCountRef = useRef(0);
+  useEffect(() => {
+    const safe = active?.revealedSafe.length ?? 0;
+    if (safe > prevSafeCountRef.current) playSound('tick');
+    prevSafeCountRef.current = safe;
+  }, [active?.revealedSafe.length]);
+  // Sound on round resolution — cha-ching for cashout, bomb for bust.
+  const lastSeenRef = useRef(last);
+  useEffect(() => {
+    if (!last || last === lastSeenRef.current) return;
+    lastSeenRef.current = last;
+    playSound(last.outcome === 'cashout' ? 'sponsor-signed' : 'bomb-plant');
+  }, [last]);
 
   if (!team) return null;
 
@@ -114,7 +130,7 @@ export default function MinesPanel(): React.ReactElement | null {
         <button
           className="btn btn-accent"
           disabled={!canStart}
-          onClick={() => start(bet, mineCount)}
+          onClick={() => { unlockAudio(); playSound('tick'); start(bet, mineCount); }}
           title={startDisabledReason || `Plant ${mineCount} mines · risk $${bet.toLocaleString()}`}
           style={{ marginTop: 12, padding: '10px 16px', fontSize: 14 }}
         >
