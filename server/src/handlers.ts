@@ -1120,6 +1120,7 @@ export function handle(
         opponentName: accepter.name,
         opponentTag: accepter.tag,
         opponentTeamId: accepter.id,
+        lockedReplay: true,
         moneyDelta: accepterWon ? -challenge.stake : challenge.stake,
         newMoney: challenger.money,
         summary: accepterWon
@@ -1133,6 +1134,7 @@ export function handle(
         opponentName: challenger.name,
         opponentTag: challenger.tag,
         opponentTeamId: challenger.id,
+        lockedReplay: true,
         moneyDelta: accepterWon ? challenge.stake : -challenge.stake,
         newMoney: accepter.money,
         summary: accepterWon
@@ -1381,6 +1383,7 @@ export function handle(
         opponentName: opp.name,
         opponentTag: opp.tag,
         opponentTeamId: opp.id,
+        lockedReplay: true,
         moneyDelta: myDelta,
         newMoney: me.money,
         summary: meWon
@@ -1394,6 +1397,7 @@ export function handle(
         opponentName: me.name,
         opponentTag: me.tag,
         opponentTeamId: me.id,
+        lockedReplay: true,
         moneyDelta: oppDelta,
         newMoney: opp.money,
         summary: meWon

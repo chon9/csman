@@ -22,11 +22,18 @@ export default function OnlineLiveReplayScreen() {
   const players = useOnline((s) => s.players);
   const replay = useOnline((s) => s.liveReplay);
   const close = useOnline((s) => s.closeReplay);
+  // PvP synced mode: when a duel-result with lockedReplay=true lands the
+  // store stashes the outcome here and routes to this screen. We must hide
+  // scrub controls, force 4× speed, and drain the pending outcome (→ result
+  // modal on home) at the last frame so both teams resolve together.
+  const pendingDuelResult = useOnline((s) => s.pendingDuelResult);
+  const drainPendingDuelResult = useOnline((s) => s.drainPendingDuelResult);
+  const locked = !!pendingDuelResult;
 
   const [mapIdx, setMapIdx] = useState(0);
   const [roundIdx, setRoundIdx] = useState(0);
   const [frameIdx, setFrameIdx] = useState(0);
-  const [speed, setSpeed] = useState(2);
+  const [speed, setSpeed] = useState<number>(locked ? 4 : 2);
   const [playing, setPlaying] = useState(true);
 
   // Nickname dictionary for the on-canvas player labels.
@@ -60,11 +67,18 @@ export default function OnlineLiveReplayScreen() {
           return 0;
         }
         setPlaying(false);
+        // Locked-mode hand-off: drain the pending PvP duel result so the
+        // result modal pops on the home screen at the same beat the last
+        // frame plays. Brief delay so the user sees the final frame before
+        // the screen swaps.
+        if (locked) {
+          window.setTimeout(() => drainPendingDuelResult(), 500);
+        }
         return f;
       });
     }, stepMs);
     return () => clearInterval(id);
-  }, [playing, speed, mapIdx, roundIdx, replay]);
+  }, [playing, speed, mapIdx, roundIdx, replay, locked, drainPendingDuelResult]);
 
   if (!replay || !team) {
     return (
@@ -271,7 +285,24 @@ export default function OnlineLiveReplayScreen() {
             {teamASide && <span className={`side-badge ${teamASide.toLowerCase()}`}>{userIsA ? teamASide : teamBSide}</span>}
           </div>
         </div>
-        <button className="btn" onClick={close}>← Back</button>
+        {locked ? (
+          <span
+            className="muted small"
+            style={{
+              padding: '6px 10px',
+              borderRadius: 6,
+              background: 'rgba(110,208,154,0.10)',
+              border: '1px solid rgba(110,208,154,0.30)',
+              color: '#9be29b',
+              letterSpacing: 0.5,
+            }}
+            title="Both teams are watching this replay at the same time — no skipping."
+          >
+            🔒 Synced replay · 4×
+          </span>
+        ) : (
+          <button className="btn" onClick={close}>← Back</button>
+        )}
       </div>
 
       {layout && frame && (
@@ -377,21 +408,29 @@ export default function OnlineLiveReplayScreen() {
         </div>
       )}
 
-      <div className="panel" style={{ padding: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <button className="btn" onClick={() => setPlaying((p) => !p)}>
-          {playing ? '⏸ Pause' : '▶ Play'}
-        </button>
-        {SPEEDS.map((s) => (
-          <button key={s} className={`btn btn-tiny ${speed === s ? 'btn-accent' : ''}`} onClick={() => setSpeed(s)}>
-            {s}x
+      {locked ? (
+        <div className="panel" style={{ padding: 12, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <span className="muted small">
+            🔒 Watching with your opponent · forced 4× · skipping disabled. Result reveals when the last frame plays.
+          </span>
+        </div>
+      ) : (
+        <div className="panel" style={{ padding: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button className="btn" onClick={() => setPlaying((p) => !p)}>
+            {playing ? '⏸ Pause' : '▶ Play'}
           </button>
-        ))}
-        <button className="btn btn-tiny" onClick={skipRound}>Skip round</button>
-        <button className="btn btn-tiny" onClick={skipMap}>Skip map</button>
-        <span className="muted small" style={{ marginLeft: 'auto' }}>
-          Replay window: ~5min after duel. Once expired, use History for stats-only view.
-        </span>
-      </div>
+          {SPEEDS.map((s) => (
+            <button key={s} className={`btn btn-tiny ${speed === s ? 'btn-accent' : ''}`} onClick={() => setSpeed(s)}>
+              {s}x
+            </button>
+          ))}
+          <button className="btn btn-tiny" onClick={skipRound}>Skip round</button>
+          <button className="btn btn-tiny" onClick={skipMap}>Skip map</button>
+          <span className="muted small" style={{ marginLeft: 'auto' }}>
+            Replay window: ~5min after duel. Once expired, use History for stats-only view.
+          </span>
+        </div>
+      )}
     </div>
   );
 }

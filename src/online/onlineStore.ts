@@ -83,6 +83,12 @@ interface OnlineState {
   duelResult: DuelOutcome | null;
   /** True while a duel request is in flight (server is simulating). */
   duelPending: boolean;
+  /** PvP duel outcome waiting for the synced replay to finish playing.
+   *  While this is non-null the user is parked on the replay viewer in
+   *  locked mode (no scrub controls, forced 4× speed). When the replay
+   *  hits its final frame the viewer drains this into duelResult so the
+   *  result modal pops at the same moment both teams see the last frame. */
+  pendingDuelResult: DuelOutcome | null;
   /** True while a time-skip request is in flight. */
   skipPending: boolean;
 
@@ -318,6 +324,10 @@ interface OnlineState {
   findAsyncMatch: (stake: number) => void;
   fetchTeamProfile: (teamId: string) => void;
   dismissTeamProfile: () => void;
+  /** Called by the replay viewer when a locked-mode PvP replay finishes:
+   *  drain the pending duel result into duelResult + return the user to
+   *  the home screen so the result modal pops. */
+  drainPendingDuelResult: () => void;
   cancelChallenge: (challengeId: string) => void;
   acceptChallenge: (challengeId: string) => void;
   refreshHistory: () => void;
@@ -386,6 +396,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   players: {},
   duelResult: null,
   duelPending: false,
+  pendingDuelResult: null,
   skipPending: false,
   marketListings: [],
   marketPlayers: {},
@@ -552,17 +563,32 @@ export const useOnline = create<OnlineState>((set, get) => ({
           break;
         }
         case 'duel-result': {
-          // Apply money delta optimistically and stash the result for the modal.
+          // Apply money delta optimistically. PvP outcomes carry
+          // lockedReplay=true → both teams get routed into the synced
+          // replay viewer first; the result modal pops only when the
+          // last frame plays out (no scrub controls, forced 4× speed).
+          // AI outcomes go straight to the modal as before.
           const team = get().team;
-          set({
-            duelResult: msg.outcome,
-            duelPending: false,
-            team: team ? { ...team, money: msg.outcome.newMoney } : team,
-          });
-          pushToast(
-            msg.outcome.moneyDelta > 0 ? 'success' : 'warn',
-            msg.outcome.summary,
-          );
+          const moneyPatch = team ? { ...team, money: msg.outcome.newMoney } : team;
+          if (msg.outcome.lockedReplay) {
+            set({
+              duelPending: false,
+              team: moneyPatch,
+              liveReplay: { matchId: msg.outcome.result.matchId, result: msg.outcome.result },
+              pendingDuelResult: msg.outcome,
+              screen: 'replay',
+            });
+          } else {
+            set({
+              duelResult: msg.outcome,
+              duelPending: false,
+              team: moneyPatch,
+            });
+            pushToast(
+              msg.outcome.moneyDelta > 0 ? 'success' : 'warn',
+              msg.outcome.summary,
+            );
+          }
           // Refresh state to pull in mutated player stats (form/morale/fatigue).
           client.send({ kind: 'refresh-state' });
           break;
@@ -1456,6 +1482,16 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   dismissTeamProfile() {
     set({ viewingTeamProfile: null });
+  },
+  drainPendingDuelResult() {
+    const pending = get().pendingDuelResult;
+    if (!pending) return;
+    set({
+      duelResult: pending,
+      pendingDuelResult: null,
+      liveReplay: null,
+      screen: 'home',
+    });
   },
 
   cancelChallenge(challengeId) {

@@ -905,6 +905,12 @@ export interface DuelOutcome {
    *  understand WHY they won/lost. Avg CA delta = baseline strength gap;
    *  fatigue/form/morale snapshots capture condition-induced losses. */
   diagnostics?: DuelDiagnostics;
+  /** When true, the client should NOT show the result modal immediately.
+   *  Instead it routes both teams into the synced replay viewer locked at
+   *  4× speed with no scrub controls; the modal pops only after the last
+   *  frame plays out. Used for PvP so both sides share the spectator
+   *  experience, can't accidentally read the score before the other side. */
+  lockedReplay?: boolean;
 }
 
 export interface DuelDiagnostics {
