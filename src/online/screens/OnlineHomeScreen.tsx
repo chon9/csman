@@ -20,6 +20,8 @@ import {
 import type { MatchFormat } from '../../types';
 import DuelResultModal from './DuelResultModal';
 import ToastStack from './ToastStack';
+import { PlayerName } from './PlayerProfileModal';
+import DailyQuestsPanel from './DailyQuestsPanel';
 import ChatWidget from './ChatWidget';
 import DevReportModal from './DevReportModal';
 import LiveFeedWidget from './LiveFeedWidget';
@@ -251,6 +253,8 @@ export default function OnlineHomeScreen() {
         </div>
       </div>
 
+      <DailyQuestsPanel />
+
       <div className="panel" style={{ padding: 14 }}>
         <div className="panel-title">Roster</div>
         {roster.length === 0 ? (
@@ -290,7 +294,7 @@ export default function OnlineHomeScreen() {
                 const lowContract = typeof duelsLeft === 'number' && duelsLeft <= CONTRACT_DUELS_WARN_AT;
                 return (
                   <tr key={p.id}>
-                    <td><strong>{p.nickname}</strong> <span className="muted small">{p.firstName} {p.lastName}</span></td>
+                    <td><PlayerName playerId={p.id} label={p.nickname} /> <span className="muted small">{p.firstName} {p.lastName}</span></td>
                     <td>{p.role}</td>
                     <td className="muted">{p.nationality}</td>
                     <td>{p.age.toFixed(2)}</td>

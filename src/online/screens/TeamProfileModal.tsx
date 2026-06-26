@@ -6,6 +6,7 @@
 
 import { useOnline } from '../onlineStore';
 import type { PublicPlayer, PublicTeamProfile } from '../protocol';
+import { PlayerName } from './PlayerProfileModal';
 
 /** Clickable team-tag chip — drops into any screen that shows a team
  *  tag, fires fetchTeamProfile on click. Renders the tag in the team's
@@ -137,7 +138,7 @@ function RosterTable({ players, accent }: { players: PublicPlayer[]; accent: str
       <tbody>
         {players.map((p) => (
           <tr key={p.id}>
-            <td><strong style={{ color: accent }}>{p.nickname}</strong> <span className="muted small">{p.firstName} {p.lastName}</span></td>
+            <td><PlayerName playerId={p.id} label={p.nickname} color={accent} /> <span className="muted small">{p.firstName} {p.lastName}</span></td>
             <td>{p.role}</td>
             <td className="muted">{p.nationality}</td>
             <td>{p.age.toFixed(0)}</td>

@@ -254,6 +254,7 @@ import { buildWageMap, ensureFreeAgentPool, mintWonderkid, suggestedWage } from 
 import { CASES, DAILY_FREE_CASE_ID } from '../../src/data/cs2Cases.ts';
 import { openCase as rollCaseOpen, tradeUpContract as rollTradeUp } from '../../src/sim/caseOpening.ts';
 import { RNG } from '../../src/engine/rng.ts';
+import { roleSynergyMultiplier } from '../../src/engine/matchEngine.ts';
 import type { ActiveBoostWire, BoostAttrKey, BoostCard, BoostRarity, CaseSummary, SkinInstanceWire } from '../../src/online/protocol.ts';
 import { BOOST_CARD_LIBRARY, BOOST_PACK_COST, BOOST_PACK_ODDS } from '../../src/online/protocol.ts';
 import type { PlayerAttributes } from '../../src/types.ts';
@@ -263,6 +264,8 @@ import { closeSession as closeCrashSession, getSession as getCrashSession, multi
 import { closeSession as closeMinesSession, getSession as getMinesSession, openSession as openMinesSession } from './minesSessions.ts';
 import { applyAutoTicks, nextAutoTickUtcMs } from './autoTick.ts';
 import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorPayouts } from './serverTick.ts';
+import { bumpQuestProgress, ensureTodayQuests, tickLoginStreak, utcToday } from './dailyQuests.ts';
+import { QUEST_ALL_DONE_BONUS, questStreakMultiplier } from '../../src/online/protocol.ts';
 import {
   buildTournamentDetail,
   createTournament,
@@ -321,7 +324,15 @@ function buildDuelDiagnostics(
   const userAvgForm = avg(userStarters.map((p) => p.form));
   const userAvgMorale = avg(userStarters.map((p) => p.morale));
   const userAvgFatigue = avg(userStarters.map((p) => p.fatigue));
+  // Role-composition synergy that the engine actually applied on both sides.
+  const userSyn = roleSynergyMultiplier(userStarters);
+  const oppSyn = roleSynergyMultiplier(oppStarters);
   const warnings: string[] = [];
+  // Surface a synergy warning when the user side is clearly worse off
+  // than the opponent — most actionable feedback.
+  if (userSyn.mult + 0.04 < oppSyn.mult) {
+    warnings.push(`Role composition cost you ~${Math.round((oppSyn.mult - userSyn.mult) * 100)}% vs the opponent. Check the breakdown below.`);
+  }
   const fatigued = userStarters.filter((p) => p.fatigue >= 60);
   if (fatigued.length >= 3) {
     warnings.push(`${fatigued.length}/5 starters were exhausted (≥60% fatigue) — Skip days to recover.`);
@@ -349,6 +360,9 @@ function buildDuelDiagnostics(
     userAvgMorale: Math.round(userAvgMorale * 10) / 10,
     userAvgFatigue: Math.round(userAvgFatigue),
     warnings,
+    userRoleSynergy: userSyn.mult,
+    oppRoleSynergy: oppSyn.mult,
+    userSynergyNotes: userSyn.notes,
   };
 }
 
@@ -885,6 +899,7 @@ export function handle(
             loserStarters: duel.opponentPlayers.slice(0, 5),
             result: duel.result,
           });
+          bumpQuestProgress(db, team.id, 'ai_wins');
         }
       }
       log(`${isScrim ? 'Scrim' : 'AI duel'}: ${team.tag} vs ${duel.opponentTag} → ${duel.moneyDelta > 0 ? 'WIN' : duel.moneyDelta < 0 ? 'LOSS' : 'NEUTRAL'} ($${duel.moneyDelta})`);
@@ -1242,6 +1257,11 @@ export function handle(
           result: duel.result,
           pvpWinsForWinner: winnerPvp.pvpWins,
         });
+        bumpQuestProgress(db, winnerTeam.id, 'pvp_wins');
+        // Underdog quest — winner's avg CA was lower than loser's.
+        const winnerAvgCA = winnerPlayers.slice(0, 5).reduce((s, p) => s + p.currentAbility, 0) / 5;
+        const loserAvgCA = loserPlayers.slice(0, 5).reduce((s, p) => s + p.currentAbility, 0) / 5;
+        if (winnerAvgCA + 4 < loserAvgCA) bumpQuestProgress(db, winnerTeam.id, 'underdog_pvp');
       }
 
       // Push duel-result to BOTH sides. The challenger sees it via notifyTeam;
@@ -1516,6 +1536,10 @@ export function handle(
           result: duel.result,
           pvpWinsForWinner: winnerPvp.pvpWins,
         });
+        bumpQuestProgress(db, winnerTeam.id, 'pvp_wins');
+        const winnerAvgCA = winnerPlayers.slice(0, 5).reduce((s, p) => s + p.currentAbility, 0) / 5;
+        const loserAvgCA = loserPlayers.slice(0, 5).reduce((s, p) => s + p.currentAbility, 0) / 5;
+        if (winnerAvgCA + 4 < loserAvgCA) bumpQuestProgress(db, winnerTeam.id, 'underdog_pvp');
       }
 
       // Push the duel-result to opponent + news headline at high stake.
@@ -1616,6 +1640,7 @@ export function handle(
       if (team.playerIds.length >= 12) {
         tryUnlock(db, notifyTeam, team.id, 'full_roster', ACHIEVEMENT_LABELS.full_roster, team.playerIds.length);
       }
+      bumpQuestProgress(db, team.id, 'free_agent_signs');
       return { kind: 'free-agent-signed', player, wage };
     }
 
@@ -1879,6 +1904,7 @@ export function handle(
       if (outcome === 'win') {
         tryUnlock(db, notifyTeam, team.id, 'dragon_in_between', ACHIEVEMENT_LABELS.dragon_in_between);
       }
+      bumpQuestProgress(db, team.id, 'dragon_gate_plays');
       log(`dragon-gate: ${team.tag} bet $${bet} on [${gates[0]},${gates[1]}], drew ${thirdCard} → ${outcome} (${delta >= 0 ? '+' : ''}$${delta})`);
       return {
         kind: 'dragon-gate-result',
@@ -1921,6 +1947,7 @@ export function handle(
       // polls all open sessions at ~20 Hz and pushes the bust the moment
       // a session's multiplier crosses crashAt. Server is sole authority,
       // no client-side timing involved in the bust decision.
+      bumpQuestProgress(db, team.id, 'crash_plays');
       log(`crash-start: ${team.tag} bet $${bet}, crashAt=${session.crashAt}x (hidden)`);
       return {
         kind: 'crash-started',
@@ -1961,6 +1988,10 @@ export function handle(
         db.setTeamMoneyDay(team.id, team.money, team.day);
       }
       closeCrashSession(session.sessionId);
+      if (outcome === 'cashout') {
+        bumpQuestProgress(db, team.id, 'crash_cashouts');
+        if (lockedMultiplier >= 5) bumpQuestProgress(db, team.id, 'crash_cashouts_5x');
+      }
       if (outcome === 'cashout' && lockedMultiplier >= 10) {
         tryUnlock(db, notifyTeam, team.id, 'crash_cashout_10x', ACHIEVEMENT_LABELS.crash_cashout_10x, Math.floor(lockedMultiplier));
       }
@@ -2070,6 +2101,7 @@ export function handle(
         team.money += payout;
         db.setTeamMoneyDay(team.id, team.money, team.day);
         closeMinesSession(session.sessionId);
+        bumpQuestProgress(db, team.id, 'mines_clears');
         tryUnlock(db, notifyTeam, team.id, 'mines_perfect', ACHIEVEMENT_LABELS.mines_perfect, session.mineCount);
         log(`mines-clear: ${team.tag} cleared every safe tile @ ${mult}x → +$${delta}`);
         return {
@@ -2238,6 +2270,7 @@ export function handle(
       db.setTeamMoneyDay(team.id, team.money, team.day);
       db.persistPlayer(player);
       const totalStreams = db.recordStreamDone(team.id);
+      bumpQuestProgress(db, team.id, 'streams_done');
       tryUnlock(db, notifyTeam, team.id, 'first_stream', ACHIEVEMENT_LABELS.first_stream);
       if (totalStreams >= 50) tryUnlock(db, notifyTeam, team.id, 'streamer_50', ACHIEVEMENT_LABELS.streamer_50, totalStreams);
       if (teamFans >= 100_000) tryUnlock(db, notifyTeam, team.id, 'famous', ACHIEVEMENT_LABELS.famous, teamFans);
@@ -2291,6 +2324,7 @@ export function handle(
       player.contract.duelsRemaining = newDuels;
       db.setTeamMoneyDay(team.id, team.money, team.day);
       db.persistPlayer(player);
+      bumpQuestProgress(db, team.id, 'contracts_renewed');
       log(`contract renewed: ${team.tag} ${player.nickname} -$${cost} → ${newDuels} duels`);
       return {
         kind: 'contract-renewed',
@@ -2358,6 +2392,8 @@ export function handle(
       // Stamp first-owner history entry — provenance trail starts here.
       result.instance.history = [{ teamId: team.id, teamTag: team.tag, at: Date.now() }];
       db.addSkin(team.id, result.instance.id, JSON.stringify(result.instance));
+      // Quest progress — case open count.
+      bumpQuestProgress(db, team.id, 'cases_opened');
       // Achievement gauntlet for cases — lifetime count + rarity/float drops.
       const totalCases = db.recordCaseOpened(team.id);
       if (totalCases >= 100) tryUnlock(db, notifyTeam, team.id, 'case_opener', ACHIEVEMENT_LABELS.case_opener, totalCases);
@@ -2511,6 +2547,8 @@ export function handle(
       db.removeSkinListing(listing.id);
 
       log(`skin bought: ${buyer.tag} ← ${seller.tag} $${price.toLocaleString()} (seller net $${sellerProceeds.toLocaleString()}) — ${skin.weapon} ${skin.name} #${skin.serial ?? '?'}`);
+      bumpQuestProgress(db, buyer.id, 'skin_buys');
+      bumpQuestProgress(db, seller.id, 'skin_sells');
       // Push to the seller so their inventory + cash update live.
       notifyTeam(seller.id, { kind: 'skin-unlisted', listingId: listing.id });
       notifyTeam(seller.id, { kind: 'team-money-updated', teamId: seller.id, money: seller.money });
@@ -2988,6 +3026,69 @@ export function handle(
       };
     }
 
+    // ---------- Daily quests + login streak ----------
+
+    case 'list-quests': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const snapshot = ensureTodayQuests(db, conn.teamId);
+      return { kind: 'quest-snapshot', snapshot };
+    }
+
+    case 'claim-quest': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const quest = db.loadDailyQuest(msg.questId);
+      if (!quest || quest.teamId !== conn.teamId) {
+        return { kind: 'error', code: 'no-quest', message: 'Quest not found.' };
+      }
+      if (quest.claimedAt !== null) {
+        return { kind: 'error', code: 'already-claimed', message: 'Quest already claimed.' };
+      }
+      if (quest.progress < quest.target) {
+        return { kind: 'error', code: 'not-complete', message: 'Quest not complete yet.' };
+      }
+      if (quest.utcDate !== utcToday()) {
+        return { kind: 'error', code: 'stale-quest', message: 'This quest is from a previous day.' };
+      }
+      // Tick login streak BEFORE computing reward — first claim of the day
+      // is what counts as "logged in" for streak purposes.
+      const newStreak = tickLoginStreak(db, conn.teamId);
+      const mult = questStreakMultiplier(newStreak);
+      // Reward was stored at quest-creation time using the streak at that
+      // moment. If the user's streak has since grown, re-scale to the
+      // current multiplier so the user always gets the better deal.
+      const payout = Math.max(quest.reward, Math.round(quest.reward / questStreakMultiplier(Math.max(0, newStreak - 1)) * mult));
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      team.money += payout;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      db.claimDailyQuest(msg.questId);
+      log(`quest-claim: ${team.tag} +$${payout} (streak ${newStreak} ×${mult.toFixed(2)})`);
+      const snapshot = ensureTodayQuests(db, conn.teamId);
+      return { kind: 'quest-claimed', questId: msg.questId, cashEarned: payout, newMoney: team.money, snapshot };
+    }
+
+    case 'claim-all-done-bonus': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const utcDate = utcToday();
+      const quests = db.loadDailyQuests(conn.teamId, utcDate);
+      if (quests.length === 0 || quests.some((q) => q.claimedAt === null)) {
+        return { kind: 'error', code: 'not-ready', message: 'Claim every quest first to unlock the bonus.' };
+      }
+      if (db.getAllDoneBonusDate(conn.teamId) === utcDate) {
+        return { kind: 'error', code: 'already-claimed', message: 'All-done bonus already claimed today.' };
+      }
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const streak = db.getLoginStreak(conn.teamId);
+      const bonus = Math.round(QUEST_ALL_DONE_BONUS * questStreakMultiplier(streak));
+      team.money += bonus;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      db.markAllDoneBonusPaid(team.id, utcDate);
+      log(`quest-all-done: ${team.tag} +$${bonus} (streak ${streak})`);
+      const snapshot = ensureTodayQuests(db, conn.teamId);
+      return { kind: 'all-done-bonus-claimed', cashEarned: bonus, newMoney: team.money, snapshot };
+    }
+
     // ---------- Phase 7: cross-server team export / import ----------
 
     case 'export-team': {
@@ -3408,6 +3509,8 @@ export function handle(
       broadcast({ kind: 'news-item', item: newsItem as NewsItem });
       // Seller bagged a market sale — gates the badge.
       tryUnlock(db, notifyTeam, sellerTeam.id, 'first_market_sale', ACHIEVEMENT_LABELS.first_market_sale);
+      bumpQuestProgress(db, sellerTeam.id, 'market_sells');
+      bumpQuestProgress(db, buyerTeam.id, 'market_buys');
       return { kind: 'market-bought', listingId: msg.listingId, player, cost: listing.askingPrice };
     }
 

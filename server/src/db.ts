@@ -345,6 +345,35 @@ export function openDb(path: string) {
   tryAddColumn('teams', 'lifetime_cases_opened', 'INTEGER', '0');
   tryAddColumn('teams', 'lifetime_streams', 'INTEGER', '0');
   tryAddColumn('teams', 'lifetime_tournaments_won', 'INTEGER', '0');
+  // Login streak — drives the daily-quest reward multiplier. Resets to
+  // 1 when the gap between claim days is > 1 UTC day, increments
+  // otherwise. last_streak_date is the YYYY-MM-DD of the most recent
+  // streak tick (only changes on first quest claim of the day).
+  tryAddColumn('teams', 'login_streak', 'INTEGER', '0');
+  tryAddColumn('teams', 'last_streak_date', 'TEXT', "''");
+  // All-done bonus paid out for which UTC date — claim-all-done-bonus is
+  // gated to once per day per team.
+  tryAddColumn('teams', 'all_done_bonus_date', 'TEXT', "''");
+
+  // Daily quests table — one row per (team, utcDate, quest). Generation
+  // is deterministic (seeded by team+date) so rolling lazily on demand
+  // gives every team a stable set per day.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS daily_quests (
+      id TEXT PRIMARY KEY,
+      team_id TEXT NOT NULL,
+      utc_date TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      label TEXT NOT NULL,
+      difficulty TEXT NOT NULL,
+      target INTEGER NOT NULL,
+      progress INTEGER NOT NULL DEFAULT 0,
+      reward INTEGER NOT NULL,
+      claimed_at INTEGER,
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_daily_quest_team_date ON daily_quests(team_id, utc_date);
+  `);
   // Skin inventory rows owned by this team — JSON-blob per skin instance.
   db.exec(`
     CREATE TABLE IF NOT EXISTS skin_inventory (
@@ -587,6 +616,91 @@ export function openDb(path: string) {
     bumpLifetimeTournamentsWon.run(teamId);
     const r = getLifetimeTournamentsWon.get(teamId) as { lifetime_tournaments_won: number | null } | undefined;
     return r?.lifetime_tournaments_won ?? 0;
+  }
+
+  // -------- Daily quests + login streak --------
+
+  const getLoginStreakRow = db.prepare(`SELECT login_streak, last_streak_date FROM teams WHERE id = ?`);
+  const setLoginStreakRow = db.prepare(`UPDATE teams SET login_streak = ?, last_streak_date = ? WHERE id = ?`);
+  function getLoginStreak(teamId: string): number {
+    const r = getLoginStreakRow.get(teamId) as { login_streak: number | null; last_streak_date: string | null } | undefined;
+    return r?.login_streak ?? 0;
+  }
+  function getLastStreakDate(teamId: string): string {
+    const r = getLoginStreakRow.get(teamId) as { login_streak: number | null; last_streak_date: string | null } | undefined;
+    return r?.last_streak_date ?? '';
+  }
+  function setLoginStreak(teamId: string, streak: number, utcDate: string): void {
+    setLoginStreakRow.run(streak, utcDate, teamId);
+  }
+
+  const getAllDoneBonusRow = db.prepare(`SELECT all_done_bonus_date FROM teams WHERE id = ?`);
+  const setAllDoneBonusRow = db.prepare(`UPDATE teams SET all_done_bonus_date = ? WHERE id = ?`);
+  function getAllDoneBonusDate(teamId: string): string {
+    const r = getAllDoneBonusRow.get(teamId) as { all_done_bonus_date: string | null } | undefined;
+    return r?.all_done_bonus_date ?? '';
+  }
+  function markAllDoneBonusPaid(teamId: string, utcDate: string): void {
+    setAllDoneBonusRow.run(utcDate, teamId);
+  }
+
+  const insertQuestStmt = db.prepare(
+    `INSERT INTO daily_quests (id, team_id, utc_date, kind, label, difficulty, target, progress, reward)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+  );
+  const loadQuestsForDay = db.prepare(
+    `SELECT id, kind, label, difficulty, target, progress, reward, claimed_at
+     FROM daily_quests WHERE team_id = ? AND utc_date = ? ORDER BY
+       CASE difficulty WHEN 'easy' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END`,
+  );
+  const loadQuestById = db.prepare(`SELECT * FROM daily_quests WHERE id = ?`);
+  const bumpQuestProgressStmt = db.prepare(
+    // MIN guards against over-shoot when multiple actions fire in a burst.
+    `UPDATE daily_quests SET progress = MIN(target, progress + ?)
+     WHERE team_id = ? AND utc_date = ? AND kind = ? AND claimed_at IS NULL`,
+  );
+  const markQuestClaimed = db.prepare(`UPDATE daily_quests SET claimed_at = ? WHERE id = ?`);
+
+  function insertDailyQuest(args: {
+    id: string; teamId: string; utcDate: string; kind: string;
+    label: string; difficulty: string; target: number; reward: number;
+  }): void {
+    insertQuestStmt.run(
+      args.id, args.teamId, args.utcDate, args.kind,
+      args.label, args.difficulty, args.target, args.reward,
+    );
+  }
+  function loadDailyQuests(teamId: string, utcDate: string): import('../../src/online/protocol.ts').DailyQuest[] {
+    const rows = loadQuestsForDay.all(teamId, utcDate) as Array<{
+      id: string; kind: string; label: string; difficulty: string;
+      target: number; progress: number; reward: number; claimed_at: number | null;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      label: r.label,
+      difficulty: r.difficulty as 'easy' | 'medium' | 'hard',
+      target: r.target,
+      progress: r.progress,
+      reward: r.reward,
+      claimedAt: r.claimed_at,
+    }));
+  }
+  function loadDailyQuest(id: string): { teamId: string; utcDate: string; target: number; progress: number; reward: number; claimedAt: number | null } | null {
+    const r = loadQuestById.get(id) as {
+      team_id: string; utc_date: string; target: number; progress: number; reward: number; claimed_at: number | null;
+    } | undefined;
+    if (!r) return null;
+    return {
+      teamId: r.team_id, utcDate: r.utc_date, target: r.target,
+      progress: r.progress, reward: r.reward, claimedAt: r.claimed_at,
+    };
+  }
+  function bumpDailyQuestProgress(teamId: string, utcDate: string, kind: string, amount: number): void {
+    bumpQuestProgressStmt.run(amount, teamId, utcDate, kind);
+  }
+  function claimDailyQuest(id: string): void {
+    markQuestClaimed.run(Date.now(), id);
   }
 
   // -------- Wall-clock auto-advance --------
@@ -1992,6 +2106,16 @@ export function openDb(path: string) {
     recordCaseOpened,
     recordStreamDone,
     recordTournamentWin,
+    getLoginStreak,
+    getLastStreakDate,
+    setLoginStreak,
+    getAllDoneBonusDate,
+    markAllDoneBonusPaid,
+    insertDailyQuest,
+    loadDailyQuests,
+    loadDailyQuest,
+    bumpDailyQuestProgress,
+    claimDailyQuest,
     getAutoTickAnchor,
     setAutoTickAnchor,
     getLastMassageDay,

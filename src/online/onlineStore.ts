@@ -15,6 +15,7 @@ import type {
   MyPvpStandings,
   PublicTeamProfile,
   PvpLeaderRow,
+  QuestSnapshot,
   LiveFeedEntry,
   LoanOffer,
   ActiveBoostWire,
@@ -122,6 +123,12 @@ interface OnlineState {
   /** True while a fetch-team-profile is in flight (so the click target
    *  can disable / show a spinner). */
   teamProfileLoading: string | null;
+  /** Pop-up player profile. Holds the playerId; the modal reads the
+   *  player record from `players` (own) or `viewingTeamProfile` (enemy). */
+  viewingPlayerId: string | null;
+  /** Today's daily-quest snapshot (3 quests + streak + all-done bonus
+   *  state). Refreshed on every claim + on a list-quests roundtrip. */
+  questSnapshot: QuestSnapshot | null;
 
   // ----- Phase 5: live replay, chat, tournaments, dev arcs -----
   /** Most recent dev-arc payload (used to drive the growth-report modal). */
@@ -324,6 +331,11 @@ interface OnlineState {
   findAsyncMatch: (stake: number) => void;
   fetchTeamProfile: (teamId: string) => void;
   dismissTeamProfile: () => void;
+  viewPlayer: (playerId: string) => void;
+  dismissPlayer: () => void;
+  refreshQuests: () => void;
+  claimQuest: (questId: string) => void;
+  claimAllDoneBonus: () => void;
   /** Called by the replay viewer when a locked-mode PvP replay finishes:
    *  drain the pending duel result into duelResult + return the user to
    *  the home screen so the result modal pops. */
@@ -413,6 +425,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   myPvpStandings: null,
   viewingTeamProfile: null,
   teamProfileLoading: null,
+  viewingPlayerId: null,
+  questSnapshot: null,
   lastDevChanges: [],
   showDevReport: false,
   liveReplay: null,
@@ -818,6 +832,28 @@ export const useOnline = create<OnlineState>((set, get) => ({
         }
         case 'team-profile': {
           set({ viewingTeamProfile: msg.profile, teamProfileLoading: null });
+          break;
+        }
+        case 'quest-snapshot': {
+          set({ questSnapshot: msg.snapshot });
+          break;
+        }
+        case 'quest-claimed': {
+          const t = get().team;
+          set({
+            questSnapshot: msg.snapshot,
+            team: t ? { ...t, money: msg.newMoney } : t,
+          });
+          pushToast('success', `Quest claimed: +$${msg.cashEarned.toLocaleString()}.`);
+          break;
+        }
+        case 'all-done-bonus-claimed': {
+          const t = get().team;
+          set({
+            questSnapshot: msg.snapshot,
+            team: t ? { ...t, money: msg.newMoney } : t,
+          });
+          pushToast('success', `🎉 All quests done! Bonus +$${msg.cashEarned.toLocaleString()}.`);
           break;
         }
         case 'loan-offers': {
@@ -1499,6 +1535,21 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   dismissTeamProfile() {
     set({ viewingTeamProfile: null });
+  },
+  viewPlayer(playerId) {
+    set({ viewingPlayerId: playerId });
+  },
+  dismissPlayer() {
+    set({ viewingPlayerId: null });
+  },
+  refreshQuests() {
+    get().client?.send({ kind: 'list-quests' });
+  },
+  claimQuest(questId) {
+    get().client?.send({ kind: 'claim-quest', questId });
+  },
+  claimAllDoneBonus() {
+    get().client?.send({ kind: 'claim-all-done-bonus' });
   },
   drainPendingDuelResult() {
     const pending = get().pendingDuelResult;

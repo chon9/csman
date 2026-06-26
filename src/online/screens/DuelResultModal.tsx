@@ -89,6 +89,19 @@ export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
                   {outcome.diagnostics.warnings.map((w, i) => <li key={i}>{w}</li>)}
                 </ul>
               )}
+              {/* Role-composition breakdown — the engine's per-team synergy
+                  multiplier. Shows IGL/AWPer/Entry/Support/Lurker effects. */}
+              {outcome.diagnostics.userSynergyNotes && outcome.diagnostics.userSynergyNotes.length > 0 && (
+                <div style={{ marginTop: 10, padding: 10, borderRadius: 6, background: 'rgba(75,105,255,0.06)', border: '1px solid rgba(109,229,255,0.16)' }}>
+                  <div className="muted small" style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4 }}>
+                    Role composition · your side {typeof outcome.diagnostics.userRoleSynergy === 'number' ? `×${outcome.diagnostics.userRoleSynergy.toFixed(2)}` : ''}
+                    {typeof outcome.diagnostics.oppRoleSynergy === 'number' ? <span className="muted"> · opp ×{outcome.diagnostics.oppRoleSynergy.toFixed(2)}</span> : null}
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: 18, color: '#d4d8e1', fontSize: 11, lineHeight: 1.5 }}>
+                    {outcome.diagnostics.userSynergyNotes.map((n, i) => <li key={i}>{n}</li>)}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>

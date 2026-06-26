@@ -156,6 +156,68 @@ function effectiveSkill(p: Player, mapProf: number, coachSkill: number, pressure
   return base;
 }
 
+// ============ Role synergy ============
+//
+// Real CS teams field a balanced 5: one IGL to call, one AWPer for long
+// range, an Entry to open sites, a Support for utility setups, and a
+// Lurker for backstabs. Stacking the wrong roles drags the team down —
+// 2 AWPers can't both rifle on eco, no IGL leaves the team rudderless,
+// 2+ lurkers means nobody's on site at execute time. The multiplier
+// below scales every starter's effective skill on this team's side.
+
+export interface RoleSynergy {
+  /** Overall multiplier in [0.84, 1.11] range. */
+  mult: number;
+  /** Plain-English notes the post-match diagnostics surfaces to the user. */
+  notes: string[];
+}
+
+export function roleSynergyMultiplier(starters: Player[]): RoleSynergy {
+  const byRole = new Map<string, number>();
+  for (const p of starters.slice(0, 5)) {
+    byRole.set(p.role, (byRole.get(p.role) ?? 0) + 1);
+  }
+  const iglCount = byRole.get('IGL') ?? 0;
+  const awperCount = byRole.get('AWPer') ?? 0;
+  const entryCount = byRole.get('Entry') ?? 0;
+  const supportCount = byRole.get('Support') ?? 0;
+  const lurkerCount = byRole.get('Lurker') ?? 0;
+  const notes: string[] = [];
+  let mult = 1.0;
+
+  // IGL: exactly 1 is ideal. 0 = no caller, lower morale + plan quality.
+  // 2+ = calling friction, conflicting plans on the fly.
+  if (iglCount === 1) { mult *= 1.04; notes.push('🎙 IGL +4% (clean calling + morale lift)'); }
+  else if (iglCount === 0) { mult *= 0.94; notes.push('🚫 No IGL −6% (no in-game leader)'); }
+  else { mult *= 0.97; notes.push('🎙🎙 Multiple IGLs −3% (calling friction)'); }
+
+  // AWPer: 1 is the canonical setup. 0 = no long-range threat. 2+ = the
+  // big bucks all flow to AWPs, riflers struggle to full-buy.
+  if (awperCount === 1) { mult *= 1.03; notes.push('🎯 AWPer +3% (long-range threat)'); }
+  else if (awperCount === 0) { mult *= 0.96; notes.push('🚫 No AWPer −4% (loss of long-range control)'); }
+  else { mult *= 0.95; notes.push('💸 2+ AWPers −5% (economy strain, only one can buy)'); }
+
+  // Entry: at least one opens sites. None = slow ramp, easy to read.
+  if (entryCount >= 1) { mult *= 1.02; notes.push('🔫 Entry fragger +2% (faster site takes)'); }
+  else { mult *= 0.97; notes.push('🐢 No entry −3% (slow site executes)'); }
+
+  // Support: at least one means utility lands cleanly.
+  if (supportCount >= 1) { mult *= 1.02; notes.push('🛡 Support +2% (utility setups)'); }
+
+  // Lurker: 1 is great, 2+ means nobody on site at execute time.
+  if (lurkerCount === 1) { mult *= 1.02; notes.push('🥷 Lurker +2% (rotational pressure)'); }
+  else if (lurkerCount >= 2) { mult *= 0.96; notes.push('🥷🥷 2+ Lurkers −4% (broken execute timing)'); }
+
+  // Balanced 5-role squad bonus — all five canonical roles represented.
+  const hasAllFive = iglCount >= 1 && awperCount >= 1 && entryCount >= 1 && supportCount >= 1 && lurkerCount >= 1;
+  if (hasAllFive) { mult *= 1.02; notes.push('✅ Balanced 5-role squad +2%'); }
+
+  // Final clamp + 2dp rounding for predictable display.
+  mult = Math.max(0.84, Math.min(1.11, mult));
+  mult = Math.round(mult * 1000) / 1000;
+  return { mult, notes };
+}
+
 function equipMultiplier(buy: BuyType): number {
   switch (buy) {
     case 'full': return 1.0;
@@ -1046,6 +1108,11 @@ function simulateMap(
   const mapFormA = rng.range(0.88, 1.12);
   const mapFormB = rng.range(0.88, 1.12);
 
+  // Role composition multiplier — IGL/AWPer/Entry/Support/Lurker balance
+  // scales every starter's effective skill on this side.
+  const synergyA = roleSynergyMultiplier(a.players.slice(0, 5));
+  const synergyB = roleSynergyMultiplier(b.players.slice(0, 5));
+
   const mkSim = (team: EngineTeam, prof: number, idx: 0 | 1): SimPlayer[] => {
     // Resolve role slots: user team may have re-ordered/duty-assigned the starting 5.
     // If `roleSlots` is missing or vacant, fall back to natural roles in playerIds order.
@@ -1071,6 +1138,10 @@ function simulateMap(
           effectiveSkill(p, prof, team.team.coachSkill, pressure, rng.next()) *
           (idx === 0 ? mapFormA : mapFormB) *
           fit *
+          // Role composition: penalty/bonus per side from IGL/AWPer/Entry/
+          // Support/Lurker balance (computed once per map). Visible to the
+          // user in the post-match diagnostics.
+          (idx === 0 ? synergyA.mult : synergyB.mult) *
           // Team chemistry: ±8% around a neutral 50. Cohesive squads (avg 80+)
           // get a clear collective lift; broken rooms (avg <30) bleed effectiveness.
           (1 + ((team.chemistry - 50) / 50) * 0.08),

@@ -389,6 +389,64 @@ export interface MinesResult {
   safePicks: number;
 }
 
+// ============ Daily quests + login streak ============
+
+/** Quest difficulty drives both the target threshold and the cash payout. */
+export type QuestDifficulty = 'easy' | 'medium' | 'hard';
+
+/** Cash payout per quest difficulty, BEFORE the streak multiplier. */
+export const QUEST_REWARD: Record<QuestDifficulty, number> = {
+  easy: 3_000,
+  medium: 10_000,
+  hard: 25_000,
+};
+
+/** Cash bonus for completing every single quest on a given day. */
+export const QUEST_ALL_DONE_BONUS = 20_000;
+
+/** Days at peak streak before the multiplier caps. After this, more login
+ *  days don't push it higher — keeps the curve from going parabolic. */
+export const QUEST_STREAK_CAP_DAYS = 14;
+/** Multiplier at peak streak. Streak 0 → 1.0, streak 14+ → 2.0, linear. */
+export const QUEST_STREAK_MAX_MULT = 2.0;
+
+/** Compute the streak multiplier (1.0 → 2.0) from a streak day count. */
+export function questStreakMultiplier(streak: number): number {
+  const clamped = Math.max(0, Math.min(QUEST_STREAK_CAP_DAYS, streak));
+  return 1.0 + (clamped / QUEST_STREAK_CAP_DAYS) * (QUEST_STREAK_MAX_MULT - 1.0);
+}
+
+/** One quest a team is currently tracking. Progress is server-authoritative
+ *  and updates on every relevant in-game action. */
+export interface DailyQuest {
+  id: string;
+  /** Quest template kind — same as the action key the server bumps. */
+  kind: string;
+  /** Human label rendered in the UI (already formatted with target). */
+  label: string;
+  difficulty: QuestDifficulty;
+  target: number;
+  progress: number;
+  /** Cash reward after streak multiplier is applied. */
+  reward: number;
+  /** When claimed (ms epoch). Null = not yet claimed. */
+  claimedAt: number | null;
+}
+
+/** Quest pool summary returned to the client every time it asks. Includes
+ *  the team's current streak so the UI can show the multiplier banner. */
+export interface QuestSnapshot {
+  utcDate: string;
+  quests: DailyQuest[];
+  loginStreak: number;
+  streakMult: number;
+  /** True iff every quest in `quests` is claimed AND the all-done bonus
+   *  has also been paid out today. */
+  allDoneBonusClaimed: boolean;
+  /** Reward of the all-done bonus (after streak multiplier). */
+  allDoneBonus: number;
+}
+
 // ============ Crash / Rocket (gambling — rising multiplier) ============
 
 /** Min/max bet on a single Crash round. Same band as Dragon Gate so the
@@ -926,6 +984,14 @@ export interface DuelDiagnostics {
   userAvgFatigue: number;
   /** Plain-language warnings about condition issues. Empty = nothing flagged. */
   warnings: string[];
+  /** Role composition multiplier the engine applied to the user side this
+   *  match (1.00 = neutral). Mirrors what real CS punishes / rewards:
+   *  no IGL = bad, 2+ AWPers = bad, balanced 5-role squad = +2% bonus. */
+  userRoleSynergy?: number;
+  /** Same multiplier for the opponent side. */
+  oppRoleSynergy?: number;
+  /** Plain-language breakdown of the user-side synergy decisions. */
+  userSynergyNotes?: string[];
 }
 
 // ============ Client → Server messages ============
@@ -1017,6 +1083,10 @@ export type ClientMessage =
   | { kind: 'find-async-match'; stake: number }
   // ----- Click-to-view enemy team profile (scrubbed roster + standings) -----
   | { kind: 'fetch-team-profile'; teamId: string }
+  // ----- Daily quests + login streak -----
+  | { kind: 'list-quests' }
+  | { kind: 'claim-quest'; questId: string }
+  | { kind: 'claim-all-done-bonus' }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
@@ -1100,6 +1170,9 @@ export type ServerMessage =
   | { kind: 'achievement-unlocked'; achievement: Achievement }
   | { kind: 'profile-updated'; team: OnlineTeam }
   | { kind: 'team-profile'; profile: PublicTeamProfile }
+  | { kind: 'quest-snapshot'; snapshot: QuestSnapshot }
+  | { kind: 'quest-claimed'; questId: string; cashEarned: number; newMoney: number; snapshot: QuestSnapshot }
+  | { kind: 'all-done-bonus-claimed'; cashEarned: number; newMoney: number; snapshot: QuestSnapshot }
   | { kind: 'loan-offers'; incoming: LoanOffer[]; outgoing: LoanOffer[] }
   | { kind: 'loan-event'; loan: LoanOffer }
   // ----- Phase 9 -----
@@ -1157,7 +1230,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 31;
+export const PROTOCOL_VERSION = 32;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past
