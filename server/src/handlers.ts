@@ -1222,8 +1222,10 @@ export function handle(
         };
       }
 
-      // Shuffle, then walk picking the first opponent whose own duel cap
-      // hasn't been hit — natural throttle on popular teams getting drained.
+      // Shuffle and pick the first valid opponent. Defenders don't have
+      // a daily cap on incoming async matches — they didn't opt in, so
+      // their action budget shouldn't be drained by other people's
+      // matchmaking. The only filter left is "team still exists".
       for (let i = band.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [band[i], band[j]] = [band[j]!, band[i]!];
@@ -1233,8 +1235,6 @@ export function handle(
       for (const c of band) {
         const oppRow = db.loadTeam(c.teamId);
         if (!oppRow) continue;
-        const oppStats = db.getDuelStats(oppRow.id, `day-${oppRow.day}`);
-        if (oppStats.used >= DAILY_DUEL_CAP) continue;
         oppCandidate = c;
         opp = oppRow;
         break;
@@ -1243,7 +1243,7 @@ export function handle(
         return {
           kind: 'error',
           code: 'no-opponents-available',
-          message: 'All eligible opponents have hit their duel cap. Try again after the next 4-hour tick.',
+          message: 'No opponents available right now. Try again in a moment.',
         };
       }
       const oppPlayers = oppCandidate.players;
@@ -1286,8 +1286,10 @@ export function handle(
       opp.money = Math.max(0, opp.money + oppDelta);
       db.setTeamMoneyDay(me.id, me.money, me.day);
       db.setTeamMoneyDay(opp.id, opp.money, opp.day);
+      // Challenger's cap counts — they chose to duel. Defender's doesn't
+      // — async-PvP is something done TO them, not by them. They still
+      // take fatigue / contract effects since the team genuinely played.
       db.recordDuelUsed(me.id, myDayKey);
-      db.recordDuelUsed(opp.id, `day-${opp.day}`);
 
       tickBoostsAfterDuel(myPlayers, (p) => notifyTeam(me.id, { kind: 'boost-expired', playerId: p.id }));
       tickBoostsAfterDuel(oppPlayers, (p) => notifyTeam(opp.id, { kind: 'boost-expired', playerId: p.id }));
