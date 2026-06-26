@@ -659,6 +659,29 @@ export interface MyStandings {
   streak: number;
 }
 
+/** PvP-only leaderboard row — derived from match_history this season,
+ *  AI duels excluded. Encourages players to fight each other rather
+ *  than grinding AI for the standings. */
+export interface PvpLeaderRow {
+  rank: number;
+  teamId: string;
+  teamTag: string;
+  teamName: string;
+  pvpWins: number;
+  pvpLosses: number;
+  /** Net stake won/lost across PvP matches this season. */
+  pvpNetStake: number;
+  /** Trailing PvP streak: + for current W-streak, − for L-streak. */
+  pvpStreak: number;
+}
+
+export interface MyPvpStandings {
+  pvpWins: number;
+  pvpLosses: number;
+  pvpNetStake: number;
+  pvpStreak: number;
+}
+
 /** Per-player change captured during a time-skip, used for the dev-arc
  *  growth report toast. Only players who actually moved are reported. */
 export interface DevChange {
@@ -897,7 +920,7 @@ export type ServerMessage =
   // ----- Phase 4 -----
   | { kind: 'tactics-saved'; tactics: Partial<Tactics> }
   | { kind: 'lineup-saved'; playerIds: string[] }
-  | { kind: 'leaderboard'; season: SeasonInfo; rows: LeaderboardRow[]; me: MyStandings }
+  | { kind: 'leaderboard'; season: SeasonInfo; rows: LeaderboardRow[]; me: MyStandings; pvpRows: PvpLeaderRow[]; myPvp: MyPvpStandings }
   // ----- Phase 5 -----
   | { kind: 'live-replay'; matchId: string; result: MatchResult }
   | { kind: 'live-replay-expired'; matchId: string }
@@ -976,7 +999,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 27;
+export const PROTOCOL_VERSION = 28;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

@@ -1,10 +1,14 @@
-// Server-wide leaderboard for the current weekly season. Refreshes on
-// mount and every 10 seconds so duel results land live without a manual
-// refresh. Highlights your own row and shows a banner with your standings.
+// Server-wide leaderboard for the current weekly season. Two tabs:
+//   - PvP (default) — derived from match_history, AI duels EXCLUDED.
+//     This is the one we push to encourage live duels over AI farming.
+//   - Overall — wins + losses across AI + PvP combined.
+// Refreshes on mount and every 10 seconds.
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import ToastStack from './ToastStack';
+
+type Tab = 'pvp' | 'overall';
 
 function fmtDuration(ms: number): string {
   if (ms <= 0) return 'now';
@@ -25,13 +29,24 @@ function streakLabel(s: number): { text: string; cls: string } {
   return { text: '—', cls: '' };
 }
 
+function rankBadge(rank: number): string {
+  if (rank === 1) return '🥇';
+  if (rank === 2) return '🥈';
+  if (rank === 3) return '🥉';
+  return `#${rank}`;
+}
+
 export default function OnlineLeaderboardScreen() {
   const team = useOnline((s) => s.team);
   const season = useOnline((s) => s.leaderboardSeason);
   const rows = useOnline((s) => s.leaderboardRows);
   const me = useOnline((s) => s.myStandings);
+  const pvpRows = useOnline((s) => s.pvpLeaderRows);
+  const myPvp = useOnline((s) => s.myPvpStandings);
   const refresh = useOnline((s) => s.refreshLeaderboard);
   const go = useOnline((s) => s.go);
+
+  const [tab, setTab] = useState<Tab>('pvp');
 
   useEffect(() => {
     refresh();
@@ -40,7 +55,8 @@ export default function OnlineLeaderboardScreen() {
   }, [refresh]);
 
   if (!team) return null;
-  const myRow = rows.find((r) => r.teamId === team.id);
+  const myOverallRow = rows.find((r) => r.teamId === team.id);
+  const myPvpRow = pvpRows.find((r) => r.teamId === team.id);
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -61,70 +77,181 @@ export default function OnlineLeaderboardScreen() {
         </div>
       </div>
 
-      {me && (
-        <div className="panel" style={{ padding: 14 }}>
-          <div className="panel-title">Your Standings <span className="muted small">— season {season?.seasonNo ?? '—'}</span></div>
-          <div className="online-stat-grid">
-            <StatCell label="Rank" value={myRow ? `#${myRow.rank}` : '—'} />
-            <StatCell label="W" value={String(me.wins)} cls="text-win" />
-            <StatCell label="L" value={String(me.losses)} cls="text-loss" />
-            <StatCell
-              label="Streak"
-              value={streakLabel(me.streak).text}
-              cls={streakLabel(me.streak).cls}
-            />
-            <StatCell
-              label="Net $"
-              value={`${me.netMoney >= 0 ? '+' : ''}$${me.netMoney.toLocaleString()}`}
-              cls={me.netMoney >= 0 ? 'text-win' : 'text-loss'}
-            />
+      {/* ===== Tab strip ===== */}
+      <div className="panel" style={{ padding: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        <button
+          className={`btn ${tab === 'pvp' ? 'btn-accent' : ''}`}
+          onClick={() => setTab('pvp')}
+          style={{ flex: '1 1 160px', padding: '10px 14px' }}
+        >
+          ⚔ PvP Only <span className="muted small">{pvpRows.length}</span>
+        </button>
+        <button
+          className={`btn ${tab === 'overall' ? 'btn-accent' : ''}`}
+          onClick={() => setTab('overall')}
+          style={{ flex: '1 1 160px', padding: '10px 14px' }}
+        >
+          📊 Overall (AI + PvP) <span className="muted small">{rows.length}</span>
+        </button>
+      </div>
+
+      {/* ===== PvP tab ===== */}
+      {tab === 'pvp' && (
+        <>
+          <div
+            className="panel"
+            style={{
+              padding: 14,
+              background: 'linear-gradient(135deg, rgba(75,105,255,0.12), rgba(110,208,154,0.08))',
+              border: '1px solid rgba(110,208,154,0.30)',
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#9fb4e4', letterSpacing: 0.5 }}>
+              ⚔ Live duels only — AI matches do NOT count here
+            </div>
+            <div className="muted small" style={{ marginTop: 4 }}>
+              Post a challenge in the PvP Lobby to climb. Beating real managers is the only way up this board.
+            </div>
           </div>
-        </div>
+
+          {myPvp && (
+            <div className="panel" style={{ padding: 14 }}>
+              <div className="panel-title">Your PvP Standings <span className="muted small">— season {season?.seasonNo ?? '—'}</span></div>
+              <div className="online-stat-grid">
+                <StatCell label="Rank" value={myPvpRow ? rankBadge(myPvpRow.rank) : '—'} />
+                <StatCell label="PvP W" value={String(myPvp.pvpWins)} cls="text-win" />
+                <StatCell label="PvP L" value={String(myPvp.pvpLosses)} cls="text-loss" />
+                <StatCell
+                  label="Streak"
+                  value={streakLabel(myPvp.pvpStreak).text}
+                  cls={streakLabel(myPvp.pvpStreak).cls}
+                />
+                <StatCell
+                  label="Stake net"
+                  value={`${myPvp.pvpNetStake >= 0 ? '+' : ''}$${myPvp.pvpNetStake.toLocaleString()}`}
+                  cls={myPvp.pvpNetStake >= 0 ? 'text-win' : 'text-loss'}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="panel" style={{ padding: 14 }}>
+            <div className="panel-title">PvP Standings</div>
+            {pvpRows.length === 0 ? (
+              <div className="muted small">
+                No PvP matches yet this season — be the first to post or accept a live challenge.
+              </div>
+            ) : (
+              <table className="table table-dense">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Team</th>
+                    <th>Name</th>
+                    <th className="num">W</th>
+                    <th className="num">L</th>
+                    <th className="num">Win%</th>
+                    <th className="num">Streak</th>
+                    <th className="num">Stake net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pvpRows.map((r) => {
+                    const total = r.pvpWins + r.pvpLosses;
+                    const winPct = total > 0 ? Math.round((r.pvpWins / total) * 100) : 0;
+                    const isMe = r.teamId === team.id;
+                    const streak = streakLabel(r.pvpStreak);
+                    return (
+                      <tr key={r.teamId} className={isMe ? 'row-user' : ''}>
+                        <td><strong>{rankBadge(r.rank)}</strong></td>
+                        <td><strong style={{ color: 'var(--accent)' }}>{r.teamTag}</strong></td>
+                        <td className="muted">{r.teamName}</td>
+                        <td className="num">{r.pvpWins}</td>
+                        <td className="num">{r.pvpLosses}</td>
+                        <td className="num">{winPct}%</td>
+                        <td className={`num ${streak.cls}`}>{streak.text}</td>
+                        <td className={`num ${r.pvpNetStake >= 0 ? 'text-win' : 'text-loss'}`}>
+                          {r.pvpNetStake >= 0 ? '+' : ''}${r.pvpNetStake.toLocaleString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
       )}
 
-      <div className="panel" style={{ padding: 14 }}>
-        <div className="panel-title">Standings</div>
-        {rows.length === 0 ? (
-          <div className="muted small">No matches recorded this season yet — be the first to register a win!</div>
-        ) : (
-          <table className="table table-dense">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Team</th>
-                <th>Name</th>
-                <th className="num">W</th>
-                <th className="num">L</th>
-                <th className="num">Win%</th>
-                <th className="num">Streak</th>
-                <th className="num">Net $</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const total = r.wins + r.losses;
-                const winPct = total > 0 ? Math.round((r.wins / total) * 100) : 0;
-                const isMe = r.teamId === team.id;
-                const streak = streakLabel(r.streak);
-                return (
-                  <tr key={r.teamId} className={isMe ? 'row-user' : ''}>
-                    <td><strong>{r.rank}</strong></td>
-                    <td><strong style={{ color: 'var(--accent)' }}>{r.teamTag}</strong></td>
-                    <td className="muted">{r.teamName}</td>
-                    <td className="num">{r.wins}</td>
-                    <td className="num">{r.losses}</td>
-                    <td className="num">{winPct}%</td>
-                    <td className={`num ${streak.cls}`}>{streak.text}</td>
-                    <td className={`num ${r.netMoney >= 0 ? 'text-win' : 'text-loss'}`}>
-                      {r.netMoney >= 0 ? '+' : ''}${r.netMoney.toLocaleString()}
-                    </td>
+      {/* ===== Overall (legacy) tab ===== */}
+      {tab === 'overall' && (
+        <>
+          {me && (
+            <div className="panel" style={{ padding: 14 }}>
+              <div className="panel-title">Your Standings <span className="muted small">— season {season?.seasonNo ?? '—'}</span></div>
+              <div className="online-stat-grid">
+                <StatCell label="Rank" value={myOverallRow ? rankBadge(myOverallRow.rank) : '—'} />
+                <StatCell label="W" value={String(me.wins)} cls="text-win" />
+                <StatCell label="L" value={String(me.losses)} cls="text-loss" />
+                <StatCell
+                  label="Streak"
+                  value={streakLabel(me.streak).text}
+                  cls={streakLabel(me.streak).cls}
+                />
+                <StatCell
+                  label="Net $"
+                  value={`${me.netMoney >= 0 ? '+' : ''}$${me.netMoney.toLocaleString()}`}
+                  cls={me.netMoney >= 0 ? 'text-win' : 'text-loss'}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="panel" style={{ padding: 14 }}>
+            <div className="panel-title">Overall Standings <span className="muted small">— AI duels included</span></div>
+            {rows.length === 0 ? (
+              <div className="muted small">No matches recorded this season yet — be the first to register a win!</div>
+            ) : (
+              <table className="table table-dense">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Team</th>
+                    <th>Name</th>
+                    <th className="num">W</th>
+                    <th className="num">L</th>
+                    <th className="num">Win%</th>
+                    <th className="num">Streak</th>
+                    <th className="num">Net $</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
+                </thead>
+                <tbody>
+                  {rows.map((r) => {
+                    const total = r.wins + r.losses;
+                    const winPct = total > 0 ? Math.round((r.wins / total) * 100) : 0;
+                    const isMe = r.teamId === team.id;
+                    const streak = streakLabel(r.streak);
+                    return (
+                      <tr key={r.teamId} className={isMe ? 'row-user' : ''}>
+                        <td><strong>{rankBadge(r.rank)}</strong></td>
+                        <td><strong style={{ color: 'var(--accent)' }}>{r.teamTag}</strong></td>
+                        <td className="muted">{r.teamName}</td>
+                        <td className="num">{r.wins}</td>
+                        <td className="num">{r.losses}</td>
+                        <td className="num">{winPct}%</td>
+                        <td className={`num ${streak.cls}`}>{streak.text}</td>
+                        <td className={`num ${r.netMoney >= 0 ? 'text-win' : 'text-loss'}`}>
+                          {r.netMoney >= 0 ? '+' : ''}${r.netMoney.toLocaleString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      )}
 
       <ToastStack />
     </div>

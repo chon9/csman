@@ -2066,7 +2066,9 @@ export function handle(
       const season = db.currentSeason();
       const rows = db.loadLeaderboard(season.seasonNo);
       const me = db.loadTeamStandings(season.seasonNo, conn.teamId);
-      return { kind: 'leaderboard', season, rows, me };
+      const pvpRows = db.loadPvpLeaderboard(season.startedAt);
+      const myPvp = db.loadPvpStandingsForTeam(season.startedAt, conn.teamId);
+      return { kind: 'leaderboard', season, rows, me, pvpRows, myPvp };
     }
 
     // ---------- Phase 5: live replays ----------

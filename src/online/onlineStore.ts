@@ -12,6 +12,8 @@ import type {
   DuelOutcome,
   HoFEntry,
   LeaderboardRow,
+  MyPvpStandings,
+  PvpLeaderRow,
   LiveFeedEntry,
   LoanOffer,
   ActiveBoostWire,
@@ -103,6 +105,9 @@ interface OnlineState {
   leaderboardSeason: SeasonInfo | null;
   leaderboardRows: LeaderboardRow[];
   myStandings: MyStandings | null;
+  /** PvP-only leaderboard (derived from match_history, AI excluded). */
+  pvpLeaderRows: PvpLeaderRow[];
+  myPvpStandings: MyPvpStandings | null;
 
   // ----- Phase 5: live replay, chat, tournaments, dev arcs -----
   /** Most recent dev-arc payload (used to drive the growth-report modal). */
@@ -370,6 +375,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   leaderboardSeason: null,
   leaderboardRows: [],
   myStandings: null,
+  pvpLeaderRows: [],
+  myPvpStandings: null,
   lastDevChanges: [],
   showDevReport: false,
   liveReplay: null,
@@ -638,6 +645,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
             leaderboardSeason: msg.season,
             leaderboardRows: msg.rows,
             myStandings: msg.me,
+            pvpLeaderRows: msg.pvpRows,
+            myPvpStandings: msg.myPvp,
           });
           break;
         }

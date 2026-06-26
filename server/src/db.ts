@@ -1168,6 +1168,123 @@ export function openDb(path: string) {
     return { wins: row.wins, losses: row.losses, netMoney: row.net_money, streak: row.streak };
   }
 
+  // -------- PvP-only leaderboard (derived from match_history) --------
+  //
+  // The standings table above mixes AI + PvP wins. To incentivise live
+  // duels we expose a parallel leaderboard that only counts PvP matches
+  // played within the current season window. Walks match_history once per
+  // call — at ~hundreds of matches per week this is cheap; if it ever
+  // grows we can cache or materialise it. Streak is computed per team by
+  // scanning their matches in time order and counting the trailing run.
+
+  const pvpMatchesSinceStmt = db.prepare(
+    `SELECT m.team_a_id, m.team_b_id, m.team_a_tag, m.team_b_tag,
+            m.winner_id, m.stake, m.played_at,
+            ta.name AS team_a_name, tb.name AS team_b_name
+     FROM match_history m
+     LEFT JOIN teams ta ON ta.id = m.team_a_id
+     LEFT JOIN teams tb ON tb.id = m.team_b_id
+     WHERE m.kind = 'pvp' AND m.played_at >= ? AND m.team_b_id IS NOT NULL
+     ORDER BY m.played_at ASC`,
+  );
+
+  interface PvpAgg {
+    teamId: string;
+    teamTag: string;
+    teamName: string;
+    wins: number;
+    losses: number;
+    netStake: number;
+    /** Win/loss results in chronological order — used to compute streak. */
+    results: ('W' | 'L')[];
+  }
+
+  function aggregatePvp(seasonStartedAt: number): Map<string, PvpAgg> {
+    const rows = pvpMatchesSinceStmt.all(seasonStartedAt) as Array<{
+      team_a_id: string;
+      team_b_id: string;
+      team_a_tag: string;
+      team_b_tag: string;
+      winner_id: string;
+      stake: number;
+      played_at: number;
+      team_a_name: string | null;
+      team_b_name: string | null;
+    }>;
+    const stats = new Map<string, PvpAgg>();
+    const ensure = (id: string, tag: string, name: string | null): PvpAgg => {
+      const cur = stats.get(id);
+      if (cur) return cur;
+      const fresh: PvpAgg = {
+        teamId: id, teamTag: tag, teamName: name ?? tag,
+        wins: 0, losses: 0, netStake: 0, results: [],
+      };
+      stats.set(id, fresh);
+      return fresh;
+    };
+    for (const r of rows) {
+      const a = ensure(r.team_a_id, r.team_a_tag, r.team_a_name);
+      const b = ensure(r.team_b_id, r.team_b_tag, r.team_b_name);
+      if (r.winner_id === r.team_a_id) {
+        a.wins += 1; a.netStake += r.stake; a.results.push('W');
+        b.losses += 1; b.netStake -= r.stake; b.results.push('L');
+      } else {
+        b.wins += 1; b.netStake += r.stake; b.results.push('W');
+        a.losses += 1; a.netStake -= r.stake; a.results.push('L');
+      }
+    }
+    return stats;
+  }
+
+  /** Compute current streak from a chronological results list. Positive
+   *  = trailing W-streak length, negative = trailing L-streak length. */
+  function computeStreak(results: ('W' | 'L')[]): number {
+    if (results.length === 0) return 0;
+    const last = results[results.length - 1]!;
+    let n = 0;
+    for (let i = results.length - 1; i >= 0; i--) {
+      if (results[i] === last) n++;
+      else break;
+    }
+    return last === 'W' ? n : -n;
+  }
+
+  function loadPvpLeaderboard(seasonStartedAt: number) {
+    const stats = aggregatePvp(seasonStartedAt);
+    const rows = [...stats.values()].map((s) => ({
+      teamId: s.teamId,
+      teamTag: s.teamTag,
+      teamName: s.teamName,
+      pvpWins: s.wins,
+      pvpLosses: s.losses,
+      pvpNetStake: s.netStake,
+      pvpStreak: computeStreak(s.results),
+    }));
+    // Primary sort: wins desc. Tiebreak 1: net stake. Tiebreak 2: win%.
+    rows.sort((a, b) => {
+      if (a.pvpWins !== b.pvpWins) return b.pvpWins - a.pvpWins;
+      if (a.pvpNetStake !== b.pvpNetStake) return b.pvpNetStake - a.pvpNetStake;
+      const aTotal = a.pvpWins + a.pvpLosses;
+      const bTotal = b.pvpWins + b.pvpLosses;
+      const aPct = aTotal > 0 ? a.pvpWins / aTotal : 0;
+      const bPct = bTotal > 0 ? b.pvpWins / bTotal : 0;
+      return bPct - aPct;
+    });
+    return rows.slice(0, 50).map((r, i) => ({ rank: i + 1, ...r }));
+  }
+
+  function loadPvpStandingsForTeam(seasonStartedAt: number, teamId: string) {
+    const stats = aggregatePvp(seasonStartedAt);
+    const me = stats.get(teamId);
+    if (!me) return { pvpWins: 0, pvpLosses: 0, pvpNetStake: 0, pvpStreak: 0 };
+    return {
+      pvpWins: me.wins,
+      pvpLosses: me.losses,
+      pvpNetStake: me.netStake,
+      pvpStreak: computeStreak(me.results),
+    };
+  }
+
   // -------- Hall of Fame --------
 
   interface HoFRow {
@@ -1717,6 +1834,8 @@ export function openDb(path: string) {
     recordSeasonOutcome,
     loadLeaderboard,
     loadTeamStandings,
+    loadPvpLeaderboard,
+    loadPvpStandingsForTeam,
     createTournamentRow,
     loadTournament,
     loadAllTournaments,
