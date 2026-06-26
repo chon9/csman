@@ -206,6 +206,53 @@ export interface DragonGateResult {
   newMoney: number;
 }
 
+// ============ Mines (Stake-style risk-management grid) ============
+
+/** Fixed grid size — 5×5 = 25 tiles. */
+export const MINES_GRID_SIZE = 25;
+export const MINES_MIN_BET = 500;
+export const MINES_MAX_BET = 50_000;
+/** Bounds on how many mines the user can place. At 24 mines there's a
+ *  single safe tile (4% chance) — the multiplier hits ~24×. */
+export const MINES_MIN_MINES = 1;
+export const MINES_MAX_MINES = 24;
+/** House edge baked into the multiplier formula (≈1% expected loss/round). */
+export const MINES_HOUSE_EDGE = 0.01;
+
+/** Compute the locked-in multiplier after `safePicks` successful reveals
+ *  on a `mineCount`-mine grid. Pure function — both sides compute it the
+ *  same way so the UI can preview the next reveal's multiplier without
+ *  a server roundtrip. Returns 1.0 for 0 safe picks. */
+export function minesMultiplier(mineCount: number, safePicks: number): number {
+  if (safePicks <= 0) return 1.0;
+  const safeTotal = MINES_GRID_SIZE - mineCount;
+  if (safePicks > safeTotal) return 0; // impossible — guard
+  // P(all picks safe) = product (safeTotal - i) / (gridSize - i) for i=0..safePicks-1.
+  let prob = 1.0;
+  for (let i = 0; i < safePicks; i++) {
+    prob *= (safeTotal - i) / (MINES_GRID_SIZE - i);
+  }
+  return Math.round(((1 - MINES_HOUSE_EDGE) / prob) * 100) / 100;
+}
+
+export interface MinesResult {
+  sessionId: string;
+  outcome: 'cashout' | 'bust';
+  /** Multiplier locked in (cashout) or 0 (bust = lost everything). */
+  multiplier: number;
+  bet: number;
+  /** Net change. cashout: +bet × (multiplier − 1); bust: −bet. */
+  delta: number;
+  newMoney: number;
+  /** Every mine position revealed at round end so the user can see what
+   *  they avoided / where the rest were hiding. */
+  mineIndices: number[];
+  /** Tile that ended the round (the mine they hit). Undefined on cashout. */
+  bustTileIndex?: number;
+  /** How many safe tiles the user revealed before the round ended. */
+  safePicks: number;
+}
+
 // ============ Crash / Rocket (gambling — rising multiplier) ============
 
 /** Min/max bet on a single Crash round. Same band as Dragon Gate so the
@@ -729,6 +776,10 @@ export type ClientMessage =
   // ----- Crash / Rocket: server picks bust point, client cashes out live -----
   | { kind: 'start-crash'; bet: number }
   | { kind: 'cashout-crash'; sessionId: string }
+  // ----- Mines: server hides N mines on a 5×5 grid, client reveals tiles -----
+  | { kind: 'start-mines'; bet: number; mineCount: number }
+  | { kind: 'pick-mine-tile'; sessionId: string; tileIndex: number }
+  | { kind: 'cashout-mines'; sessionId: string }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
@@ -825,6 +876,10 @@ export type ServerMessage =
   | { kind: 'dragon-gate-result'; result: DragonGateResult }
   | { kind: 'crash-started'; sessionId: string; bet: number; startedAt: number; serverNowMs: number; newMoney: number }
   | { kind: 'crash-result'; result: CrashResult }
+  | { kind: 'mines-started'; sessionId: string; bet: number; mineCount: number; newMoney: number }
+  /** Sent per safe reveal — round continues, user may pick again or cash out. */
+  | { kind: 'mines-tile-revealed'; sessionId: string; tileIndex: number; multiplier: number; safePicks: number }
+  | { kind: 'mines-result'; result: MinesResult }
   | { kind: 'case-list'; cases: CaseSummary[]; freeCaseId: string; freeCaseAvailable: boolean }
   | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
@@ -851,7 +906,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 25;
+export const PROTOCOL_VERSION = 26;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

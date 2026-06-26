@@ -34,6 +34,12 @@ import {
   CRASH_MIN_BET,
   DRAGON_GATE_MAX_BET,
   DRAGON_GATE_MIN_BET,
+  MINES_GRID_SIZE,
+  MINES_MAX_BET,
+  MINES_MAX_MINES,
+  MINES_MIN_BET,
+  MINES_MIN_MINES,
+  minesMultiplier,
   MORALE_GAME_DELTAS,
   MORALE_GAME_PLAYS_PER_DAY,
   REFILL_COST_PER_DUEL,
@@ -150,6 +156,7 @@ import type { PlayerAttributes } from '../../src/types.ts';
 import type { SkinInstance } from '../../src/types.ts';
 import { cacheLiveReplay, getLiveReplay } from './liveState.ts';
 import { closeSession as closeCrashSession, getSession as getCrashSession, multiplierAt as crashMultiplierAt, openSession as openCrashSession } from './crashSessions.ts';
+import { closeSession as closeMinesSession, getSession as getMinesSession, openSession as openMinesSession } from './minesSessions.ts';
 import { applyAutoTicks, nextAutoTickUtcMs } from './autoTick.ts';
 import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorPayouts } from './serverTick.ts';
 import {
@@ -1520,6 +1527,156 @@ export function handle(
           bet: session.bet,
           delta,
           newMoney: team.money,
+        },
+      };
+    }
+
+    case 'start-mines': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const bet = Math.round(msg.bet);
+      const mineCount = Math.round(msg.mineCount);
+      if (!Number.isFinite(bet) || bet < MINES_MIN_BET || bet > MINES_MAX_BET) {
+        return {
+          kind: 'error',
+          code: 'bad-bet',
+          message: `Bet must be between $${MINES_MIN_BET.toLocaleString()} and $${MINES_MAX_BET.toLocaleString()}.`,
+        };
+      }
+      if (!Number.isFinite(mineCount) || mineCount < MINES_MIN_MINES || mineCount > MINES_MAX_MINES) {
+        return {
+          kind: 'error',
+          code: 'bad-mine-count',
+          message: `Mine count must be ${MINES_MIN_MINES}–${MINES_MAX_MINES}.`,
+        };
+      }
+      if (team.money < bet) {
+        return {
+          kind: 'error',
+          code: 'insufficient-funds',
+          message: `Need $${bet.toLocaleString()} on hand. You have $${team.money.toLocaleString()}.`,
+        };
+      }
+      team.money -= bet;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      const session = openMinesSession(team.id, bet, mineCount);
+      log(`mines-start: ${team.tag} bet $${bet}, ${mineCount} mines on 5×5 (hidden)`);
+      return {
+        kind: 'mines-started',
+        sessionId: session.sessionId,
+        bet,
+        mineCount,
+        newMoney: team.money,
+      };
+    }
+
+    case 'pick-mine-tile': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const session = getMinesSession(msg.sessionId);
+      if (!session || session.teamId !== conn.teamId) {
+        return { kind: 'error', code: 'no-session', message: 'No active Mines round.' };
+      }
+      const tile = Math.round(msg.tileIndex);
+      if (!Number.isInteger(tile) || tile < 0 || tile >= MINES_GRID_SIZE) {
+        return { kind: 'error', code: 'bad-tile', message: 'Tile index out of bounds.' };
+      }
+      if (session.revealed.has(tile)) {
+        return { kind: 'error', code: 'tile-revealed', message: 'Tile already revealed.' };
+      }
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      if (session.mines.has(tile)) {
+        // BUST — lock in the loss, reveal every mine for the client visual.
+        const mineIndices = [...session.mines].sort((a, b) => a - b);
+        const safePicks = session.revealed.size;
+        closeMinesSession(session.sessionId);
+        log(`mines-bust: ${team.tag} hit mine at tile ${tile} after ${safePicks} safe picks (bet $${session.bet} lost)`);
+        return {
+          kind: 'mines-result',
+          result: {
+            sessionId: session.sessionId,
+            outcome: 'bust',
+            multiplier: 0,
+            bet: session.bet,
+            delta: -session.bet,
+            newMoney: team.money,
+            mineIndices,
+            bustTileIndex: tile,
+            safePicks,
+          },
+        };
+      }
+      // SAFE — bump revealed set, return the new multiplier.
+      session.revealed.add(tile);
+      const safePicks = session.revealed.size;
+      const mult = minesMultiplier(session.mineCount, safePicks);
+      // Auto-cashout if the user has cleared every safe tile (perfect run).
+      // Without this they'd be stuck unable to click anything that's safe
+      // and would have to manually hit Cash Out.
+      const safeTotal = MINES_GRID_SIZE - session.mineCount;
+      if (safePicks >= safeTotal) {
+        const mineIndices = [...session.mines].sort((a, b) => a - b);
+        const payout = Math.round(session.bet * mult);
+        const delta = payout - session.bet;
+        team.money += payout;
+        db.setTeamMoneyDay(team.id, team.money, team.day);
+        closeMinesSession(session.sessionId);
+        log(`mines-clear: ${team.tag} cleared every safe tile @ ${mult}x → +$${delta}`);
+        return {
+          kind: 'mines-result',
+          result: {
+            sessionId: session.sessionId,
+            outcome: 'cashout',
+            multiplier: mult,
+            bet: session.bet,
+            delta,
+            newMoney: team.money,
+            mineIndices,
+            safePicks,
+          },
+        };
+      }
+      return {
+        kind: 'mines-tile-revealed',
+        sessionId: session.sessionId,
+        tileIndex: tile,
+        multiplier: mult,
+        safePicks,
+      };
+    }
+
+    case 'cashout-mines': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const session = getMinesSession(msg.sessionId);
+      if (!session || session.teamId !== conn.teamId) {
+        return { kind: 'error', code: 'no-session', message: 'No active Mines round.' };
+      }
+      if (session.revealed.size === 0) {
+        return { kind: 'error', code: 'no-picks', message: 'Reveal at least one tile before cashing out.' };
+      }
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const safePicks = session.revealed.size;
+      const mult = minesMultiplier(session.mineCount, safePicks);
+      const payout = Math.round(session.bet * mult);
+      const delta = payout - session.bet;
+      team.money += payout;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      const mineIndices = [...session.mines].sort((a, b) => a - b);
+      closeMinesSession(session.sessionId);
+      log(`mines-cashout: ${team.tag} cashed @ ${mult}x after ${safePicks} safe picks → +$${delta}`);
+      return {
+        kind: 'mines-result',
+        result: {
+          sessionId: session.sessionId,
+          outcome: 'cashout',
+          multiplier: mult,
+          bet: session.bet,
+          delta,
+          newMoney: team.money,
+          mineIndices,
+          safePicks,
         },
       };
     }

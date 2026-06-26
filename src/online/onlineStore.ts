@@ -21,6 +21,7 @@ import type {
   CaseSummary,
   CrashResult,
   DragonGateResult,
+  MinesResult,
   MassageOutcome,
   MoraleGameResult,
   RpsChoice,
@@ -177,6 +178,22 @@ interface OnlineState {
   /** Running session tally for the user's current sitting. */
   crashSession: { rounds: number; cashouts: number; busts: number; netCash: number };
 
+  // ----- Mines -----
+  /** Active round — null while idle. Server holds the real mine layout;
+   *  client only knows which tiles it has already revealed + the current
+   *  locked-in multiplier. */
+  minesActive: {
+    sessionId: string;
+    bet: number;
+    mineCount: number;
+    revealedSafe: number[];
+    multiplier: number;
+  } | null;
+  /** Last resolved round — drives the post-game reveal grid. */
+  minesLast: MinesResult | null;
+  /** Running session tally. */
+  minesSession: { rounds: number; cashouts: number; busts: number; netCash: number };
+
   // ----- Boosters -----
   /** Unapplied booster cards in inventory. */
   boosts: BoostCard[];
@@ -226,6 +243,9 @@ interface OnlineState {
   playDragonGate: (bet: number) => void;
   startCrash: (bet: number) => void;
   cashoutCrash: () => void;
+  startMines: (bet: number, mineCount: number) => void;
+  pickMineTile: (tileIndex: number) => void;
+  cashoutMines: () => void;
   listCases: () => void;
   openCase: (caseId: string) => void;
   openFreeCase: () => void;
@@ -375,6 +395,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   crashActive: null,
   crashLast: null,
   crashSession: { rounds: 0, cashouts: 0, busts: 0, netCash: 0 },
+  minesActive: null,
+  minesLast: null,
+  minesSession: { rounds: 0, cashouts: 0, busts: 0, netCash: 0 },
   tacticsPresets: [],
   news: [],
   directory: [],
@@ -880,6 +903,51 @@ export const useOnline = create<OnlineState>((set, get) => ({
           });
           break;
         }
+        case 'mines-started': {
+          const t = get().team;
+          set({
+            team: t ? { ...t, money: msg.newMoney } : t,
+            minesActive: {
+              sessionId: msg.sessionId,
+              bet: msg.bet,
+              mineCount: msg.mineCount,
+              revealedSafe: [],
+              multiplier: 1.0,
+            },
+            // Clear prior round when a new one starts.
+            minesLast: null,
+          });
+          break;
+        }
+        case 'mines-tile-revealed': {
+          const cur = get().minesActive;
+          if (!cur || cur.sessionId !== msg.sessionId) break;
+          set({
+            minesActive: {
+              ...cur,
+              revealedSafe: [...cur.revealedSafe, msg.tileIndex],
+              multiplier: msg.multiplier,
+            },
+          });
+          break;
+        }
+        case 'mines-result': {
+          const t = get().team;
+          const cur = get().minesSession;
+          const next = {
+            rounds: cur.rounds + 1,
+            cashouts: cur.cashouts + (msg.result.outcome === 'cashout' ? 1 : 0),
+            busts: cur.busts + (msg.result.outcome === 'bust' ? 1 : 0),
+            netCash: cur.netCash + msg.result.delta,
+          };
+          set({
+            team: t ? { ...t, money: msg.result.newMoney } : t,
+            minesActive: null,
+            minesLast: msg.result,
+            minesSession: next,
+          });
+          break;
+        }
         case 'morale-game-result': {
           const cur = get().moraleGameSession;
           const next = {
@@ -1110,6 +1178,19 @@ export const useOnline = create<OnlineState>((set, get) => ({
     const active = get().crashActive;
     if (!active) return;
     get().client?.send({ kind: 'cashout-crash', sessionId: active.sessionId });
+  },
+  startMines(bet, mineCount) {
+    get().client?.send({ kind: 'start-mines', bet, mineCount });
+  },
+  pickMineTile(tileIndex) {
+    const active = get().minesActive;
+    if (!active) return;
+    get().client?.send({ kind: 'pick-mine-tile', sessionId: active.sessionId, tileIndex });
+  },
+  cashoutMines() {
+    const active = get().minesActive;
+    if (!active) return;
+    get().client?.send({ kind: 'cashout-mines', sessionId: active.sessionId });
   },
   listCases() {
     get().client?.send({ kind: 'list-cases' });
