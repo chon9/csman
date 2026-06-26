@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import {
+  APVP_DEFENDER_WIN_SHARE,
   APVP_MAX_STAKE,
   APVP_MIN_STAKE,
   APVP_PRIMARY_DELTA,
@@ -83,6 +84,7 @@ export default function OnlineChallengesScreen() {
             </div>
             <div className="muted small" style={{ marginTop: 4, color: 'rgba(255,255,255,0.78)' }}>
               Server pairs you with a random team within ±{APVP_PRIMARY_DELTA} total starter CA. No waiting, no posting — duels in seconds.
+              Defender risks nothing (only wins {Math.round(APVP_DEFENDER_WIN_SHARE * 100)}% of the stake on upset) — you carry the full risk.
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

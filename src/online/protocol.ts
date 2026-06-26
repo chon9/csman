@@ -221,6 +221,11 @@ export const APVP_FORMAT = 'BO1' as const;
  *  matchmaker is always paying out something meaningful. */
 export const APVP_MIN_STAKE = 1_000;
 export const APVP_MAX_STAKE = 50_000;
+/** Defender (the random opponent who didn't opt in) only ever wins this
+ *  fraction of the stake. They pay nothing on a loss — Quick Match is
+ *  fully risk-free for the defender, which avoids draining unwitting
+ *  teams while still rewarding them for winning the surprise duel. */
+export const APVP_DEFENDER_WIN_SHARE = 0.1;
 
 // ============ Streaming (Faceit pickup grind for cash) ============
 
@@ -462,6 +467,65 @@ export interface SkinInstanceWire {
   acquiredOn: string;
   caseId: string;
   souvenir?: boolean;
+  /** Float 0.00–1.00 — determines wear bucket + within-bucket multiplier. */
+  float?: number;
+  /** Serial number per skinId (e.g. "Howl #0042"). Provenance label. */
+  serial?: number;
+  /** Owner history snapshot (capped at last 10 entries). */
+  history?: { teamId: string; teamTag: string; at: number }[];
+}
+
+// ============ Skin market (peer-to-peer trading) ============
+
+/** Server commission on every peer skin sale — buyer pays full asking
+ *  price; seller receives (1 − commission) × price. The diff disappears
+ *  as a money sink, helps fight case-grind inflation. */
+export const SKIN_MARKET_COMMISSION = 0.05;
+/** Minimum/maximum asking price for a peer listing. */
+export const SKIN_MARKET_MIN_PRICE = 100;
+export const SKIN_MARKET_MAX_PRICE = 10_000_000;
+
+/** Wire shape for one open peer listing. */
+export interface SkinListingWire {
+  id: string;
+  skinInstanceId: string;
+  sellerTeamId: string;
+  sellerTeamTag: string;
+  askingPrice: number;
+  listedAt: number;
+  /** Snapshot of the skin at list time — saves a second roundtrip. */
+  skin: SkinInstanceWire;
+}
+
+// ============ Trade-up contract (10 same-rarity → 1 next-rarity) ============
+
+/** Number of input skins required for a trade-up contract. */
+export const TRADE_UP_INPUT_COUNT = 10;
+/** Float buckets in canonical CS2 order. Float < threshold[i] → that bucket. */
+export const WEAR_BUCKETS: ReadonlyArray<{ wear: SkinInstanceWire['wear']; max: number }> = [
+  { wear: 'Factory New', max: 0.07 },
+  { wear: 'Minimal Wear', max: 0.15 },
+  { wear: 'Field-Tested', max: 0.38 },
+  { wear: 'Well-Worn', max: 0.45 },
+  { wear: 'Battle-Scarred', max: 1.0 },
+];
+
+/** Map a float (0..1) to its wear bucket label. */
+export function wearForFloat(f: number): SkinInstanceWire['wear'] {
+  const clamped = Math.max(0, Math.min(1, f));
+  for (const b of WEAR_BUCKETS) {
+    if (clamped < b.max) return b.wear;
+  }
+  return 'Battle-Scarred';
+}
+
+/** Within-bucket multiplier so lower float = higher market value. Ranges
+ *  from ×1.30 (0.00 float in any bucket) to ×0.80 (top of bucket).
+ *  Stacks on top of the bucket's base multiplier. */
+export function floatPriceMultiplier(f: number): number {
+  const clamped = Math.max(0, Math.min(1, f));
+  // Linear ramp: float 0 → 1.30, float 1 → 0.80.
+  return Math.round((1.30 - clamped * 0.50) * 1000) / 1000;
 }
 
 /** One tile on the case-opening animation reel — slim render-only payload. */
@@ -898,6 +962,13 @@ export type ClientMessage =
   | { kind: 'open-free-case' }
   | { kind: 'list-skins' }
   | { kind: 'sell-skin'; skinId: string }
+  // ----- Peer skin market -----
+  | { kind: 'list-skin-market' }
+  | { kind: 'list-skin'; skinInstanceId: string; askingPrice: number }
+  | { kind: 'unlist-skin'; listingId: string }
+  | { kind: 'buy-skin-listing'; listingId: string }
+  // ----- Trade-up contract: combine 10 same-rarity → 1 next-rarity -----
+  | { kind: 'trade-up-skins'; skinInstanceIds: string[] }
   // ----- Booster packs (gacha) -----
   | { kind: 'list-boosts' }
   | { kind: 'buy-boost-pack' }
@@ -995,6 +1066,11 @@ export type ServerMessage =
   | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
   | { kind: 'skin-sold'; skinId: string; payout: number; newMoney: number }
+  | { kind: 'skin-market'; listings: SkinListingWire[] }
+  | { kind: 'skin-listed'; listing: SkinListingWire }
+  | { kind: 'skin-unlisted'; listingId: string }
+  | { kind: 'skin-bought'; listingId: string; skin: SkinInstanceWire; cost: number; newMoney: number }
+  | { kind: 'skin-trade-up'; output: SkinInstanceWire; consumedIds: string[]; outputFloat: number }
   // ----- Booster packs -----
   | { kind: 'boost-inventory'; cards: BoostCard[]; activeByPlayer: Record<string, ActiveBoostWire> }
   | { kind: 'boost-pack-opened'; card: BoostCard; cost: number; newMoney: number }
@@ -1017,7 +1093,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 29;
+export const PROTOCOL_VERSION = 30;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

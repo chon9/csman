@@ -30,6 +30,7 @@ import {
   MASSAGE_COST,
   MAX_REFILLS_PER_DAY,
   MIN_REFILL_COST,
+  APVP_DEFENDER_WIN_SHARE,
   APVP_FALLBACK_DELTA,
   APVP_FORMAT,
   APVP_MAX_STAKE,
@@ -44,6 +45,9 @@ import {
   MINES_MAX_MINES,
   MINES_MIN_BET,
   MINES_MIN_MINES,
+  SKIN_MARKET_COMMISSION,
+  SKIN_MARKET_MAX_PRICE,
+  SKIN_MARKET_MIN_PRICE,
   STREAM_CONTRACT_COST,
   STREAM_FATIGUE_COST,
   STREAM_MAX_FATIGUE,
@@ -52,6 +56,7 @@ import {
   STREAM_PAYOUT_PER_ABILITY,
   STREAM_PAYOUT_PER_FAN,
   STREAM_TRAINING_CHANCE,
+  TRADE_UP_INPUT_COUNT,
   fansForRoster,
   minesMultiplier,
   MORALE_GAME_DELTAS,
@@ -162,7 +167,7 @@ import { runAiDuel, runPvpDuel, stripFrames } from './duels.ts';
 import { skipTime } from './timeskip.ts';
 import { buildWageMap, ensureFreeAgentPool, mintWonderkid, suggestedWage } from './freeAgents.ts';
 import { CASES, DAILY_FREE_CASE_ID } from '../../src/data/cs2Cases.ts';
-import { openCase as rollCaseOpen } from '../../src/sim/caseOpening.ts';
+import { openCase as rollCaseOpen, tradeUpContract as rollTradeUp } from '../../src/sim/caseOpening.ts';
 import { RNG } from '../../src/engine/rng.ts';
 import type { ActiveBoostWire, BoostAttrKey, BoostCard, BoostRarity, CaseSummary, SkinInstanceWire } from '../../src/online/protocol.ts';
 import { BOOST_CARD_LIBRARY, BOOST_PACK_COST, BOOST_PACK_ODDS } from '../../src/online/protocol.ts';
@@ -1184,9 +1189,10 @@ export function handle(
       const myStarters = myPlayers.slice(0, 5);
       const myTotalCA = myStarters.reduce((s, p) => s + p.currentAbility, 0);
 
-      // Build the candidate pool. Pre-filter by money + roster size + not-me
-      // BEFORE the expensive per-team player loads.
-      const pool = db.loadMatchmakingPool(stake).filter((t) =>
+      // Build the candidate pool. Defender pays NOTHING on a loss, so we
+      // no longer gate on their bankroll — any active team with a full
+      // starting 5 is eligible.
+      const pool = db.loadMatchmakingPool(0).filter((t) =>
         t.id !== me.id && t.playerIds.length >= 5,
       );
       type Candidate = { teamId: string; tag: string; name: string; players: Player[]; totalCA: number };
@@ -1267,14 +1273,17 @@ export function handle(
       );
       for (const [p, snap] of apvpBoostSnaps) restoreBoostSnapshot(p, snap);
 
+      // Asymmetric economy: challenger risks the full stake (server-
+      // funded prize on win, full loss on loss); defender bears no cash
+      // downside and gets a 10% consolation prize when they upset the
+      // attacker. Numbers below feed into season-standings + the result
+      // modal text so both sides see consistent figures.
       const meWon = duel.winnerTeamId === me.id;
-      if (meWon) {
-        me.money += stake;
-        opp.money = Math.max(0, opp.money - stake);
-      } else {
-        opp.money += stake;
-        me.money = Math.max(0, me.money - stake);
-      }
+      const defenderBonus = Math.round(stake * APVP_DEFENDER_WIN_SHARE);
+      const myDelta = meWon ? stake : -stake;
+      const oppDelta = meWon ? 0 : defenderBonus;
+      me.money = Math.max(0, me.money + myDelta);
+      opp.money = Math.max(0, opp.money + oppDelta);
       db.setTeamMoneyDay(me.id, me.money, me.day);
       db.setTeamMoneyDay(opp.id, opp.money, opp.day);
       db.recordDuelUsed(me.id, myDayKey);
@@ -1328,11 +1337,13 @@ export function handle(
         },
       });
 
-      // Season standings — both sides count, achievements too.
+      // Season standings — both sides count, achievements too. Net-money
+      // tracking uses the asymmetric deltas (defender's "loss" is 0, not
+      // -stake) so the leaderboard reflects what actually moved.
       {
         const season = db.currentSeason();
-        const myStanding = db.recordSeasonOutcome(season.seasonNo, me.id, meWon, meWon ? stake : -stake);
-        const oppStanding = db.recordSeasonOutcome(season.seasonNo, opp.id, !meWon, meWon ? -stake : stake);
+        const myStanding = db.recordSeasonOutcome(season.seasonNo, me.id, meWon, myDelta);
+        const oppStanding = db.recordSeasonOutcome(season.seasonNo, opp.id, !meWon, oppDelta);
         const winnerStandings = meWon ? myStanding : oppStanding;
         const winnerId = meWon ? me.id : opp.id;
         if (winnerStandings.wins >= 1) tryUnlock(db, notifyTeam, winnerId, 'first_blood', ACHIEVEMENT_LABELS.first_blood);
@@ -1360,7 +1371,7 @@ export function handle(
         result: duel.result,
         opponentName: opp.name,
         opponentTag: opp.tag,
-        moneyDelta: meWon ? stake : -stake,
+        moneyDelta: myDelta,
         newMoney: me.money,
         summary: meWon
           ? `Quick Match — beat ${opp.tag} ${duel.result.mapsA}-${duel.result.mapsB}. +$${stake.toLocaleString()}.`
@@ -1372,11 +1383,11 @@ export function handle(
         result: duel.result,
         opponentName: me.name,
         opponentTag: me.tag,
-        moneyDelta: meWon ? -stake : stake,
+        moneyDelta: oppDelta,
         newMoney: opp.money,
         summary: meWon
-          ? `${me.tag} found you in Quick Match — lost ${duel.result.mapsB}-${duel.result.mapsA}. -$${stake.toLocaleString()}.`
-          : `${me.tag} found you in Quick Match — beat them ${duel.result.mapsB}-${duel.result.mapsA}. +$${stake.toLocaleString()}.`,
+          ? `${me.tag} found you in Quick Match — lost ${duel.result.mapsB}-${duel.result.mapsA}. No cash lost (defender bonus only on wins).`
+          : `${me.tag} found you in Quick Match — beat them ${duel.result.mapsB}-${duel.result.mapsA}. +$${defenderBonus.toLocaleString()} defender bonus (10% of stake).`,
         userLineupIds: oppLineupIds,
         diagnostics: oppDiag,
       };
@@ -2126,7 +2137,15 @@ export function handle(
       }
       const rng = new RNG((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0);
       let counter = 0;
-      const result = rollCaseOpen(caseDef, rng, today, () => `skin-${Date.now().toString(36)}-${(counter++).toString(36)}`);
+      const result = rollCaseOpen(
+        caseDef,
+        rng,
+        today,
+        () => `skin-${Date.now().toString(36)}-${(counter++).toString(36)}`,
+        (skinId) => db.allocateSkinSerial(skinId),
+      );
+      // Stamp first-owner history entry — provenance trail starts here.
+      result.instance.history = [{ teamId: team.id, teamTag: team.tag, at: Date.now() }];
       db.addSkin(team.id, result.instance.id, JSON.stringify(result.instance));
       log(`case(${caseId}): ${team.tag} ${isFree ? '[FREE]' : `-$${cost}`} → ${result.instance.weapon} ${result.instance.name} (${result.instance.rarity}, $${result.instance.marketValue})`);
       return {
@@ -2153,12 +2172,184 @@ export function handle(
       if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
       const skin = db.loadSkin(conn.teamId, msg.skinId) as SkinInstance | null;
       if (!skin) return { kind: 'error', code: 'no-skin', message: 'Skin not in inventory.' };
+      if (db.hasOpenListingForSkin(msg.skinId)) {
+        return { kind: 'error', code: 'on-market', message: 'Skin is listed on the peer market — unlist first.' };
+      }
       const payout = Math.max(0, Math.round(skin.marketValue));
       db.removeSkin(conn.teamId, msg.skinId);
       team.money += payout;
       db.setTeamMoneyDay(team.id, team.money, team.day);
       log(`skin sold: ${team.tag} +$${payout.toLocaleString()} (${skin.weapon} ${skin.name})`);
       return { kind: 'skin-sold', skinId: msg.skinId, payout, newMoney: team.money };
+    }
+
+    case 'list-skin-market': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const rows = db.loadAllSkinListings();
+      const listings = rows.map((r) => {
+        const skin = JSON.parse(r.skin_json) as SkinInstance;
+        return {
+          id: r.id,
+          skinInstanceId: r.skin_instance_id,
+          sellerTeamId: r.seller_team_id,
+          sellerTeamTag: r.seller_team_tag,
+          askingPrice: r.asking_price,
+          listedAt: r.listed_at,
+          skin: skin as SkinInstanceWire,
+        };
+      });
+      return { kind: 'skin-market', listings };
+    }
+
+    case 'list-skin': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const skin = db.loadSkin(conn.teamId, msg.skinInstanceId) as SkinInstance | null;
+      if (!skin) return { kind: 'error', code: 'no-skin', message: 'Skin not in your inventory.' };
+      if (db.hasOpenListingForSkin(msg.skinInstanceId)) {
+        return { kind: 'error', code: 'already-listed', message: 'Skin already on the market.' };
+      }
+      const price = Math.round(msg.askingPrice);
+      if (!Number.isFinite(price) || price < SKIN_MARKET_MIN_PRICE || price > SKIN_MARKET_MAX_PRICE) {
+        return {
+          kind: 'error',
+          code: 'bad-price',
+          message: `Asking price must be $${SKIN_MARKET_MIN_PRICE.toLocaleString()}–$${SKIN_MARKET_MAX_PRICE.toLocaleString()}.`,
+        };
+      }
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const listingId = `skml-${randomBytes(6).toString('hex')}`;
+      db.createSkinListing({
+        id: listingId,
+        skinInstanceId: msg.skinInstanceId,
+        sellerTeamId: conn.teamId,
+        askingPrice: price,
+      });
+      log(`skin listed: ${team.tag} @ $${price.toLocaleString()} (${skin.weapon} ${skin.name} #${skin.serial ?? '?'})`);
+      return {
+        kind: 'skin-listed',
+        listing: {
+          id: listingId,
+          skinInstanceId: msg.skinInstanceId,
+          sellerTeamId: conn.teamId,
+          sellerTeamTag: team.tag,
+          askingPrice: price,
+          listedAt: Date.now(),
+          skin: skin as SkinInstanceWire,
+        },
+      };
+    }
+
+    case 'unlist-skin': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const listing = db.loadSkinListing(msg.listingId);
+      if (!listing) return { kind: 'error', code: 'no-listing', message: 'Listing no longer open.' };
+      if (listing.seller_team_id !== conn.teamId) {
+        return { kind: 'error', code: 'not-your-listing', message: 'Only the seller can unlist.' };
+      }
+      db.removeSkinListing(msg.listingId);
+      return { kind: 'skin-unlisted', listingId: msg.listingId };
+    }
+
+    case 'buy-skin-listing': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const listing = db.loadSkinListing(msg.listingId);
+      if (!listing) return { kind: 'error', code: 'no-listing', message: 'Listing no longer available.' };
+      if (listing.seller_team_id === conn.teamId) {
+        return { kind: 'error', code: 'self-buy', message: 'You cannot buy your own listing.' };
+      }
+      const buyer = db.loadTeam(conn.teamId);
+      const seller = db.loadTeam(listing.seller_team_id);
+      if (!buyer || !seller) return { kind: 'error', code: 'no-team', message: 'A team is missing.' };
+      const price = listing.asking_price;
+      if (buyer.money < price) {
+        return {
+          kind: 'error',
+          code: 'insufficient-funds',
+          message: `Need $${price.toLocaleString()} on hand. You have $${buyer.money.toLocaleString()}.`,
+        };
+      }
+      // Money flow: buyer pays full price; seller receives (1 - commission)
+      // × price; the rest disappears as a server-side sink (anti-inflation).
+      const sellerProceeds = Math.round(price * (1 - SKIN_MARKET_COMMISSION));
+      buyer.money -= price;
+      seller.money += sellerProceeds;
+      db.setTeamMoneyDay(buyer.id, buyer.money, buyer.day);
+      db.setTeamMoneyDay(seller.id, seller.money, seller.day);
+
+      // Mutate the skin: bump owner history (cap at last 10), transfer
+      // ownership, persist updated JSON, drop the listing.
+      const skin = JSON.parse(listing.skin_json) as SkinInstance;
+      const history = [...(skin.history ?? []), { teamId: buyer.id, teamTag: buyer.tag, at: Date.now() }];
+      skin.history = history.slice(-10);
+      db.updateSkin(listing.skin_instance_id, JSON.stringify(skin));
+      db.transferSkin(listing.skin_instance_id, buyer.id);
+      db.removeSkinListing(listing.id);
+
+      log(`skin bought: ${buyer.tag} ← ${seller.tag} $${price.toLocaleString()} (seller net $${sellerProceeds.toLocaleString()}) — ${skin.weapon} ${skin.name} #${skin.serial ?? '?'}`);
+      // Push to the seller so their inventory + cash update live.
+      notifyTeam(seller.id, { kind: 'skin-unlisted', listingId: listing.id });
+      notifyTeam(seller.id, { kind: 'team-money-updated', teamId: seller.id, money: seller.money });
+      return {
+        kind: 'skin-bought',
+        listingId: listing.id,
+        skin: skin as SkinInstanceWire,
+        cost: price,
+        newMoney: buyer.money,
+      };
+    }
+
+    case 'trade-up-skins': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const ids = (msg.skinInstanceIds ?? []).filter((s): s is string => typeof s === 'string');
+      if (ids.length !== TRADE_UP_INPUT_COUNT) {
+        return { kind: 'error', code: 'bad-input-count', message: `Need exactly ${TRADE_UP_INPUT_COUNT} skins to trade up.` };
+      }
+      if (new Set(ids).size !== ids.length) {
+        return { kind: 'error', code: 'dupe-inputs', message: 'Duplicate skin selected.' };
+      }
+      const inputs: SkinInstance[] = [];
+      for (const id of ids) {
+        const s = db.loadSkin(team.id, id) as SkinInstance | null;
+        if (!s) return { kind: 'error', code: 'no-skin', message: 'One of the chosen skins is missing.' };
+        if (db.hasOpenListingForSkin(id)) {
+          return { kind: 'error', code: 'on-market', message: 'Cannot trade up a skin that\'s listed on the peer market.' };
+        }
+        inputs.push(s);
+      }
+      const rarity = inputs[0].rarity;
+      if (!inputs.every((s) => s.rarity === rarity)) {
+        return { kind: 'error', code: 'mixed-rarity', message: 'All 10 skins must share the same rarity.' };
+      }
+      const rng = new RNG((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0);
+      let counter = 0;
+      const today = new Date().toISOString().slice(0, 10);
+      const output = rollTradeUp(
+        inputs,
+        rng,
+        today,
+        () => `skin-${Date.now().toString(36)}-tu-${(counter++).toString(36)}`,
+        (skinId) => db.allocateSkinSerial(skinId),
+      );
+      if (!output) {
+        return { kind: 'error', code: 'no-upgrade', message: 'Cannot trade up at this rarity tier.' };
+      }
+      // Burn the inputs, mint the output, stamp first-owner history.
+      for (const id of ids) {
+        db.removeListingForSkin(id);
+        db.removeSkin(team.id, id);
+      }
+      output.history = [{ teamId: team.id, teamTag: team.tag, at: Date.now() }];
+      db.addSkin(team.id, output.id, JSON.stringify(output));
+      log(`trade-up: ${team.tag} burned 10×${rarity} → ${output.rarity} ${output.weapon} ${output.name} #${output.serial ?? '?'} (float ${output.float?.toFixed(4)})`);
+      return {
+        kind: 'skin-trade-up',
+        output: output as SkinInstanceWire,
+        consumedIds: ids,
+        outputFloat: output.float ?? 0,
+      };
     }
 
     // ---------- Booster packs (gacha) ----------

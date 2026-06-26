@@ -1102,6 +1102,17 @@ export interface SkinInstance {
   caseId: string;
   /** Souvenir from a Major win — bonus prestige, +20% market value. */
   souvenir?: boolean;
+  /** Float value 0.00–1.00. Determines wear bucket + within-bucket pricing.
+   *  Optional only for backwards-compat with skins minted before the float
+   *  system; new mints always set it. */
+  float?: number;
+  /** Sequential serial number per skinId — "Howl #0042" provenance label.
+   *  Allocated by the server at mint time, never collides. */
+  serial?: number;
+  /** Per-skin owner provenance trail. Each entry = a team that previously
+   *  owned this exact instance. Updated on every successful trade. Capped
+   *  at the last 10 owners to keep JSON small. */
+  history?: { teamId: string; teamTag: string; at: number }[];
 }
 
 // ============ Hall of Fame (retired players) ============

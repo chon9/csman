@@ -348,6 +348,29 @@ export function openDb(path: string) {
       FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_skin_team ON skin_inventory(team_id);
+
+    -- Per-skinId mint counter. Each row tracks how many copies of a given
+    -- skin have ever been minted server-wide; allocateSerial bumps + returns
+    -- the next number. Drives the "Howl #0042" NFT-style provenance label.
+    CREATE TABLE IF NOT EXISTS skin_serial_counters (
+      skin_id TEXT PRIMARY KEY,
+      minted INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- Peer-to-peer skin listings. The skin row itself stays in
+    -- skin_inventory under the seller until a buyer claims it; the listing
+    -- is just metadata + asking price. ON DELETE CASCADE so deleting a
+    -- team (or a skin) auto-clears any orphaned listings.
+    CREATE TABLE IF NOT EXISTS skin_market_listings (
+      id TEXT PRIMARY KEY,
+      skin_instance_id TEXT NOT NULL UNIQUE,
+      seller_team_id TEXT NOT NULL,
+      asking_price INTEGER NOT NULL,
+      listed_at INTEGER NOT NULL,
+      FOREIGN KEY (seller_team_id) REFERENCES teams(id) ON DELETE CASCADE,
+      FOREIGN KEY (skin_instance_id) REFERENCES skin_inventory(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_skin_listing_seller ON skin_market_listings(seller_team_id);
   `);
   // Booster cards. Unapplied cards sit here; applied boosts live on the
   // owning player's JSON (player.activeBoost field) so they travel with
@@ -595,6 +618,102 @@ export function openDb(path: string) {
   }
   function removeSkin(teamId: string, skinId: string): boolean {
     return deleteSkin.run(skinId, teamId).changes > 0;
+  }
+
+  // ----- Skin serial allocator -----
+
+  const getSerialCounter = db.prepare(`SELECT minted FROM skin_serial_counters WHERE skin_id = ?`);
+  const upsertSerialCounter = db.prepare(
+    `INSERT INTO skin_serial_counters (skin_id, minted) VALUES (?, 1)
+     ON CONFLICT(skin_id) DO UPDATE SET minted = minted + 1`,
+  );
+
+  /** Atomically increment + return the next serial number for the given
+   *  skinId. First mint of a skinId returns 1, second returns 2, etc. */
+  function allocateSkinSerial(skinId: string): number {
+    upsertSerialCounter.run(skinId);
+    const row = getSerialCounter.get(skinId) as { minted: number } | undefined;
+    return row?.minted ?? 1;
+  }
+
+  // ----- Skin transfer (used by peer marketplace + future loan-like flows) -----
+
+  const updateSkinJson = db.prepare(`UPDATE skin_inventory SET json = ? WHERE id = ?`);
+  const moveSkinOwner = db.prepare(`UPDATE skin_inventory SET team_id = ?, acquired_at = ? WHERE id = ?`);
+
+  /** Persist a JSON-blob update for an existing skin row (used to bump
+   *  the ownership-history trail after a trade). Idempotent. */
+  function updateSkin(skinInstanceId: string, json: string): void {
+    updateSkinJson.run(json, skinInstanceId);
+  }
+
+  /** Transfer ownership of a skin row to a different team_id. Caller is
+   *  responsible for the JSON history bump + any market_listings cleanup. */
+  function transferSkin(skinInstanceId: string, newOwnerTeamId: string): void {
+    moveSkinOwner.run(newOwnerTeamId, Date.now(), skinInstanceId);
+  }
+
+  // ----- Peer skin marketplace -----
+
+  const insertSkinListing = db.prepare(
+    `INSERT INTO skin_market_listings (id, skin_instance_id, seller_team_id, asking_price, listed_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  const deleteSkinListing = db.prepare(`DELETE FROM skin_market_listings WHERE id = ?`);
+  const deleteListingsForSkin = db.prepare(`DELETE FROM skin_market_listings WHERE skin_instance_id = ?`);
+  const findSkinListing = db.prepare(
+    `SELECT l.id, l.skin_instance_id, l.seller_team_id, l.asking_price, l.listed_at,
+            t.tag AS seller_team_tag, s.json AS skin_json
+     FROM skin_market_listings l
+     INNER JOIN teams t ON t.id = l.seller_team_id
+     INNER JOIN skin_inventory s ON s.id = l.skin_instance_id
+     WHERE l.id = ?`,
+  );
+  const allOpenSkinListings = db.prepare(
+    `SELECT l.id, l.skin_instance_id, l.seller_team_id, l.asking_price, l.listed_at,
+            t.tag AS seller_team_tag, s.json AS skin_json
+     FROM skin_market_listings l
+     INNER JOIN teams t ON t.id = l.seller_team_id
+     INNER JOIN skin_inventory s ON s.id = l.skin_instance_id
+     ORDER BY l.listed_at DESC
+     LIMIT 200`,
+  );
+  const findListingBySkinId = db.prepare(
+    `SELECT id FROM skin_market_listings WHERE skin_instance_id = ?`,
+  );
+
+  interface SkinListingRow {
+    id: string;
+    skin_instance_id: string;
+    seller_team_id: string;
+    seller_team_tag: string;
+    asking_price: number;
+    listed_at: number;
+    skin_json: string;
+  }
+
+  function createSkinListing(args: {
+    id: string;
+    skinInstanceId: string;
+    sellerTeamId: string;
+    askingPrice: number;
+  }): void {
+    insertSkinListing.run(args.id, args.skinInstanceId, args.sellerTeamId, args.askingPrice, Date.now());
+  }
+  function loadSkinListing(listingId: string): SkinListingRow | null {
+    return (findSkinListing.get(listingId) as SkinListingRow | undefined) ?? null;
+  }
+  function loadAllSkinListings(): SkinListingRow[] {
+    return allOpenSkinListings.all() as SkinListingRow[];
+  }
+  function removeSkinListing(listingId: string): void {
+    deleteSkinListing.run(listingId);
+  }
+  function removeListingForSkin(skinInstanceId: string): void {
+    deleteListingsForSkin.run(skinInstanceId);
+  }
+  function hasOpenListingForSkin(skinInstanceId: string): boolean {
+    return !!findListingBySkinId.get(skinInstanceId);
   }
 
   // -------- Booster cards --------
@@ -1819,6 +1938,15 @@ export function openDb(path: string) {
     loadSkins,
     loadSkin,
     removeSkin,
+    updateSkin,
+    transferSkin,
+    allocateSkinSerial,
+    createSkinListing,
+    loadSkinListing,
+    loadAllSkinListings,
+    removeSkinListing,
+    removeListingForSkin,
+    hasOpenListingForSkin,
     addBoost,
     loadBoosts,
     loadBoost,

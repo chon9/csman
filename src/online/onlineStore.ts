@@ -35,6 +35,7 @@ import type {
   MyStandings,
   NewsItem,
   SkinInstanceWire,
+  SkinListingWire,
   SkinStripEntry,
   OnlineTeam,
   PlayerGoal,
@@ -140,6 +141,10 @@ interface OnlineState {
   skins: SkinInstanceWire[];
   /** Set while a case-opening animation is in flight (modal active). */
   caseOpening: { caseId: string; strip: SkinStripEntry[]; winnerIndex: number; instance: SkinInstanceWire } | null;
+  /** Peer market listings cache — refreshed on demand. */
+  skinMarketListings: SkinListingWire[];
+  /** Pops after a successful trade-up — shows the new mint result. */
+  tradeUpReveal: { output: SkinInstanceWire; outputFloat: number } | null;
 
   // ----- Per-in-game-day duel cap -----
   /** Duels used this in-game day (resets every ~4 real hours / 1 game day). */
@@ -266,6 +271,14 @@ interface OnlineState {
   listSkins: () => void;
   sellSkin: (skinId: string) => void;
   dismissCaseOpening: () => void;
+  // Peer skin market
+  refreshSkinMarket: () => void;
+  listSkinForSale: (skinInstanceId: string, askingPrice: number) => void;
+  unlistSkin: (listingId: string) => void;
+  buySkinListing: (listingId: string) => void;
+  // Trade-up contract
+  tradeUpSkins: (skinInstanceIds: string[]) => void;
+  dismissTradeUpReveal: () => void;
   // Boosters
   listBoosts: () => void;
   buyBoostPack: () => void;
@@ -395,6 +408,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   freeCaseAvailable: false,
   skins: [],
   caseOpening: null,
+  skinMarketListings: [],
+  tradeUpReveal: null,
   duelsUsed: 0,
   duelsRefillsUsed: 0,
   nextTickUtcMs: 0,
@@ -1081,6 +1096,40 @@ export const useOnline = create<OnlineState>((set, get) => ({
           pushToast('success', `Skin sold: +$${msg.payout.toLocaleString()}.`);
           break;
         }
+        case 'skin-market': {
+          set({ skinMarketListings: msg.listings });
+          break;
+        }
+        case 'skin-listed': {
+          set({ skinMarketListings: [msg.listing, ...get().skinMarketListings] });
+          pushToast('info', `Listed for $${msg.listing.askingPrice.toLocaleString()}.`);
+          break;
+        }
+        case 'skin-unlisted': {
+          set({ skinMarketListings: get().skinMarketListings.filter((l) => l.id !== msg.listingId) });
+          break;
+        }
+        case 'skin-bought': {
+          const t = get().team;
+          set({
+            team: t ? { ...t, money: msg.newMoney } : t,
+            // The new skin lands in OUR inventory; drop the listing locally.
+            skins: [msg.skin, ...get().skins],
+            skinMarketListings: get().skinMarketListings.filter((l) => l.id !== msg.listingId),
+          });
+          pushToast('success', `Bought ${msg.skin.weapon} ${msg.skin.name} for $${msg.cost.toLocaleString()}.`);
+          break;
+        }
+        case 'skin-trade-up': {
+          // Burn the inputs locally; add the output.
+          const consumed = new Set(msg.consumedIds);
+          set({
+            skins: [msg.output, ...get().skins.filter((s) => !consumed.has(s.id))],
+            tradeUpReveal: { output: msg.output, outputFloat: msg.outputFloat },
+          });
+          pushToast('success', `Trade-up: ${msg.output.weapon} ${msg.output.name} (float ${msg.outputFloat.toFixed(4)}).`);
+          break;
+        }
         case 'boost-inventory': {
           set({ boosts: msg.cards, activeBoosts: msg.activeByPlayer });
           break;
@@ -1253,6 +1302,24 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   dismissCaseOpening() {
     set({ caseOpening: null });
+  },
+  refreshSkinMarket() {
+    get().client?.send({ kind: 'list-skin-market' });
+  },
+  listSkinForSale(skinInstanceId, askingPrice) {
+    get().client?.send({ kind: 'list-skin', skinInstanceId, askingPrice });
+  },
+  unlistSkin(listingId) {
+    get().client?.send({ kind: 'unlist-skin', listingId });
+  },
+  buySkinListing(listingId) {
+    get().client?.send({ kind: 'buy-skin-listing', listingId });
+  },
+  tradeUpSkins(skinInstanceIds) {
+    get().client?.send({ kind: 'trade-up-skins', skinInstanceIds });
+  },
+  dismissTradeUpReveal() {
+    set({ tradeUpReveal: null });
   },
 
   // ----- Boosters -----
