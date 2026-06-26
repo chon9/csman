@@ -2,10 +2,21 @@
 // nickname + PIN, fires off the hello message. Server URL is auto-derived
 // from the page origin (wsOrigin) — no manual entry needed for the single
 // hosted deployment.
+//
+// Nickname persistence: we stash the last-used nickname in localStorage so
+// returning visitors only have to re-type their PIN. PIN is NEVER stored —
+// browser storage is plaintext and trivially scrapeable; treat the PIN as
+// a real password.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import { wsOrigin } from '../serverUrl';
+
+const LAST_NICK_KEY = 'csm-online-last-nickname';
+
+function loadStoredNickname(): string {
+  try { return localStorage.getItem(LAST_NICK_KEY) ?? ''; } catch { return ''; }
+}
 
 export default function ConnectScreen({ onBack }: { onBack: () => void }) {
   const connectTo = useOnline((s) => s.connectTo);
@@ -14,11 +25,21 @@ export default function ConnectScreen({ onBack }: { onBack: () => void }) {
   const log = useOnline((s) => s.log);
   const clearError = useOnline((s) => s.clearError);
 
-  const [nickname, setNickname] = useState('');
+  const [nickname, setNickname] = useState(loadStoredNickname);
   const [pin, setPin] = useState('');
   const [touched, setTouched] = useState(false);
+  const pinRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => () => clearError(), [clearError]);
+
+  // If we pre-filled a stored nickname, drop the cursor straight into the
+  // PIN field so returning users can type-and-enter without a click.
+  useEffect(() => {
+    if (nickname && pinRef.current) pinRef.current.focus();
+    // empty deps — mount-only behavior; user typing a new nick later
+    // shouldn't pull focus.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const pinValid = /^\d{4,8}$/.test(pin);
   const nickValid = nickname.trim().length >= 2 && nickname.trim().length <= 24;
@@ -28,7 +49,9 @@ export default function ConnectScreen({ onBack }: { onBack: () => void }) {
     e.preventDefault();
     setTouched(true);
     if (!canSubmit) return;
-    connectTo(wsOrigin(), nickname.trim(), pin.trim());
+    const cleanNick = nickname.trim();
+    try { localStorage.setItem(LAST_NICK_KEY, cleanNick); } catch { /* private mode */ }
+    connectTo(wsOrigin(), cleanNick, pin.trim());
   }
 
   return (
@@ -64,6 +87,7 @@ export default function ConnectScreen({ onBack }: { onBack: () => void }) {
           <label className="field">
             <span className="field-label">PIN (4-8 digits)</span>
             <input
+              ref={pinRef}
               className="input"
               type="password"
               inputMode="numeric"
