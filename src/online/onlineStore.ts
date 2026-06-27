@@ -806,7 +806,15 @@ export const useOnline = create<OnlineState>((set, get) => ({
         }
         case 'live-replay': {
           set({
-            liveReplay: { matchId: msg.matchId, result: msg.result, teamATag: msg.teamATag, teamBTag: msg.teamBTag },
+            liveReplay: {
+              matchId: msg.matchId,
+              result: msg.result,
+              teamATag: msg.teamATag,
+              teamBTag: msg.teamBTag,
+              // Carries roster anchor for AI bet "Watch replay" path
+              // so spectator-mode scoreboard splits correctly.
+              teamARosterIds: msg.teamARosterIds,
+            },
             screen: 'replay',
           });
           break;

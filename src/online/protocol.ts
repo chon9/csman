@@ -1700,7 +1700,7 @@ export type ServerMessage =
   | { kind: 'lineup-saved'; playerIds: string[] }
   | { kind: 'leaderboard'; season: SeasonInfo; rows: LeaderboardRow[]; me: MyStandings; pvpRows: PvpLeaderRow[]; myPvp: MyPvpStandings }
   // ----- Phase 5 -----
-  | { kind: 'live-replay'; matchId: string; result: MatchResult; teamATag: string; teamBTag: string }
+  | { kind: 'live-replay'; matchId: string; result: MatchResult; teamATag: string; teamBTag: string; /** Optional team A roster anchor for spectator-mode replays (AI bet "Watch replay" path) — lets the viewer split the scoreboard correctly when neither team is the user's. */ teamARosterIds?: string[] }
   | { kind: 'live-replay-expired'; matchId: string }
   | { kind: 'chat-history'; messages: ChatMessage[] }
   | { kind: 'chat-message'; message: ChatMessage }
@@ -1810,7 +1810,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 42;
+export const PROTOCOL_VERSION = 43;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

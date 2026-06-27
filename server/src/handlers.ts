@@ -3070,13 +3070,20 @@ export function handle(
       if (!cached) {
         return { kind: 'live-replay-expired', matchId: card.match_history_id };
       }
-      const payload = JSON.parse(card.payload_json) as { teamA: { team: { tag: string } }; teamB: { team: { tag: string } } };
+      const payload = JSON.parse(card.payload_json) as {
+        teamA: { team: { tag: string }; players: { id: string }[] };
+        teamB: { team: { tag: string } };
+      };
       return {
         kind: 'live-replay',
         matchId: card.match_history_id,
         result: cached,
         teamATag: payload.teamA.team.tag,
         teamBTag: payload.teamB.team.tag,
+        // Pass team A's roster ids so the replay viewer can split the
+        // scoreboard correctly in spectator mode (otherwise every player
+        // falls into team B because the user owns no players here).
+        teamARosterIds: payload.teamA.players.slice(0, 5).map((p) => p.id),
       };
     }
 
