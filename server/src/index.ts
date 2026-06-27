@@ -17,6 +17,7 @@ import { handleHttp } from './httpRoutes.ts';
 import { backfillLegacyContracts, backfillPlayerTraits, sanitizePlayerAges, seedRealNamePool } from './freeAgents.ts';
 import { startBustTicker as startCrashBustTicker } from './crashSessions.ts';
 import { cleanupStaleCards, ensureCards, settleDueCards } from './aiBetting.ts';
+import { closeDueAuctions as closeDueLotAuctions } from './realEstate.ts';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../src/online/protocol.ts';
 
 const PORT = Number(process.env.CSM_PORT ?? 8787);
@@ -134,6 +135,14 @@ startCrashBustTicker(50, (session) => {
     },
   });
 });
+
+// Real-estate auction ticker. Every 60s, close any lot auctions whose
+// anti-snipe countdown has elapsed (4-hour default, reset on each bid).
+// Closes are cheap when nothing is due — a single indexed SELECT.
+setInterval(() => {
+  try { closeDueLotAuctions(db, notifyTeam, broadcastAll, (line) => console.log(`[csm:lot] ${line}`)); }
+  catch (err) { console.error('[csm:lot] tick error', err); }
+}, 60_000).unref();
 
 // AI vs AI betting market ticker. Every 2 seconds:
 //   - Top up the active-card count to AI_BET_ACTIVE_CARDS (broadcast new cards)

@@ -28,6 +28,7 @@ const PRIMARY: NavItem[] = [
   { id: 'massage', label: 'Massage', icon: '💆' },
   { id: 'mini-games', label: 'Mini Games', icon: '🎮' },
   { id: 'ai-bets', label: 'AI Betting', icon: '🎰' },
+  { id: 'real-estate', label: 'Real Estate', icon: '🏘' },
   { id: 'streaming', label: 'Streaming', icon: '📺' },
   { id: 'scout', label: 'Scout', icon: '🔬' },
   { id: 'history', label: 'History', icon: '📜' },

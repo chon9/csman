@@ -496,6 +496,89 @@ export function openDb(path: string) {
       FOREIGN KEY (bettor_team_id) REFERENCES teams(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_ai_bet_hist_team ON ai_bet_history(bettor_team_id, settled_at DESC);
+
+    -- ===== Virtual real estate =====
+    --
+    -- 1000×1000 sparse grid. Only owned + actively-auctioned cells get
+    -- rows; everything else is implicitly empty. (x,y) is the natural
+    -- primary key for collision detection.
+
+    CREATE TABLE IF NOT EXISTS lots (
+      id TEXT PRIMARY KEY,
+      x INTEGER NOT NULL,
+      y INTEGER NOT NULL,
+      owner_team_id TEXT NOT NULL,
+      apartment_tier TEXT NOT NULL DEFAULT 'studio',
+      vault_balance INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      won_auction_id TEXT,
+      FOREIGN KEY (owner_team_id) REFERENCES teams(id) ON DELETE CASCADE,
+      UNIQUE (x, y)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lots_owner ON lots(owner_team_id);
+
+    -- Active + closed lot auctions. Status: open | closed | void.
+    CREATE TABLE IF NOT EXISTS lot_auctions (
+      id TEXT PRIMARY KEY,
+      x INTEGER NOT NULL,
+      y INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      started_at INTEGER NOT NULL,
+      ends_at INTEGER NOT NULL,
+      current_bid INTEGER NOT NULL DEFAULT 0,
+      current_bidder_team_id TEXT,
+      winner_team_id TEXT,
+      FOREIGN KEY (current_bidder_team_id) REFERENCES teams(id) ON DELETE SET NULL,
+      FOREIGN KEY (winner_team_id) REFERENCES teams(id) ON DELETE SET NULL
+    );
+    -- Prevent two parallel auctions on the same coord. Composite unique
+    -- partial index: only enforce against open auctions.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_lot_auction_open_coord
+      ON lot_auctions(x, y) WHERE status = 'open';
+    CREATE INDEX IF NOT EXISTS idx_lot_auction_ends ON lot_auctions(status, ends_at);
+
+    -- Bid log per auction. Each bid escrows money on the bidder (money
+    -- deducted at bid time, refunded on outbid / void close).
+    CREATE TABLE IF NOT EXISTS lot_bids (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      auction_id TEXT NOT NULL,
+      bidder_team_id TEXT NOT NULL,
+      bidder_tag TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      placed_at INTEGER NOT NULL,
+      refunded INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (auction_id) REFERENCES lot_auctions(id) ON DELETE CASCADE,
+      FOREIGN KEY (bidder_team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_lot_bids_auction ON lot_bids(auction_id, placed_at DESC);
+
+    CREATE TABLE IF NOT EXISTS lot_cars (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lot_id TEXT NOT NULL,
+      car_id TEXT NOT NULL,
+      bought_at INTEGER NOT NULL,
+      FOREIGN KEY (lot_id) REFERENCES lots(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_lot_cars_lot ON lot_cars(lot_id);
+
+    CREATE TABLE IF NOT EXISTS lot_luxuries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lot_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      bought_at INTEGER NOT NULL,
+      FOREIGN KEY (lot_id) REFERENCES lots(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_lot_luxuries_lot ON lot_luxuries(lot_id);
+
+    CREATE TABLE IF NOT EXISTS lot_residents (
+      lot_id TEXT NOT NULL,
+      player_id TEXT NOT NULL,
+      moved_in_at INTEGER NOT NULL,
+      PRIMARY KEY (lot_id, player_id),
+      FOREIGN KEY (lot_id) REFERENCES lots(id) ON DELETE CASCADE,
+      FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_lot_residents_player ON lot_residents(player_id);
   `);
   // Skin inventory rows owned by this team — JSON-blob per skin instance.
   db.exec(`
@@ -1036,6 +1119,164 @@ export function openDb(path: string) {
   /** Cap history per team — generous (100) since we only display 10. */
   function trimAiBetHistoryForTeam(teamId: string, keep: number): void {
     trimAiBetHistory.run(teamId, teamId, keep);
+  }
+
+  // -------- Virtual real estate --------
+
+  interface LotRow {
+    id: string;
+    x: number;
+    y: number;
+    owner_team_id: string;
+    apartment_tier: string;
+    vault_balance: number;
+    created_at: number;
+    won_auction_id: string | null;
+  }
+  interface LotAuctionRow {
+    id: string;
+    x: number;
+    y: number;
+    status: 'open' | 'closed' | 'void';
+    started_at: number;
+    ends_at: number;
+    current_bid: number;
+    current_bidder_team_id: string | null;
+    winner_team_id: string | null;
+  }
+  interface LotBidRow {
+    id: number;
+    auction_id: string;
+    bidder_team_id: string;
+    bidder_tag: string;
+    amount: number;
+    placed_at: number;
+    refunded: number;
+  }
+  interface LotCarRow { id: number; lot_id: string; car_id: string; bought_at: number }
+  interface LotLuxuryRow { id: number; lot_id: string; item_id: string; bought_at: number }
+  interface LotResidentRow { lot_id: string; player_id: string; moved_in_at: number }
+
+  // ----- Lot CRUD -----
+  const insertLot = db.prepare(
+    `INSERT INTO lots (id, x, y, owner_team_id, apartment_tier, vault_balance, created_at, won_auction_id)
+     VALUES (?, ?, ?, ?, 'studio', 0, ?, ?)`,
+  );
+  const findLotById = db.prepare(`SELECT * FROM lots WHERE id = ?`);
+  const findLotByCoord = db.prepare(`SELECT * FROM lots WHERE x = ? AND y = ?`);
+  const lotsInBox = db.prepare(`SELECT * FROM lots WHERE x >= ? AND x <= ? AND y >= ? AND y <= ?`);
+  const lotsForOwner = db.prepare(`SELECT * FROM lots WHERE owner_team_id = ?`);
+  const updateLotTierStmt = db.prepare(`UPDATE lots SET apartment_tier = ? WHERE id = ?`);
+  const updateLotVaultStmt = db.prepare(`UPDATE lots SET vault_balance = ? WHERE id = ?`);
+
+  function createLot(args: { id: string; x: number; y: number; ownerTeamId: string; wonAuctionId: string | null }): void {
+    insertLot.run(args.id, args.x, args.y, args.ownerTeamId, Date.now(), args.wonAuctionId);
+  }
+  function loadLot(id: string): LotRow | null { return (findLotById.get(id) as LotRow | undefined) ?? null; }
+  function loadLotByCoord(x: number, y: number): LotRow | null { return (findLotByCoord.get(x, y) as LotRow | undefined) ?? null; }
+  function loadLotsInBox(x0: number, y0: number, x1: number, y1: number): LotRow[] {
+    return lotsInBox.all(x0, x1, y0, y1) as LotRow[];
+  }
+  function loadLotsForOwner(teamId: string): LotRow[] { return lotsForOwner.all(teamId) as LotRow[]; }
+  function setLotApartmentTier(lotId: string, tier: string): void { updateLotTierStmt.run(tier, lotId); }
+  function setLotVault(lotId: string, balance: number): void { updateLotVaultStmt.run(balance, lotId); }
+
+  // ----- Lot auctions -----
+  const insertLotAuction = db.prepare(
+    `INSERT INTO lot_auctions (id, x, y, status, started_at, ends_at, current_bid, current_bidder_team_id)
+     VALUES (?, ?, ?, 'open', ?, ?, ?, ?)`,
+  );
+  const findAuction = db.prepare(`SELECT * FROM lot_auctions WHERE id = ?`);
+  const findOpenAuctionAtCoord = db.prepare(`SELECT * FROM lot_auctions WHERE x = ? AND y = ? AND status = 'open'`);
+  const allOpenAuctions = db.prepare(`SELECT * FROM lot_auctions WHERE status = 'open' ORDER BY ends_at ASC`);
+  const dueAuctions = db.prepare(`SELECT * FROM lot_auctions WHERE status = 'open' AND ends_at <= ?`);
+  const updateAuctionBid = db.prepare(`UPDATE lot_auctions SET current_bid = ?, current_bidder_team_id = ?, ends_at = ? WHERE id = ?`);
+  const closeAuctionStmt = db.prepare(`UPDATE lot_auctions SET status = 'closed', winner_team_id = ? WHERE id = ?`);
+  const voidAuctionStmt = db.prepare(`UPDATE lot_auctions SET status = 'void' WHERE id = ?`);
+
+  function createLotAuction(args: { id: string; x: number; y: number; startedAt: number; endsAt: number; openingBid: number; bidderTeamId: string }): void {
+    insertLotAuction.run(args.id, args.x, args.y, args.startedAt, args.endsAt, args.openingBid, args.bidderTeamId);
+  }
+  function loadAuction(id: string): LotAuctionRow | null { return (findAuction.get(id) as LotAuctionRow | undefined) ?? null; }
+  function loadOpenAuctionAtCoord(x: number, y: number): LotAuctionRow | null {
+    return (findOpenAuctionAtCoord.get(x, y) as LotAuctionRow | undefined) ?? null;
+  }
+  function loadAllOpenAuctions(): LotAuctionRow[] { return allOpenAuctions.all() as LotAuctionRow[]; }
+  function loadDueLotAuctions(now: number): LotAuctionRow[] { return dueAuctions.all(now) as LotAuctionRow[]; }
+  function updateLotAuctionBid(id: string, bid: number, bidderTeamId: string, newEndsAt: number): void {
+    updateAuctionBid.run(bid, bidderTeamId, newEndsAt, id);
+  }
+  function closeLotAuction(id: string, winnerTeamId: string): void { closeAuctionStmt.run(winnerTeamId, id); }
+  function voidLotAuction(id: string): void { voidAuctionStmt.run(id); }
+
+  // ----- Lot bids -----
+  const insertLotBid = db.prepare(
+    `INSERT INTO lot_bids (auction_id, bidder_team_id, bidder_tag, amount, placed_at, refunded) VALUES (?, ?, ?, ?, ?, 0)`,
+  );
+  const bidsForAuction = db.prepare(`SELECT * FROM lot_bids WHERE auction_id = ? ORDER BY placed_at DESC LIMIT 20`);
+  const unrefundedBidsForBidder = db.prepare(
+    `SELECT * FROM lot_bids WHERE auction_id = ? AND bidder_team_id = ? AND refunded = 0`,
+  );
+  const markBidRefunded = db.prepare(`UPDATE lot_bids SET refunded = 1 WHERE id = ?`);
+
+  function recordLotBid(args: { auctionId: string; bidderTeamId: string; bidderTag: string; amount: number }): number {
+    const r = insertLotBid.run(args.auctionId, args.bidderTeamId, args.bidderTag, args.amount, Date.now());
+    return r.lastInsertRowid as number;
+  }
+  function loadLotBids(auctionId: string): LotBidRow[] { return bidsForAuction.all(auctionId) as LotBidRow[]; }
+  function loadUnrefundedBidsForBidder(auctionId: string, bidderTeamId: string): LotBidRow[] {
+    return unrefundedBidsForBidder.all(auctionId, bidderTeamId) as LotBidRow[];
+  }
+  function markLotBidRefunded(bidId: number): void { markBidRefunded.run(bidId); }
+
+  // ----- Lot cars -----
+  const insertLotCar = db.prepare(`INSERT INTO lot_cars (lot_id, car_id, bought_at) VALUES (?, ?, ?)`);
+  const carsForLotStmt = db.prepare(`SELECT * FROM lot_cars WHERE lot_id = ? ORDER BY id ASC`);
+  const findLotCar = db.prepare(`SELECT * FROM lot_cars WHERE id = ? AND lot_id = ?`);
+  const deleteLotCar = db.prepare(`DELETE FROM lot_cars WHERE id = ?`);
+  const countLotCars = db.prepare(`SELECT COUNT(*) AS n FROM lot_cars WHERE lot_id = ?`);
+
+  function addLotCar(lotId: string, carId: string): number {
+    return insertLotCar.run(lotId, carId, Date.now()).lastInsertRowid as number;
+  }
+  function loadLotCars(lotId: string): LotCarRow[] { return carsForLotStmt.all(lotId) as LotCarRow[]; }
+  function loadLotCar(lotId: string, lotCarId: number): LotCarRow | null {
+    return (findLotCar.get(lotCarId, lotId) as LotCarRow | undefined) ?? null;
+  }
+  function removeLotCar(lotCarId: number): void { deleteLotCar.run(lotCarId); }
+  function countLotCarsFor(lotId: string): number { return (countLotCars.get(lotId) as { n: number }).n; }
+
+  // ----- Lot luxuries -----
+  const insertLotLuxury = db.prepare(`INSERT INTO lot_luxuries (lot_id, item_id, bought_at) VALUES (?, ?, ?)`);
+  const luxuriesForLotStmt = db.prepare(`SELECT * FROM lot_luxuries WHERE lot_id = ? ORDER BY id ASC`);
+  const findLotLuxury = db.prepare(`SELECT * FROM lot_luxuries WHERE id = ? AND lot_id = ?`);
+  const deleteLotLuxury = db.prepare(`DELETE FROM lot_luxuries WHERE id = ?`);
+  const countLotLuxuries = db.prepare(`SELECT COUNT(*) AS n FROM lot_luxuries WHERE lot_id = ?`);
+
+  function addLotLuxury(lotId: string, itemId: string): number {
+    return insertLotLuxury.run(lotId, itemId, Date.now()).lastInsertRowid as number;
+  }
+  function loadLotLuxuries(lotId: string): LotLuxuryRow[] { return luxuriesForLotStmt.all(lotId) as LotLuxuryRow[]; }
+  function loadLotLuxury(lotId: string, lotLuxuryId: number): LotLuxuryRow | null {
+    return (findLotLuxury.get(lotLuxuryId, lotId) as LotLuxuryRow | undefined) ?? null;
+  }
+  function removeLotLuxury(lotLuxuryId: number): void { deleteLotLuxury.run(lotLuxuryId); }
+  function countLotLuxuriesFor(lotId: string): number { return (countLotLuxuries.get(lotId) as { n: number }).n; }
+
+  // ----- Lot residents -----
+  const insertResident = db.prepare(`INSERT INTO lot_residents (lot_id, player_id, moved_in_at) VALUES (?, ?, ?)`);
+  const residentsForLotStmt = db.prepare(`SELECT * FROM lot_residents WHERE lot_id = ? ORDER BY moved_in_at ASC`);
+  const deleteResident = db.prepare(`DELETE FROM lot_residents WHERE lot_id = ? AND player_id = ?`);
+  const countLotResidents = db.prepare(`SELECT COUNT(*) AS n FROM lot_residents WHERE lot_id = ?`);
+  const isPlayerAResident = db.prepare(`SELECT lot_id FROM lot_residents WHERE player_id = ?`);
+
+  function addLotResident(lotId: string, playerId: string): void { insertResident.run(lotId, playerId, Date.now()); }
+  function loadLotResidents(lotId: string): LotResidentRow[] { return residentsForLotStmt.all(lotId) as LotResidentRow[]; }
+  function removeLotResident(lotId: string, playerId: string): void { deleteResident.run(lotId, playerId); }
+  function countLotResidentsFor(lotId: string): number { return (countLotResidents.get(lotId) as { n: number }).n; }
+  function residencyOf(playerId: string): string | null {
+    const r = isPlayerAResident.get(playerId) as { lot_id: string } | undefined;
+    return r ? r.lot_id : null;
   }
 
   // -------- Wall-clock auto-advance --------
@@ -2536,6 +2777,46 @@ export function openDb(path: string) {
     recordAiBetHistory,
     loadAiBetHistory,
     trimAiBetHistoryForTeam,
+    // Real estate — lots
+    createLot,
+    loadLot,
+    loadLotByCoord,
+    loadLotsInBox,
+    loadLotsForOwner,
+    setLotApartmentTier,
+    setLotVault,
+    // Real estate — auctions
+    createLotAuction,
+    loadAuction,
+    loadOpenAuctionAtCoord,
+    loadAllOpenAuctions,
+    loadDueLotAuctions,
+    updateLotAuctionBid,
+    closeLotAuction,
+    voidLotAuction,
+    // Real estate — bids
+    recordLotBid,
+    loadLotBids,
+    loadUnrefundedBidsForBidder,
+    markLotBidRefunded,
+    // Real estate — cars
+    addLotCar,
+    loadLotCars,
+    loadLotCar,
+    removeLotCar,
+    countLotCarsFor,
+    // Real estate — luxuries
+    addLotLuxury,
+    loadLotLuxuries,
+    loadLotLuxury,
+    removeLotLuxury,
+    countLotLuxuriesFor,
+    // Real estate — residents
+    addLotResident,
+    loadLotResidents,
+    removeLotResident,
+    countLotResidentsFor,
+    residencyOf,
     applyMmrChange,
     loadMmrLeaderboard,
     getAutoTickAnchor,

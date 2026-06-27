@@ -345,6 +345,22 @@ import {
   runReadyTournaments,
 } from './tournaments.ts';
 import { loadMyBetHistory as loadMyAiBetHistory, loadTeamProfileForCard as loadAiBetTeam, loadVisibleWire as loadAiBetCards, placeBet as placeAiBet } from './aiBetting.ts';
+import {
+  assignResident as reAssignResident,
+  buyCar as reBuyCar,
+  buyLuxury as reBuyLuxury,
+  depositVault as reDepositVault,
+  evictResident as reEvictResident,
+  loadAllAuctionsWire as reLoadAuctions,
+  loadLotDetailWire as reLoadLotDetail,
+  loadMapPins as reLoadMapPins,
+  loadMyLots as reLoadMyLots,
+  placeBid as rePlaceBid,
+  sellCar as reSellCar,
+  sellLuxury as reSellLuxury,
+  upgradeApartment as reUpgradeApartment,
+  withdrawVault as reWithdrawVault,
+} from './realEstate.ts';
 import { AI_BET_MAX_STAKE, AI_BET_MIN_STAKE } from '../../src/online/protocol.ts';
 
 /** ISO timestamp of the next 00:00 UTC — used to tell the client when the
@@ -3057,6 +3073,131 @@ export function handle(
     case 'list-my-ai-bet-history': {
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
       return { kind: 'ai-bet-my-history', entries: loadMyAiBetHistory(db, conn.teamId, 10) };
+    }
+
+    // ---------- Virtual real estate ----------
+
+    case 'list-lot-map': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const x0 = Math.max(0, Math.floor(msg.x0));
+      const y0 = Math.max(0, Math.floor(msg.y0));
+      const x1 = Math.min(999, Math.floor(msg.x1));
+      const y1 = Math.min(999, Math.floor(msg.y1));
+      return { kind: 'lot-map', pins: reLoadMapPins(db, x0, y0, x1, y1) };
+    }
+
+    case 'list-lot-auctions': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      return { kind: 'lot-auctions', auctions: reLoadAuctions(db, conn.teamId) };
+    }
+
+    case 'list-my-lots': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      return { kind: 'my-lots', lots: reLoadMyLots(db, conn.teamId) };
+    }
+
+    case 'fetch-lot-detail': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const lot = db.loadLotByCoord(Math.floor(msg.x), Math.floor(msg.y));
+      if (!lot) return { kind: 'error', code: 'no-lot', message: `No lot at (${msg.x},${msg.y}).` };
+      const detail = reLoadLotDetail(db, lot.id);
+      if (!detail) return { kind: 'error', code: 'no-lot', message: 'Lot disappeared.' };
+      return { kind: 'lot-detail', lot: detail };
+    }
+
+    case 'place-lot-bid': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const res = rePlaceBid(db, conn.teamId, Math.floor(msg.x), Math.floor(msg.y), Math.floor(msg.amount));
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      // Notify the (now-refunded) previous high bidder.
+      if (res.refundToPrevBidder) {
+        const prev = db.loadTeam(res.refundToPrevBidder.teamId);
+        if (prev) {
+          notifyTeam(res.refundToPrevBidder.teamId, {
+            kind: 'lot-outbid',
+            x: res.auction.x, y: res.auction.y,
+            refund: res.refundToPrevBidder.amount,
+            newMoney: prev.money,
+          });
+        }
+      }
+      // Broadcast updated auction so every client sees the new high.
+      broadcast({ kind: 'lot-auction-update', auction: res.auction });
+      // Echo a money update to the bidder's other tabs.
+      notifyTeam(conn.teamId, { kind: 'team-money-updated', teamId: conn.teamId, money: res.newMoney });
+      return { kind: 'lot-bid-placed', auction: res.auction, newMoney: res.newMoney };
+    }
+
+    case 'upgrade-lot-apartment': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const res = reUpgradeApartment(db, conn.teamId, msg.lotId, msg.toTier);
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      const lot = reLoadLotDetail(db, msg.lotId)!;
+      return { kind: 'lot-updated', lot, newMoney: res.newMoney };
+    }
+
+    case 'buy-lot-car': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const res = reBuyCar(db, conn.teamId, msg.lotId, msg.carId);
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      const lot = reLoadLotDetail(db, msg.lotId)!;
+      return { kind: 'lot-updated', lot, newMoney: res.newMoney };
+    }
+
+    case 'sell-lot-car': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const res = reSellCar(db, conn.teamId, msg.lotId, msg.lotCarId);
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      const lot = reLoadLotDetail(db, msg.lotId)!;
+      return { kind: 'lot-updated', lot, newMoney: res.newMoney };
+    }
+
+    case 'buy-lot-luxury': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const res = reBuyLuxury(db, conn.teamId, msg.lotId, msg.itemId);
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      const lot = reLoadLotDetail(db, msg.lotId)!;
+      return { kind: 'lot-updated', lot, newMoney: res.newMoney };
+    }
+
+    case 'sell-lot-luxury': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const res = reSellLuxury(db, conn.teamId, msg.lotId, msg.lotLuxuryId);
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      const lot = reLoadLotDetail(db, msg.lotId)!;
+      return { kind: 'lot-updated', lot, newMoney: res.newMoney };
+    }
+
+    case 'lot-vault-deposit': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const res = reDepositVault(db, conn.teamId, msg.lotId, msg.amount);
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      const lot = reLoadLotDetail(db, msg.lotId)!;
+      return { kind: 'lot-updated', lot, newMoney: res.newMoney };
+    }
+
+    case 'lot-vault-withdraw': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const res = reWithdrawVault(db, conn.teamId, msg.lotId, msg.amount);
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      const lot = reLoadLotDetail(db, msg.lotId)!;
+      return { kind: 'lot-updated', lot, newMoney: res.newMoney };
+    }
+
+    case 'lot-assign-resident': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const res = reAssignResident(db, conn.teamId, msg.lotId, msg.playerId);
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      const lot = reLoadLotDetail(db, msg.lotId)!;
+      return { kind: 'lot-updated', lot, newMoney: res.newMoney };
+    }
+
+    case 'lot-evict-resident': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const res = reEvictResident(db, conn.teamId, msg.lotId, msg.playerId);
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      const lot = reLoadLotDetail(db, msg.lotId)!;
+      return { kind: 'lot-updated', lot, newMoney: res.newMoney };
     }
 
     // ---------- Phase 5: chat ----------

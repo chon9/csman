@@ -667,6 +667,194 @@ export interface AiBetTeamProfile {
 
 // ============ Daily quests + login streak ============
 
+// ============ Virtual real estate ============
+//
+// 1000×1000 grid of (x, y) plots. Any unowned cell can be bid on at a
+// $1M minimum; first bid spawns an auction with a 4-hour anti-snipe
+// countdown. Bid amount is escrowed at bid time and refunded when
+// outbid. Winner gets the lot.
+//
+// Owned lots act as a "trophy" surface — the owner can upgrade the
+// apartment tier (unlocks higher caps), park cars, deposit cash into a
+// vault, house players, and display luxury items. The lot's identity
+// strip carries the team logo + tag + MMR rank, making the map a live
+// flex board for everyone browsing.
+
+export const MAP_SIZE = 1000;
+export const LOT_MIN_OPENING_BID = 1_000_000;
+/** Min increment over current high bid (multiplicative). */
+export const LOT_BID_INCREMENT = 0.10;
+/** Anti-snipe countdown — each bid resets this. */
+export const LOT_AUCTION_DURATION_MS = 4 * 60 * 60 * 1000;
+
+export type ApartmentTier = 'studio' | 'loft' | 'penthouse' | 'mansion' | 'compound';
+
+export interface ApartmentTierMeta {
+  label: string;
+  /** Cost to UPGRADE INTO this tier (cumulative). Studio is the free default. */
+  upgradeCost: number;
+  carSlots: number;
+  residentSlots: number;
+  luxurySlots: number;
+  /** Cap on vault balance. -1 = unlimited. */
+  vaultCap: number;
+  color: string;
+  hint: string;
+}
+
+export const APARTMENT_TIER_META: Record<ApartmentTier, ApartmentTierMeta> = {
+  studio:    { label: 'Studio',     upgradeCost: 0,           carSlots: 1,  residentSlots: 1,  luxurySlots: 2,  vaultCap: 100_000,     color: '#8b93a3', hint: 'Default starter apartment included with every lot.' },
+  loft:      { label: 'Loft',       upgradeCost: 500_000,     carSlots: 3,  residentSlots: 2,  luxurySlots: 5,  vaultCap: 1_000_000,   color: '#6aa7ec', hint: 'Mid-tier — more garage, more wall space for trophies.' },
+  penthouse: { label: 'Penthouse',  upgradeCost: 2_000_000,   carSlots: 6,  residentSlots: 4,  luxurySlots: 10, vaultCap: 5_000_000,   color: '#9be29b', hint: 'Skyline view. Cars on display, players paid well.' },
+  mansion:   { label: 'Mansion',    upgradeCost: 10_000_000,  carSlots: 12, residentSlots: 8,  luxurySlots: 20, vaultCap: 25_000_000,  color: '#f2c443', hint: 'Estate-grade. Garage doubles as a showroom.' },
+  compound:  { label: 'Compound',   upgradeCost: 50_000_000,  carSlots: 25, residentSlots: 15, luxurySlots: 50, vaultCap: -1,          color: '#ff5fb0', hint: 'Top floor of the metaverse. Unlimited vault.' },
+};
+
+export const APARTMENT_TIER_ORDER: ApartmentTier[] = ['studio', 'loft', 'penthouse', 'mansion', 'compound'];
+
+/** Residents earn this much extra morale per day while housed (capped via existing player morale ceiling). */
+export const RESIDENT_DAILY_MORALE = 1;
+
+// ----- Car catalogue -----
+
+export type CarTier = 't1' | 't2' | 't3' | 't4';
+
+export interface CarCatalogEntry {
+  id: string;
+  brand: string;
+  model: string;
+  tier: CarTier;
+  price: number;
+  icon: string; // emoji
+  color: string;
+}
+
+export const CAR_CATALOG: CarCatalogEntry[] = [
+  // Tier 1 — daily-driver tier
+  { id: 'honda-civic',    brand: 'Honda',    model: 'Civic Type R',  tier: 't1', price: 80_000,    icon: '🚗', color: '#bcc3cd' },
+  { id: 'toyota-supra',   brand: 'Toyota',   model: 'Supra',         tier: 't1', price: 95_000,    icon: '🚗', color: '#bcc3cd' },
+  { id: 'mazda-mx5',      brand: 'Mazda',    model: 'MX-5 Miata',    tier: 't1', price: 70_000,    icon: '🚗', color: '#bcc3cd' },
+  // Tier 2 — premium sedan
+  { id: 'bmw-3',          brand: 'BMW',      model: '3 Series',      tier: 't2', price: 180_000,   icon: '🚙', color: '#6aa7ec' },
+  { id: 'audi-a4',        brand: 'Audi',     model: 'A4',            tier: 't2', price: 170_000,   icon: '🚙', color: '#6aa7ec' },
+  { id: 'mercedes-c',     brand: 'Mercedes', model: 'C-Class',       tier: 't2', price: 175_000,   icon: '🚙', color: '#6aa7ec' },
+  // Tier 3 — sports / EV
+  { id: 'tesla-s-plaid',  brand: 'Tesla',    model: 'Model S Plaid', tier: 't3', price: 250_000,   icon: '🏎', color: '#9be29b' },
+  { id: 'porsche-911',    brand: 'Porsche',  model: '911 GT3',       tier: 't3', price: 350_000,   icon: '🏎', color: '#9be29b' },
+  { id: 'bmw-m3',         brand: 'BMW',      model: 'M3 Competition',tier: 't3', price: 280_000,   icon: '🏎', color: '#9be29b' },
+  // Tier 4 — hypercar
+  { id: 'lambo-huracan',  brand: 'Lamborghini', model: 'Huracán',    tier: 't4', price: 800_000,   icon: '🏁', color: '#f2c443' },
+  { id: 'ferrari-488',    brand: 'Ferrari',  model: '488 GTB',       tier: 't4', price: 900_000,   icon: '🏁', color: '#f2c443' },
+  { id: 'bugatti-chiron', brand: 'Bugatti',  model: 'Chiron',        tier: 't4', price: 3_000_000, icon: '🏁', color: '#ff5fb0' },
+];
+
+export function findCar(id: string): CarCatalogEntry | null {
+  return CAR_CATALOG.find((c) => c.id === id) ?? null;
+}
+
+// ----- Luxury catalogue -----
+
+export type LuxuryTier = 'l1' | 'l2' | 'l3';
+
+export interface LuxuryCatalogEntry {
+  id: string;
+  label: string;
+  tier: LuxuryTier;
+  price: number;
+  icon: string;
+  color: string;
+}
+
+export const LUXURY_CATALOG: LuxuryCatalogEntry[] = [
+  { id: 'hennessy',       label: 'Hennessy Cognac',  tier: 'l1', price: 50_000,    icon: '🥃', color: '#bcc3cd' },
+  { id: 'gold-chain',     label: 'Gold Chain',       tier: 'l1', price: 75_000,    icon: '📿', color: '#bcc3cd' },
+  { id: 'gold-bar',       label: 'Gold Bar',         tier: 'l1', price: 100_000,   icon: '🟨', color: '#bcc3cd' },
+  { id: 'rolex',          label: 'Rolex Daytona',    tier: 'l2', price: 150_000,   icon: '⌚', color: '#6aa7ec' },
+  { id: 'vintage-wine',   label: 'Vintage Wine',     tier: 'l2', price: 200_000,   icon: '🍷', color: '#6aa7ec' },
+  { id: 'diamond-ring',   label: 'Diamond Ring',     tier: 'l2', price: 250_000,   icon: '💍', color: '#6aa7ec' },
+  { id: 'patek',          label: 'Patek Philippe',   tier: 'l3', price: 500_000,   icon: '⌚', color: '#9be29b' },
+  { id: 'diamond-necklace', label: 'Diamond Necklace', tier: 'l3', price: 1_000_000, icon: '💎', color: '#f2c443' },
+  { id: 'art-painting',   label: 'Modern Art',       tier: 'l3', price: 2_000_000, icon: '🖼', color: '#f2c443' },
+  { id: 'crown-jewel',    label: 'Crown Jewel',      tier: 'l3', price: 5_000_000, icon: '👑', color: '#ff5fb0' },
+];
+
+export function findLuxury(id: string): LuxuryCatalogEntry | null {
+  return LUXURY_CATALOG.find((l) => l.id === id) ?? null;
+}
+
+// ----- Wire types -----
+
+export interface LotAuctionWire {
+  id: string;
+  x: number;
+  y: number;
+  startedAt: number;
+  endsAt: number;
+  currentBid: number;
+  /** Tag of the current high bidder (or null if no bids yet — happens when
+   *  the first bidder's payment fails / on stale state). */
+  currentBidderTag: string | null;
+  currentBidderTeamId: string | null;
+  /** Convenience: true if `forTeamId` is the current high bidder. */
+  iAmHighBidder: boolean;
+  /** Minimum amount the next bid must exceed. */
+  minNextBid: number;
+}
+
+/** Slim wire-shape for the map view — list of owned-lot pins. */
+export interface LotMapPin {
+  x: number;
+  y: number;
+  ownerTeamId: string;
+  ownerTag: string;
+  ownerLogoId: string;
+  ownerColor: string;
+  /** Owner's MMR — drives the badge ring colour on the map. */
+  ownerMmr: number;
+  apartmentTier: ApartmentTier;
+}
+
+export interface LotCarWire {
+  id: number;
+  carId: string;
+  boughtAt: number;
+}
+
+export interface LotLuxuryWire {
+  id: number;
+  itemId: string;
+  boughtAt: number;
+}
+
+export interface LotResidentWire {
+  playerId: string;
+  movedInAt: number;
+}
+
+/** Full lot detail returned when the user opens a lot's modal. */
+export interface LotDetailWire {
+  id: string;
+  x: number;
+  y: number;
+  ownerTeamId: string;
+  ownerTag: string;
+  ownerName: string;
+  ownerLogoId: string;
+  ownerColor: string;
+  ownerMmr: number;
+  ownerPeakMmr: number;
+  ownerPlacementPlayed: number;
+  apartmentTier: ApartmentTier;
+  vaultBalance: number;
+  cars: LotCarWire[];
+  luxuries: LotLuxuryWire[];
+  residents: LotResidentWire[];
+  createdAt: number;
+  /** Bids placed historically on the auction that won this lot — small log
+   *  for the "purchase history" footer. Up to 20 entries. */
+  bidHistory: { bidderTag: string; amount: number; placedAt: number }[];
+}
+
 /** Quest difficulty drives both the target threshold and the cash payout. */
 export type QuestDifficulty = 'easy' | 'medium' | 'hard';
 
@@ -1436,6 +1624,21 @@ export type ClientMessage =
   | { kind: 'fetch-ai-bet-replay'; cardId: string }
   | { kind: 'fetch-ai-bet-team'; cardId: string; side: 'A' | 'B' }
   | { kind: 'list-my-ai-bet-history' }
+  // ----- Virtual real estate -----
+  | { kind: 'list-lot-map'; x0: number; y0: number; x1: number; y1: number }
+  | { kind: 'list-lot-auctions' }
+  | { kind: 'list-my-lots' }
+  | { kind: 'fetch-lot-detail'; x: number; y: number }
+  | { kind: 'place-lot-bid'; x: number; y: number; amount: number }
+  | { kind: 'upgrade-lot-apartment'; lotId: string; toTier: ApartmentTier }
+  | { kind: 'buy-lot-car'; lotId: string; carId: string }
+  | { kind: 'sell-lot-car'; lotId: string; lotCarId: number }
+  | { kind: 'buy-lot-luxury'; lotId: string; itemId: string }
+  | { kind: 'sell-lot-luxury'; lotId: string; lotLuxuryId: number }
+  | { kind: 'lot-vault-deposit'; lotId: string; amount: number }
+  | { kind: 'lot-vault-withdraw'; lotId: string; amount: number }
+  | { kind: 'lot-assign-resident'; lotId: string; playerId: string }
+  | { kind: 'lot-evict-resident'; lotId: string; playerId: string }
   // ----- MMR rank leaderboard -----
   | { kind: 'list-ranked-leaderboard' }
   // ----- Contract renewal: extend a starter's duels-remaining -----
@@ -1532,6 +1735,17 @@ export type ServerMessage =
   | { kind: 'ai-bet-card-update'; card: AiMatchCardWire }
   | { kind: 'ai-bet-team'; cardId: string; side: 'A' | 'B'; profile: AiBetTeamProfile }
   | { kind: 'ai-bet-my-history'; entries: AiBetHistoryEntry[] }
+  // ----- Real estate -----
+  | { kind: 'lot-map'; pins: LotMapPin[] }
+  | { kind: 'lot-auctions'; auctions: LotAuctionWire[] }
+  | { kind: 'my-lots'; lots: LotMapPin[] }
+  | { kind: 'lot-detail'; lot: LotDetailWire }
+  | { kind: 'lot-bid-placed'; auction: LotAuctionWire; newMoney: number }
+  | { kind: 'lot-outbid'; x: number; y: number; refund: number; newMoney: number }
+  | { kind: 'lot-auction-won'; lot: LotDetailWire; newMoney: number }
+  | { kind: 'lot-auction-lost'; x: number; y: number; refund: number; newMoney: number }
+  | { kind: 'lot-auction-update'; auction: LotAuctionWire }
+  | { kind: 'lot-updated'; lot: LotDetailWire; newMoney: number }
   | { kind: 'ranked-leaderboard'; rows: RankedLeaderRow[] }
   | { kind: 'loan-offers'; incoming: LoanOffer[]; outgoing: LoanOffer[] }
   | { kind: 'loan-event'; loan: LoanOffer }
@@ -1591,7 +1805,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 39;
+export const PROTOCOL_VERSION = 40;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

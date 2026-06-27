@@ -53,11 +53,15 @@ import type {
   AiMatchCardWire,
   AiBetTeamProfile,
   AiBetHistoryEntry,
+  ApartmentTier,
+  LotAuctionWire,
+  LotDetailWire,
+  LotMapPin,
 } from './protocol';
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets' | 'real-estate';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -269,6 +273,13 @@ interface OnlineState {
   /** Currently-viewed synthetic team profile (modal). Null = dismissed. */
   aiBetTeamView: { cardId: string; side: 'A' | 'B'; profile: AiBetTeamProfile } | null;
 
+  // ----- Virtual real estate -----
+  lotMapPins: LotMapPin[];
+  lotAuctions: LotAuctionWire[];
+  myLots: LotMapPin[];
+  /** Currently-open lot detail modal (or null). */
+  viewingLot: LotDetailWire | null;
+
   // ----- UI -----
   screen: OnlineScreen;
   errorBanner: string | null;
@@ -414,6 +425,22 @@ interface OnlineState {
   fetchAiBetReplay: (cardId: string) => void;
   fetchAiBetTeam: (cardId: string, side: 'A' | 'B') => void;
   dismissAiBetTeam: () => void;
+  // Real estate
+  fetchLotMap: (x0: number, y0: number, x1: number, y1: number) => void;
+  fetchLotAuctions: () => void;
+  fetchMyLots: () => void;
+  fetchLotDetail: (x: number, y: number) => void;
+  dismissLotDetail: () => void;
+  placeLotBid: (x: number, y: number, amount: number) => void;
+  upgradeLotApartment: (lotId: string, toTier: ApartmentTier) => void;
+  buyLotCar: (lotId: string, carId: string) => void;
+  sellLotCar: (lotId: string, lotCarId: number) => void;
+  buyLotLuxury: (lotId: string, itemId: string) => void;
+  sellLotLuxury: (lotId: string, lotLuxuryId: number) => void;
+  lotVaultDeposit: (lotId: string, amount: number) => void;
+  lotVaultWithdraw: (lotId: string, amount: number) => void;
+  assignLotResident: (lotId: string, playerId: string) => void;
+  evictLotResident: (lotId: string, playerId: string) => void;
 }
 
 let nextToastId = 1;
@@ -505,6 +532,10 @@ export const useOnline = create<OnlineState>((set, get) => ({
   aiBetCards: [],
   aiBetMyHistory: [],
   aiBetTeamView: null,
+  lotMapPins: [],
+  lotAuctions: [],
+  myLots: [],
+  viewingLot: null,
   screen: 'connect',
   errorBanner: null,
   toasts: [],
@@ -1374,6 +1405,79 @@ export const useOnline = create<OnlineState>((set, get) => ({
           set({ aiBetMyHistory: msg.entries });
           break;
         }
+        case 'lot-map': {
+          set({ lotMapPins: msg.pins });
+          break;
+        }
+        case 'lot-auctions': {
+          set({ lotAuctions: msg.auctions });
+          break;
+        }
+        case 'my-lots': {
+          set({ myLots: msg.lots });
+          break;
+        }
+        case 'lot-detail': {
+          set({ viewingLot: msg.lot });
+          break;
+        }
+        case 'lot-bid-placed': {
+          const t = get().team;
+          if (t) set({ team: { ...t, money: msg.newMoney } });
+          pushToast('success', `Bid placed at (${msg.auction.x},${msg.auction.y}) — escrow $${msg.auction.currentBid.toLocaleString()}.`);
+          // Refresh the auctions list so the new state lands cleanly.
+          client.send({ kind: 'list-lot-auctions' });
+          break;
+        }
+        case 'lot-outbid': {
+          const t = get().team;
+          if (t) set({ team: { ...t, money: msg.newMoney } });
+          pushToast('warn', `Outbid at (${msg.x},${msg.y}) — escrow refunded $${msg.refund.toLocaleString()}.`);
+          client.send({ kind: 'list-lot-auctions' });
+          break;
+        }
+        case 'lot-auction-won': {
+          const t = get().team;
+          if (t) set({ team: { ...t, money: msg.newMoney } });
+          pushToast('success', `🏆 You won lot (${msg.lot.x},${msg.lot.y})!`);
+          client.send({ kind: 'list-lot-auctions' });
+          client.send({ kind: 'list-my-lots' });
+          break;
+        }
+        case 'lot-auction-lost': {
+          const t = get().team;
+          if (t) set({ team: { ...t, money: msg.newMoney } });
+          pushToast('warn', `Auction at (${msg.x},${msg.y}) ended — escrow refunded $${msg.refund.toLocaleString()}.`);
+          client.send({ kind: 'list-lot-auctions' });
+          break;
+        }
+        case 'lot-auction-update': {
+          // Patch in place if we have it.
+          const existing = get().lotAuctions;
+          const idx = existing.findIndex((a) => a.id === msg.auction.id);
+          if (idx >= 0) {
+            // endsAt=0 means "this auction closed" — drop it.
+            if (msg.auction.endsAt === 0) {
+              set({ lotAuctions: existing.filter((_, i) => i !== idx) });
+            } else {
+              const next = existing.slice();
+              next[idx] = msg.auction;
+              set({ lotAuctions: next });
+            }
+          } else if (msg.auction.endsAt > 0) {
+            set({ lotAuctions: [...existing, msg.auction] });
+          }
+          break;
+        }
+        case 'lot-updated': {
+          const t = get().team;
+          if (t) set({ team: { ...t, money: msg.newMoney } });
+          // If the modal is currently viewing this lot, refresh it.
+          if (get().viewingLot?.id === msg.lot.id) set({ viewingLot: msg.lot });
+          // My-lots list might need a tier color refresh.
+          client.send({ kind: 'list-my-lots' });
+          break;
+        }
         case 'team-deleted-by-admin': {
           pushToast('warn', 'Your team was removed by an admin.');
           set({ team: null, players: {}, screen: 'create-team' });
@@ -1863,5 +1967,52 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   dismissAiBetTeam() {
     set({ aiBetTeamView: null });
+  },
+
+  // Real estate
+  fetchLotMap(x0, y0, x1, y1) {
+    get().client?.send({ kind: 'list-lot-map', x0, y0, x1, y1 });
+  },
+  fetchLotAuctions() {
+    get().client?.send({ kind: 'list-lot-auctions' });
+  },
+  fetchMyLots() {
+    get().client?.send({ kind: 'list-my-lots' });
+  },
+  fetchLotDetail(x, y) {
+    get().client?.send({ kind: 'fetch-lot-detail', x, y });
+  },
+  dismissLotDetail() {
+    set({ viewingLot: null });
+  },
+  placeLotBid(x, y, amount) {
+    get().client?.send({ kind: 'place-lot-bid', x, y, amount });
+  },
+  upgradeLotApartment(lotId, toTier) {
+    get().client?.send({ kind: 'upgrade-lot-apartment', lotId, toTier });
+  },
+  buyLotCar(lotId, carId) {
+    get().client?.send({ kind: 'buy-lot-car', lotId, carId });
+  },
+  sellLotCar(lotId, lotCarId) {
+    get().client?.send({ kind: 'sell-lot-car', lotId, lotCarId });
+  },
+  buyLotLuxury(lotId, itemId) {
+    get().client?.send({ kind: 'buy-lot-luxury', lotId, itemId });
+  },
+  sellLotLuxury(lotId, lotLuxuryId) {
+    get().client?.send({ kind: 'sell-lot-luxury', lotId, lotLuxuryId });
+  },
+  lotVaultDeposit(lotId, amount) {
+    get().client?.send({ kind: 'lot-vault-deposit', lotId, amount });
+  },
+  lotVaultWithdraw(lotId, amount) {
+    get().client?.send({ kind: 'lot-vault-withdraw', lotId, amount });
+  },
+  assignLotResident(lotId, playerId) {
+    get().client?.send({ kind: 'lot-assign-resident', lotId, playerId });
+  },
+  evictLotResident(lotId, playerId) {
+    get().client?.send({ kind: 'lot-evict-resident', lotId, playerId });
   },
 }));
