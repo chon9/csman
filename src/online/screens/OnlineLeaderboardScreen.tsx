@@ -8,8 +8,9 @@ import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import ToastStack from './ToastStack';
 import { TeamTag } from './TeamProfileModal';
+import RankBadge from './RankBadge';
 
-type Tab = 'pvp' | 'overall';
+type Tab = 'rank' | 'pvp' | 'overall';
 
 function fmtDuration(ms: number): string {
   if (ms <= 0) return 'now';
@@ -44,16 +45,19 @@ export default function OnlineLeaderboardScreen() {
   const me = useOnline((s) => s.myStandings);
   const pvpRows = useOnline((s) => s.pvpLeaderRows);
   const myPvp = useOnline((s) => s.myPvpStandings);
+  const rankedRows = useOnline((s) => s.rankedLeaderRows);
   const refresh = useOnline((s) => s.refreshLeaderboard);
+  const refreshRanked = useOnline((s) => s.refreshRankedLeaderboard);
   const go = useOnline((s) => s.go);
 
-  const [tab, setTab] = useState<Tab>('pvp');
+  const [tab, setTab] = useState<Tab>('rank');
 
   useEffect(() => {
     refresh();
-    const id = setInterval(() => refresh(), 10_000);
+    refreshRanked();
+    const id = setInterval(() => { refresh(); refreshRanked(); }, 10_000);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [refresh, refreshRanked]);
 
   if (!team) return null;
   const myOverallRow = rows.find((r) => r.teamId === team.id);
@@ -81,11 +85,18 @@ export default function OnlineLeaderboardScreen() {
       {/* ===== Tab strip ===== */}
       <div className="panel" style={{ padding: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         <button
+          className={`btn ${tab === 'rank' ? 'btn-accent' : ''}`}
+          onClick={() => setTab('rank')}
+          style={{ flex: '1 1 160px', padding: '10px 14px' }}
+        >
+          🏅 Rank Ladder <span className="muted small">{rankedRows.length}</span>
+        </button>
+        <button
           className={`btn ${tab === 'pvp' ? 'btn-accent' : ''}`}
           onClick={() => setTab('pvp')}
           style={{ flex: '1 1 160px', padding: '10px 14px' }}
         >
-          ⚔ PvP Only <span className="muted small">{pvpRows.length}</span>
+          ⚔ PvP Season <span className="muted small">{pvpRows.length}</span>
         </button>
         <button
           className={`btn ${tab === 'overall' ? 'btn-accent' : ''}`}
@@ -95,6 +106,62 @@ export default function OnlineLeaderboardScreen() {
           📊 Overall (AI + PvP) <span className="muted small">{rows.length}</span>
         </button>
       </div>
+
+      {/* ===== Rank ladder tab ===== */}
+      {tab === 'rank' && (
+        <>
+          <div
+            className="panel"
+            style={{
+              padding: 14,
+              background: 'linear-gradient(135deg, rgba(255,215,0,0.10), rgba(75,105,255,0.08))',
+              border: '1px solid rgba(255,215,0,0.30)',
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#f4c970', letterSpacing: 0.5 }}>
+              🏅 Hidden-MMR ladder · Silver I → Global Elite
+            </div>
+            <div className="muted small" style={{ marginTop: 4 }}>
+              Every PvP duel adjusts MMR Elo-style based on the opponent's rating. AI duels DO NOT count. Beat someone higher-rated → bigger gain. Lose to someone lower → bigger drop. New teams play 5 placement duels with doubled K-factor.
+            </div>
+          </div>
+
+          <div className="panel" style={{ padding: 14 }}>
+            <div className="panel-title">Top Ranked Teams</div>
+            {rankedRows.length === 0 ? (
+              <div className="muted small">No ranked teams yet. Win a PvP duel to enter the ladder.</div>
+            ) : (
+              <table className="table table-dense">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Team</th>
+                    <th>Name</th>
+                    <th>Rank</th>
+                    <th className="num">MMR</th>
+                    <th className="num">Peak</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rankedRows.map((r) => {
+                    const isMe = r.teamId === team.id;
+                    return (
+                      <tr key={r.teamId} className={isMe ? 'row-user' : ''}>
+                        <td><strong>{rankBadge(r.rank)}</strong></td>
+                        <td><TeamTag teamId={r.teamId} tag={r.teamTag} /></td>
+                        <td className="muted">{r.teamName}</td>
+                        <td><RankBadge mmr={r.mmr} placementMatchesPlayed={r.placementMatchesPlayed} size="compact" /></td>
+                        <td className="num"><strong>{r.mmr}</strong></td>
+                        <td className="num muted">{r.peakMmr}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      )}
 
       {/* ===== PvP tab ===== */}
       {tab === 'pvp' && (

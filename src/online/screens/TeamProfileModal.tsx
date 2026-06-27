@@ -7,6 +7,7 @@
 import { useOnline } from '../onlineStore';
 import type { PublicPlayer, PublicTeamProfile } from '../protocol';
 import { PlayerName } from './PlayerProfileModal';
+import RankBadge from './RankBadge';
 
 /** Clickable team-tag chip — drops into any screen that shows a team
  *  tag, fires fetchTeamProfile on click. Renders the tag in the team's
@@ -68,6 +69,12 @@ export default function TeamProfileModal(): React.ReactElement | null {
                 </h3>
                 <div className="muted small">
                   {profile.region} · owned by <strong>{profile.ownerNick}</strong> · {profile.ageInDays}d old
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  <RankBadge mmr={profile.mmr} placementMatchesPlayed={undefined} size="full" />
+                  {typeof profile.peakMmr === 'number' && typeof profile.mmr === 'number' && profile.peakMmr > profile.mmr && (
+                    <span className="muted small" style={{ marginLeft: 8 }}>peak {profile.peakMmr}</span>
+                  )}
                 </div>
               </div>
             </div>

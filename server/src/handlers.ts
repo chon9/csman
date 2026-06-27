@@ -150,6 +150,38 @@ function tryUnlock(
   if (total >= 30) tryUnlock(db, notifyTeam, teamId, 'collector_30', ACHIEVEMENT_LABELS.collector_30, total);
 }
 
+/** Compute + apply MMR change to both sides of a PvP duel. Returns the
+ *  numbers the result-modal banners need. Mutates the passed TeamRow
+ *  copies so downstream code sees the updated mmr. */
+function applyPvpMmr(
+  db: DB,
+  winner: TeamRow,
+  loser: TeamRow,
+): {
+  winnerDelta: number; loserDelta: number;
+  winnerNewMmr: number; loserNewMmr: number;
+  winnerWasPlacement: boolean; loserWasPlacement: boolean;
+} {
+  const wMmr = winner.mmr ?? 1000;
+  const lMmr = loser.mmr ?? 1000;
+  const wInPlace = (winner.placementMatchesPlayed ?? 0) < PLACEMENT_MATCHES;
+  const lInPlace = (loser.placementMatchesPlayed ?? 0) < PLACEMENT_MATCHES;
+  const winnerDelta = eloDelta(wMmr, lMmr, true, wInPlace);
+  const loserDelta = eloDelta(lMmr, wMmr, false, lInPlace);
+  const winnerNewMmr = Math.max(0, wMmr + winnerDelta);
+  const loserNewMmr = Math.max(0, lMmr + loserDelta);
+  db.applyMmrChange(winner.id, winnerNewMmr);
+  db.applyMmrChange(loser.id, loserNewMmr);
+  winner.mmr = winnerNewMmr;
+  loser.mmr = loserNewMmr;
+  return {
+    winnerDelta, loserDelta,
+    winnerNewMmr, loserNewMmr,
+    winnerWasPlacement: wInPlace,
+    loserWasPlacement: lInPlace,
+  };
+}
+
 /** Run the full post-duel achievement gauntlet for one winning team. Covers
  *  career-win ladder, PvP-only ladder, streaks, bankroll, current-cash
  *  thresholds, perfect maps, and giant-slayer / underdog flags. Idempotent —
@@ -266,6 +298,7 @@ import { applyAutoTicks, nextAutoTickUtcMs } from './autoTick.ts';
 import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorPayouts } from './serverTick.ts';
 import { bumpQuestProgress, ensureTodayQuests, tickLoginStreak, utcToday } from './dailyQuests.ts';
 import { QUEST_ALL_DONE_BONUS, questStreakMultiplier } from '../../src/online/protocol.ts';
+import { PLACEMENT_MATCHES, eloDelta } from '../../src/online/protocol.ts';
 import {
   buildTournamentDetail,
   createTournament,
@@ -600,6 +633,14 @@ function teamRowToOnline(row: TeamRow): OnlineTeam {
     createdAt: row.createdAt,
     playerIds: row.playerIds,
     tactics: row.tactics ?? {},
+    bio: row.bio,
+    primaryColor: row.primaryColor,
+    twitchUrl: row.twitchUrl,
+    twitterUrl: row.twitterUrl,
+    youtubeUrl: row.youtubeUrl,
+    mmr: row.mmr,
+    peakMmr: row.peakMmr,
+    placementMatchesPlayed: row.placementMatchesPlayed,
   };
 }
 
@@ -1264,6 +1305,17 @@ export function handle(
         if (winnerAvgCA + 4 < loserAvgCA) bumpQuestProgress(db, winnerTeam.id, 'underdog_pvp');
       }
 
+      // MMR / rank ladder — both sides shift Elo-style.
+      const challengerWon2 = duel.winnerTeamId === challenger.id;
+      const mmrSwing = applyPvpMmr(db,
+        challengerWon2 ? challenger : accepter,
+        challengerWon2 ? accepter : challenger,
+      );
+      const challengerMmrDelta = challengerWon2 ? mmrSwing.winnerDelta : mmrSwing.loserDelta;
+      const accepterMmrDelta = challengerWon2 ? mmrSwing.loserDelta : mmrSwing.winnerDelta;
+      const challengerPlacement = challengerWon2 ? mmrSwing.winnerWasPlacement : mmrSwing.loserWasPlacement;
+      const accepterPlacement = challengerWon2 ? mmrSwing.loserWasPlacement : mmrSwing.winnerWasPlacement;
+
       // Push duel-result to BOTH sides. The challenger sees it via notifyTeam;
       // the accepter (= this connection) gets it as the reply below.
       const accepterWon = duel.winnerTeamId === accepter.id;
@@ -1286,6 +1338,9 @@ export function handle(
         opponentTag: accepter.tag,
         opponentTeamId: accepter.id,
         lockedReplay: true,
+        mmrDelta: challengerMmrDelta,
+        newMmr: challenger.mmr,
+        wasPlacement: challengerPlacement,
         moneyDelta: accepterWon ? -challenge.stake : challenge.stake,
         newMoney: challenger.money,
         summary: accepterWon
@@ -1300,6 +1355,9 @@ export function handle(
         opponentTag: challenger.tag,
         opponentTeamId: challenger.id,
         lockedReplay: true,
+        mmrDelta: accepterMmrDelta,
+        newMmr: accepter.mmr,
+        wasPlacement: accepterPlacement,
         moneyDelta: accepterWon ? challenge.stake : -challenge.stake,
         newMoney: accepter.money,
         summary: accepterWon
@@ -1542,6 +1600,16 @@ export function handle(
         if (winnerAvgCA + 4 < loserAvgCA) bumpQuestProgress(db, winnerTeam.id, 'underdog_pvp');
       }
 
+      // MMR / rank ladder — both sides shift Elo-style.
+      const mmrSwingQ = applyPvpMmr(db,
+        meWon ? me : opp,
+        meWon ? opp : me,
+      );
+      const myMmrDelta = meWon ? mmrSwingQ.winnerDelta : mmrSwingQ.loserDelta;
+      const oppMmrDelta = meWon ? mmrSwingQ.loserDelta : mmrSwingQ.winnerDelta;
+      const myPlacement = meWon ? mmrSwingQ.winnerWasPlacement : mmrSwingQ.loserWasPlacement;
+      const oppPlacement = meWon ? mmrSwingQ.loserWasPlacement : mmrSwingQ.winnerWasPlacement;
+
       // Push the duel-result to opponent + news headline at high stake.
       const myLineupIds = myStarters.map((p) => p.id);
       const oppLineupIds = oppPlayers.slice(0, 5).map((p) => p.id);
@@ -1558,6 +1626,9 @@ export function handle(
         opponentTag: opp.tag,
         opponentTeamId: opp.id,
         lockedReplay: true,
+        mmrDelta: myMmrDelta,
+        newMmr: me.mmr,
+        wasPlacement: myPlacement,
         moneyDelta: myDelta,
         newMoney: me.money,
         summary: meWon
@@ -1572,6 +1643,9 @@ export function handle(
         opponentTag: me.tag,
         opponentTeamId: me.id,
         lockedReplay: true,
+        mmrDelta: oppMmrDelta,
+        newMmr: opp.mmr,
+        wasPlacement: oppPlacement,
         moneyDelta: oppDelta,
         newMoney: opp.money,
         summary: meWon
@@ -2785,6 +2859,13 @@ export function handle(
       return { kind: 'leaderboard', season, rows, me, pvpRows, myPvp };
     }
 
+    case 'list-ranked-leaderboard': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const raw = db.loadMmrLeaderboard();
+      const rows = raw.map((r, i) => ({ rank: i + 1, ...r }));
+      return { kind: 'ranked-leaderboard', rows };
+    }
+
     // ---------- Phase 5: live replays ----------
 
     case 'fetch-live-replay': {
@@ -3022,6 +3103,8 @@ export function handle(
           pvpLosses: pvpStandings.pvpLosses,
           achievementsUnlocked,
           ageInDays,
+          mmr: target.mmr,
+          peakMmr: target.peakMmr,
         },
       };
     }

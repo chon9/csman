@@ -7,6 +7,7 @@ import { useOnline } from '../onlineStore';
 import type { OnlineScreen } from '../onlineStore';
 import { publicOrigin } from '../serverUrl';
 import { formatGameAge } from '../dateHelpers';
+import RankBadge from './RankBadge';
 
 interface NavItem {
   id: OnlineScreen;
@@ -71,6 +72,11 @@ export default function OnlineSidebar(): React.ReactElement {
             <span className={`osb-dot osb-dot-${status}`} />
             {status} · {onlineTeams} online
           </div>
+          {team && (
+            <div style={{ marginTop: 6 }}>
+              <RankBadge mmr={team.mmr} placementMatchesPlayed={team.placementMatchesPlayed} size="full" showProgress />
+            </div>
+          )}
         </div>
       </div>
 

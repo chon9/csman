@@ -27,6 +27,10 @@ export interface TeamRow {
   twitchUrl: string;
   twitterUrl: string;
   youtubeUrl: string;
+  /** Competitive PvP MMR. Seeded at 1000 on first load. */
+  mmr: number;
+  peakMmr: number;
+  placementMatchesPlayed: number;
 }
 
 /** Profile fields editable on the home customisation modal. */
@@ -354,6 +358,14 @@ export function openDb(path: string) {
   // All-done bonus paid out for which UTC date — claim-all-done-bonus is
   // gated to once per day per team.
   tryAddColumn('teams', 'all_done_bonus_date', 'TEXT', "''");
+  // Competitive MMR ladder. mmr seeds at the protocol's STARTING_MMR
+  // value (1000 = Silver Elite Master). peak_mmr is the highest mmr the
+  // team has ever held (trophy stat that survives any future reset).
+  // placement_matches_played increments on every PvP duel and doubles
+  // the K-factor while < PLACEMENT_MATCHES.
+  tryAddColumn('teams', 'mmr', 'INTEGER', '1000');
+  tryAddColumn('teams', 'peak_mmr', 'INTEGER', '1000');
+  tryAddColumn('teams', 'placement_matches_played', 'INTEGER', '0');
 
   // Daily quests table — one row per (team, utcDate, quest). Generation
   // is deterministic (seeded by team+date) so rolling lazily on demand
@@ -612,6 +624,38 @@ export function openDb(path: string) {
     const r = getLifetimeStreams.get(teamId) as { lifetime_streams: number | null } | undefined;
     return r?.lifetime_streams ?? 0;
   }
+  // -------- MMR ladder --------
+
+  const updateMmrRow = db.prepare(
+    `UPDATE teams SET mmr = ?, peak_mmr = MAX(COALESCE(peak_mmr, 0), ?), placement_matches_played = COALESCE(placement_matches_played, 0) + 1 WHERE id = ?`,
+  );
+  /** Set a team's new MMR; bumps peak + placement-match counter. */
+  function applyMmrChange(teamId: string, newMmr: number): void {
+    updateMmrRow.run(newMmr, newMmr, teamId);
+  }
+
+  const rankedLeaderboardStmt = db.prepare(
+    `SELECT id, tag, name, region, mmr, peak_mmr, placement_matches_played
+     FROM teams
+     WHERE mmr IS NOT NULL
+     ORDER BY mmr DESC, peak_mmr DESC
+     LIMIT 100`,
+  );
+  function loadMmrLeaderboard(): Array<{
+    teamId: string; teamTag: string; teamName: string; region: string;
+    mmr: number; peakMmr: number; placementMatchesPlayed: number;
+  }> {
+    const rows = rankedLeaderboardStmt.all() as Array<{
+      id: string; tag: string; name: string; region: string;
+      mmr: number | null; peak_mmr: number | null; placement_matches_played: number | null;
+    }>;
+    return rows.map((r) => ({
+      teamId: r.id, teamTag: r.tag, teamName: r.name, region: r.region,
+      mmr: r.mmr ?? 1000, peakMmr: r.peak_mmr ?? 1000,
+      placementMatchesPlayed: r.placement_matches_played ?? 0,
+    }));
+  }
+
   function recordTournamentWin(teamId: string): number {
     bumpLifetimeTournamentsWon.run(teamId);
     const r = getLifetimeTournamentsWon.get(teamId) as { lifetime_tournaments_won: number | null } | undefined;
@@ -934,6 +978,9 @@ export function openDb(path: string) {
       twitchUrl: (row.twitch_url as string | null) ?? '',
       twitterUrl: (row.twitter_url as string | null) ?? '',
       youtubeUrl: (row.youtube_url as string | null) ?? '',
+      mmr: (row.mmr as number | null) ?? 1000,
+      peakMmr: (row.peak_mmr as number | null) ?? 1000,
+      placementMatchesPlayed: (row.placement_matches_played as number | null) ?? 0,
     };
   }
 
@@ -2116,6 +2163,8 @@ export function openDb(path: string) {
     loadDailyQuest,
     bumpDailyQuestProgress,
     claimDailyQuest,
+    applyMmrChange,
+    loadMmrLeaderboard,
     getAutoTickAnchor,
     setAutoTickAnchor,
     getLastMassageDay,

@@ -4,6 +4,7 @@
 
 import { useOnline } from '../onlineStore';
 import type { DuelOutcome } from '../protocol';
+import { rankForMmr } from '../protocol';
 import { TeamTag } from './TeamProfileModal';
 
 export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
@@ -54,9 +55,18 @@ export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
           <div className="muted small" style={{ marginBottom: 4 }}>
             {result.maps.map((m) => `${m.map} ${m.scoreA}-${m.scoreB}`).join('  •  ')}
           </div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: won ? '#6ed09a' : '#e25555', marginBottom: 12 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: won ? '#6ed09a' : '#e25555', marginBottom: 4 }}>
             {outcome.moneyDelta > 0 ? '+' : ''}${outcome.moneyDelta.toLocaleString()} → balance ${outcome.newMoney.toLocaleString()}
           </div>
+          {typeof outcome.mmrDelta === 'number' && typeof outcome.newMmr === 'number' && (
+            <div style={{ marginBottom: 12, fontSize: 13 }}>
+              <span style={{ color: outcome.mmrDelta >= 0 ? '#6ed09a' : '#e25555', fontWeight: 700 }}>
+                MMR {outcome.mmrDelta >= 0 ? '+' : ''}{outcome.mmrDelta}
+              </span>
+              {' '}<span className="muted small">→ {outcome.newMmr} ({rankForMmr(outcome.newMmr).name})</span>
+              {outcome.wasPlacement && <span className="muted small" style={{ marginLeft: 6 }}>· 2× placement K</span>}
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <SidePanel title={team.tag} rows={ourSide} resolveName={(id) => players[id]?.nickname ?? id} />

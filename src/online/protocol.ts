@@ -32,6 +32,12 @@ export interface OnlineTeam {
   twitchUrl?: string;
   twitterUrl?: string;
   youtubeUrl?: string;
+  /** Competitive MMR (PvP only). 1000 = Silver Elite Master. */
+  mmr?: number;
+  /** All-time peak MMR. Used as a "best rank" trophy stat. */
+  peakMmr?: number;
+  /** PvP duels played — drives placement-match status. */
+  placementMatchesPlayed?: number;
 }
 
 // ============ Phase 8: achievements + loans ============
@@ -101,6 +107,9 @@ export interface PublicTeamProfile {
   achievementsUnlocked: number;
   /** Days since team creation. Aesthetic flavor for the profile header. */
   ageInDays: number;
+  /** Competitive MMR + peak — same fields as OnlineTeam, shown public. */
+  mmr?: number;
+  peakMmr?: number;
 }
 
 // ============ Daily bonus + case opening ============
@@ -387,6 +396,86 @@ export interface MinesResult {
   bustTileIndex?: number;
   /** How many safe tiles the user revealed before the round ended. */
   safePicks: number;
+}
+
+// ============ MMR rank ladder ============
+//
+// CS:GO-style competitive rank tiers driven by hidden MMR. Every PvP
+// duel adjusts both sides' MMR Elo-style based on the opponent's MMR
+// (AI duels do NOT touch MMR — the ladder is purely competitive). New
+// teams start at MMR 1000 (Silver Elite Master) with PLACEMENT_MATCHES
+// of doubled-K games to sort them quickly into a real bucket.
+
+/** Starting MMR for a fresh team. Roughly mid-table. */
+export const STARTING_MMR = 1000;
+/** Number of PvP duels with doubled K-factor so new teams sort quickly. */
+export const PLACEMENT_MATCHES = 5;
+/** Elo K-factor for established players. Doubled during placement. */
+export const ELO_K = 32;
+
+export interface RankTier {
+  name: string;
+  /** Lower MMR bound (inclusive). Ordered ascending. */
+  minMmr: number;
+  color: string;
+  /** Short label used on the badge chip. */
+  short: string;
+}
+
+/** Visible rank ladder. Mirrors CS2's classic ranks — 18 tiers from
+ *  Silver I (open) to Global Elite (1900+ MMR). */
+export const RANK_LADDER: RankTier[] = [
+  { name: 'Silver I',                    short: 'S1',   minMmr: 0,    color: '#9aa0aa' },
+  { name: 'Silver II',                   short: 'S2',   minMmr: 800,  color: '#9aa0aa' },
+  { name: 'Silver III',                  short: 'S3',   minMmr: 860,  color: '#9aa0aa' },
+  { name: 'Silver IV',                   short: 'S4',   minMmr: 920,  color: '#9aa0aa' },
+  { name: 'Silver Elite',                short: 'SE',   minMmr: 980,  color: '#b8c4d6' },
+  { name: 'Silver Elite Master',         short: 'SEM',  minMmr: 1040, color: '#b8c4d6' },
+  { name: 'Gold Nova I',                 short: 'GN1',  minMmr: 1100, color: '#d8a14b' },
+  { name: 'Gold Nova II',                short: 'GN2',  minMmr: 1160, color: '#d8a14b' },
+  { name: 'Gold Nova III',               short: 'GN3',  minMmr: 1220, color: '#d8a14b' },
+  { name: 'Gold Nova Master',            short: 'GNM',  minMmr: 1280, color: '#f4c970' },
+  { name: 'Master Guardian I',           short: 'MG1',  minMmr: 1340, color: '#4b69ff' },
+  { name: 'Master Guardian II',          short: 'MG2',  minMmr: 1400, color: '#4b69ff' },
+  { name: 'Master Guardian Elite',       short: 'MGE',  minMmr: 1460, color: '#3b7be0' },
+  { name: 'Distinguished Master Guardian', short: 'DMG',minMmr: 1520, color: '#8847ff' },
+  { name: 'Legendary Eagle',             short: 'LE',   minMmr: 1600, color: '#d32ce6' },
+  { name: 'Legendary Eagle Master',      short: 'LEM',  minMmr: 1680, color: '#d32ce6' },
+  { name: 'Supreme Master First Class',  short: 'SMFC', minMmr: 1780, color: '#eb4b4b' },
+  { name: 'Global Elite',                short: 'GE',   minMmr: 1900, color: '#ffd700' },
+];
+
+/** Resolve an MMR value to its current rank tier. Returns the LAST tier
+ *  whose minMmr the value clears. */
+export function rankForMmr(mmr: number): RankTier {
+  let current = RANK_LADDER[0]!;
+  for (const tier of RANK_LADDER) {
+    if (mmr >= tier.minMmr) current = tier;
+    else break;
+  }
+  return current;
+}
+
+/** Distance (in MMR) from the current rank's floor to the next rank's
+ *  floor — drives the progress bar under the badge. */
+export function nextRankProgress(mmr: number): { current: RankTier; next: RankTier | null; pct: number; mmrToNext: number } {
+  const current = rankForMmr(mmr);
+  const idx = RANK_LADDER.findIndex((t) => t === current);
+  const next = idx < RANK_LADDER.length - 1 ? RANK_LADDER[idx + 1]! : null;
+  if (!next) return { current, next: null, pct: 100, mmrToNext: 0 };
+  const span = next.minMmr - current.minMmr;
+  const into = Math.max(0, mmr - current.minMmr);
+  const pct = Math.max(0, Math.min(100, Math.round((into / span) * 100)));
+  return { current, next, pct, mmrToNext: Math.max(0, next.minMmr - mmr) };
+}
+
+/** Elo-style MMR delta for the winner against an opponent. Caller flips
+ *  the sign for the loser side. Doubled K during placement. */
+export function eloDelta(myMmr: number, oppMmr: number, isWin: boolean, inPlacement: boolean): number {
+  const expected = 1 / (1 + Math.pow(10, (oppMmr - myMmr) / 400));
+  const k = inPlacement ? ELO_K * 2 : ELO_K;
+  const delta = k * ((isWin ? 1 : 0) - expected);
+  return Math.round(delta);
 }
 
 // ============ Daily quests + login streak ============
@@ -872,6 +961,16 @@ export interface MyPvpStandings {
   pvpStreak: number;
 }
 
+export interface RankedLeaderRow {
+  rank: number;
+  teamId: string;
+  teamTag: string;
+  teamName: string;
+  mmr: number;
+  peakMmr: number;
+  placementMatchesPlayed: number;
+}
+
 /** Per-player change captured during a time-skip, used for the dev-arc
  *  growth report toast. Only players who actually moved are reported. */
 export interface DevChange {
@@ -969,6 +1068,14 @@ export interface DuelOutcome {
    *  frame plays out. Used for PvP so both sides share the spectator
    *  experience, can't accidentally read the score before the other side. */
   lockedReplay?: boolean;
+  /** MMR change this PvP earned. Negative = lost MMR. Undefined for AI
+   *  duels (MMR is PvP-only). */
+  mmrDelta?: number;
+  /** New MMR after the change. Pairs with mmrDelta for the result banner. */
+  newMmr?: number;
+  /** True iff this match was inside the placement window. UI uses this
+   *  to label the K-factor as doubled. */
+  wasPlacement?: boolean;
 }
 
 export interface DuelDiagnostics {
@@ -1087,6 +1194,8 @@ export type ClientMessage =
   | { kind: 'list-quests' }
   | { kind: 'claim-quest'; questId: string }
   | { kind: 'claim-all-done-bonus' }
+  // ----- MMR rank leaderboard -----
+  | { kind: 'list-ranked-leaderboard' }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
@@ -1173,6 +1282,7 @@ export type ServerMessage =
   | { kind: 'quest-snapshot'; snapshot: QuestSnapshot }
   | { kind: 'quest-claimed'; questId: string; cashEarned: number; newMoney: number; snapshot: QuestSnapshot }
   | { kind: 'all-done-bonus-claimed'; cashEarned: number; newMoney: number; snapshot: QuestSnapshot }
+  | { kind: 'ranked-leaderboard'; rows: RankedLeaderRow[] }
   | { kind: 'loan-offers'; incoming: LoanOffer[]; outgoing: LoanOffer[] }
   | { kind: 'loan-event'; loan: LoanOffer }
   // ----- Phase 9 -----
@@ -1230,7 +1340,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 32;
+export const PROTOCOL_VERSION = 33;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past
