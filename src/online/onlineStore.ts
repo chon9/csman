@@ -272,6 +272,12 @@ interface OnlineState {
   aiBetMyHistory: AiBetHistoryEntry[];
   /** Currently-viewed synthetic team profile (modal). Null = dismissed. */
   aiBetTeamView: { cardId: string; side: 'A' | 'B'; profile: AiBetTeamProfile } | null;
+  /** True while we're sitting inside a server-pushed AI bet synced
+   *  replay (countdown ended → server pushed full frames → we auto-
+   *  routed to the replay viewer). The viewer reads this to force 4×
+   *  speed + hide the scrub controls, and routes back to 'ai-bets'
+   *  when the last frame plays. */
+  aiBetReplayLocked: boolean;
 
   // ----- Virtual real estate -----
   lotMapPins: LotMapPin[];
@@ -425,6 +431,10 @@ interface OnlineState {
   fetchAiBetReplay: (cardId: string) => void;
   fetchAiBetTeam: (cardId: string, side: 'A' | 'B') => void;
   dismissAiBetTeam: () => void;
+  /** Called by OnlineLiveReplayScreen when an AI bet synced replay
+   *  finishes — drops the locked flag + the cached replay + routes
+   *  back to the AI Betting screen. */
+  endAiBetReplay: () => void;
   // Real estate
   fetchLotMap: (x0: number, y0: number, x1: number, y1: number) => void;
   fetchLotAuctions: () => void;
@@ -532,6 +542,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   aiBetCards: [],
   aiBetMyHistory: [],
   aiBetTeamView: null,
+  aiBetReplayLocked: false,
   lotMapPins: [],
   lotAuctions: [],
   myLots: [],
@@ -1405,6 +1416,22 @@ export const useOnline = create<OnlineState>((set, get) => ({
           set({ aiBetMyHistory: msg.entries });
           break;
         }
+        case 'ai-bet-replay-starting': {
+          // Server pushed the full match frames for a card we bet on.
+          // Route into the locked replay viewer so every bettor on this
+          // card sees the same match at the same beat (synced playback).
+          set({
+            liveReplay: {
+              matchId: msg.matchId,
+              result: msg.result,
+              teamATag: msg.teamATag,
+              teamBTag: msg.teamBTag,
+            },
+            aiBetReplayLocked: true,
+            screen: 'replay',
+          });
+          break;
+        }
         case 'lot-map': {
           set({ lotMapPins: msg.pins });
           break;
@@ -1967,6 +1994,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   dismissAiBetTeam() {
     set({ aiBetTeamView: null });
+  },
+  endAiBetReplay() {
+    set({ aiBetReplayLocked: false, liveReplay: null, screen: 'ai-bets' });
   },
 
   // Real estate

@@ -1735,6 +1735,11 @@ export type ServerMessage =
   | { kind: 'ai-bet-card-update'; card: AiMatchCardWire }
   | { kind: 'ai-bet-team'; cardId: string; side: 'A' | 'B'; profile: AiBetTeamProfile }
   | { kind: 'ai-bet-my-history'; entries: AiBetHistoryEntry[] }
+  // Pushed to EVERY bettor on a card the instant its countdown ends and
+  // the sim runs. The client auto-routes to the replay viewer in locked
+  // mode (4× speed, no scrub) so every bettor watches the same match at
+  // the same beat — the AI bet equivalent of the synced PvP replay.
+  | { kind: 'ai-bet-replay-starting'; cardId: string; matchId: string; result: MatchResult; teamATag: string; teamBTag: string }
   // ----- Real estate -----
   | { kind: 'lot-map'; pins: LotMapPin[] }
   | { kind: 'lot-auctions'; auctions: LotAuctionWire[] }
@@ -1805,7 +1810,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 40;
+export const PROTOCOL_VERSION = 41;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

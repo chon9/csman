@@ -237,6 +237,21 @@ function resolveCard(
   // deletes the card 10 min later, but the history row survives so the
   // "My Recent Bets" panel keeps showing it.
   const bets = db.loadAllAiBetsForCard(row.id);
+
+  // Synced replay push — every bettor on this card gets routed into the
+  // replay viewer in locked mode (4× speed, no scrub) so everyone with
+  // money on the line watches the same match at the same beat.
+  for (const bet of bets) {
+    notifyTeam(bet.bettor_team_id, {
+      kind: 'ai-bet-replay-starting',
+      cardId: row.id,
+      matchId,
+      result,
+      teamATag: payload.teamA.team.tag,
+      teamBTag: payload.teamB.team.tag,
+    });
+  }
+
   for (const bet of bets) {
     const won = bet.side === winnerSide;
     const payout = won ? Math.round(bet.stake * bet.odds_at_bet) : 0;

@@ -22,13 +22,16 @@ export default function OnlineLiveReplayScreen() {
   const players = useOnline((s) => s.players);
   const replay = useOnline((s) => s.liveReplay);
   const close = useOnline((s) => s.closeReplay);
-  // PvP synced mode: when a duel-result with lockedReplay=true lands the
-  // store stashes the outcome here and routes to this screen. We must hide
-  // scrub controls, force 4× speed, and drain the pending outcome (→ result
-  // modal on home) at the last frame so both teams resolve together.
+  // Two locked-replay sources:
+  //   - PvP duel-result with lockedReplay=true → drain into result modal on 'home'
+  //   - AI bet card resolution → endAiBetReplay routes back to 'ai-bets'
+  // Both force 4× speed + hide the scrub controls so every viewer
+  // watches the same match at the same beat.
   const pendingDuelResult = useOnline((s) => s.pendingDuelResult);
   const drainPendingDuelResult = useOnline((s) => s.drainPendingDuelResult);
-  const locked = !!pendingDuelResult;
+  const aiBetReplayLocked = useOnline((s) => s.aiBetReplayLocked);
+  const endAiBetReplay = useOnline((s) => s.endAiBetReplay);
+  const locked = !!pendingDuelResult || aiBetReplayLocked;
 
   const [mapIdx, setMapIdx] = useState(0);
   const [roundIdx, setRoundIdx] = useState(0);
@@ -67,18 +70,21 @@ export default function OnlineLiveReplayScreen() {
           return 0;
         }
         setPlaying(false);
-        // Locked-mode hand-off: drain the pending PvP duel result so the
-        // result modal pops on the home screen at the same beat the last
-        // frame plays. Brief delay so the user sees the final frame before
-        // the screen swaps.
-        if (locked) {
+        // Locked-mode hand-off:
+        //   PvP: drain pending duel result → result modal on 'home'
+        //   AI bet: end the replay → route back to 'ai-bets' (settlement
+        //     toast already landed; nothing extra to show)
+        // Brief delay so the user sees the final frame before swap.
+        if (pendingDuelResult) {
           window.setTimeout(() => drainPendingDuelResult(), 500);
+        } else if (aiBetReplayLocked) {
+          window.setTimeout(() => endAiBetReplay(), 500);
         }
         return f;
       });
     }, stepMs);
     return () => clearInterval(id);
-  }, [playing, speed, mapIdx, roundIdx, replay, locked, drainPendingDuelResult]);
+  }, [playing, speed, mapIdx, roundIdx, replay, pendingDuelResult, drainPendingDuelResult, aiBetReplayLocked, endAiBetReplay]);
 
   if (!replay || !team) {
     return (
@@ -299,7 +305,7 @@ export default function OnlineLiveReplayScreen() {
               color: '#9be29b',
               letterSpacing: 0.5,
             }}
-            title="Both teams are watching this replay at the same time — no skipping."
+            title={aiBetReplayLocked ? 'Every bettor on this card is watching at the same time — no skipping.' : 'Both teams are watching this replay at the same time — no skipping.'}
           >
             🔒 Synced replay · 4×
           </span>
