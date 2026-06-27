@@ -622,6 +622,12 @@ export const CONTRACT_DUELS_INITIAL_FA = 40;
 export const CONTRACT_DUELS_INITIAL_BUY = 30;
 /** Duels added per renewal click. */
 export const CONTRACT_RENEWAL_DUELS = 30;
+/** Severance multiplier when releasing a player early. The owner pays
+ *  the player this many months of wages to terminate the deal — keeps
+ *  release from being a free way to dump unwanted contracts. */
+export const RELEASE_WAGE_MULT = 2;
+/** Floor so nominal-wage players still cost something to drop. */
+export const MIN_RELEASE_FEE = 1_000;
 /** Cost multiplier on top of monthly wage to renew. (4× wage = $40k for a $10k/mo player.) */
 export const CONTRACT_RENEWAL_WAGE_MULT = 4;
 /** Threshold at which the UI starts warning the user a contract is running out. */
@@ -1201,6 +1207,8 @@ export type ClientMessage =
   | { kind: 'list-ranked-leaderboard' }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
+  // ----- Release a player to free agency (pays severance) -----
+  | { kind: 'release-player'; playerId: string }
   // ----- Case opening (skins → team.money on resale) -----
   | { kind: 'list-cases' }
   | { kind: 'open-case'; caseId: string }
@@ -1302,6 +1310,7 @@ export type ServerMessage =
   | { kind: 'duels-refilled'; cost: number; newMoney: number; refillsUsed: number; refillsLeft: number }
   | { kind: 'contract-renewed'; playerId: string; cost: number; newMoney: number; duelsRemaining: number }
   | { kind: 'player-expired'; playerId: string; nickname: string }
+  | { kind: 'player-released'; playerId: string; nickname: string; cost: number; newMoney: number }
   | { kind: 'massage-booked'; outcome: MassageOutcome; cost: number; newMoney: number; nextEligibleGameDay: number }
   | { kind: 'morale-game-result'; result: MoraleGameResult }
   | { kind: 'dragon-gate-result'; result: DragonGateResult }
@@ -1343,7 +1352,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 34;
+export const PROTOCOL_VERSION = 35;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

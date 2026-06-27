@@ -138,8 +138,8 @@ export default function PlayerProfileModal(): React.ReactElement | null {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(95px, 1fr))', gap: 8, marginBottom: 14 }}>
           <ProfileStat label="CA" value={String(player.currentAbility)} color="#9be29b" big />
           <ProfileStat label="PA" value={String(player.potentialAbility)} color="#f2c443" />
-          {ownPlayer && <ProfileStat label="Form" value={String(ownPlayer.form)} color={ownPlayer.form >= 12 ? '#6ed09a' : ownPlayer.form <= 7 ? '#e25555' : '#d4d8e1'} />}
-          {ownPlayer && <ProfileStat label="Morale" value={String(ownPlayer.morale)} color={ownPlayer.morale >= 12 ? '#6ed09a' : ownPlayer.morale <= 7 ? '#e25555' : '#d4d8e1'} />}
+          {ownPlayer && <ProfileStat label="Form" value={ownPlayer.form.toFixed(1)} color={ownPlayer.form >= 12 ? '#6ed09a' : ownPlayer.form <= 7 ? '#e25555' : '#d4d8e1'} />}
+          {ownPlayer && <ProfileStat label="Morale" value={ownPlayer.morale.toFixed(1)} color={ownPlayer.morale >= 12 ? '#6ed09a' : ownPlayer.morale <= 7 ? '#e25555' : '#d4d8e1'} />}
           {ownPlayer && <ProfileStat label="Fatigue" value={`${Math.round(ownPlayer.fatigue)}%`} color={ownPlayer.fatigue >= 60 ? '#e25555' : ownPlayer.fatigue >= 35 ? '#f2c443' : '#6ed09a'} />}
           {ownPlayer?.contract && (
             <ProfileStat label="Contract" value={`${ownPlayer.contract.duelsRemaining ?? '∞'}d left`} color={typeof ownPlayer.contract.duelsRemaining === 'number' && ownPlayer.contract.duelsRemaining <= 5 ? '#e25555' : '#d4d8e1'} />

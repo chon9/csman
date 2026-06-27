@@ -8,6 +8,8 @@ import {
   CONTRACT_DUELS_WARN_AT,
   CONTRACT_RENEWAL_DUELS,
   CONTRACT_RENEWAL_WAGE_MULT,
+  MIN_RELEASE_FEE,
+  RELEASE_WAGE_MULT,
   DAILY_DUEL_CAP,
   MAX_DUEL_STAKE,
   MAX_REFILLS_PER_DAY,
@@ -49,6 +51,7 @@ export default function OnlineHomeScreen() {
   const duelsRefillsUsed = useOnline((s) => s.duelsRefillsUsed);
   const refillDuels = useOnline((s) => s.refillDuels);
   const renewContract = useOnline((s) => s.renewContract);
+  const releasePlayer = useOnline((s) => s.releasePlayer);
   const registerAiDuel = useOnline((s) => s.registerAiDuel);
   const timeSkip = useOnline((s) => s.timeSkip);
 
@@ -361,6 +364,29 @@ export default function OnlineHomeScreen() {
                           }}
                         >Renew · ${renewCost.toLocaleString()}</button>
                       )}
+                      {/* Release: terminate the contract early + send the
+                          player to FA. Costs a severance fee. Roster must
+                          stay ≥ 6 (one above the duel-minimum 5). */}
+                      {(() => {
+                        const releaseFee = Math.max(MIN_RELEASE_FEE, Math.round((p.contract?.wage ?? 1000) * RELEASE_WAGE_MULT));
+                        const canRelease = roster.length > 5 && team && team.money >= releaseFee;
+                        return (
+                          <button
+                            className="btn btn-tiny btn-danger"
+                            disabled={!canRelease}
+                            title={
+                              roster.length <= 5 ? 'Need 6+ players to release one (duels need 5 minimum)' :
+                              !team || team.money < releaseFee ? `Need $${releaseFee.toLocaleString()} severance` :
+                              `Release ${p.nickname} to free agency for $${releaseFee.toLocaleString()} severance (${RELEASE_WAGE_MULT}× monthly wage)`
+                            }
+                            onClick={() => {
+                              if (window.confirm(`Release ${p.nickname}? Pays $${releaseFee.toLocaleString()} severance and sends them to free agency.`)) {
+                                releasePlayer(p.id);
+                              }
+                            }}
+                          >Release · ${releaseFee.toLocaleString()}</button>
+                        );
+                      })()}
                     </td>
                   </tr>
                 );

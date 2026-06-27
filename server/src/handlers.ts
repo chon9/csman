@@ -23,6 +23,8 @@ import {
   CONTRACT_DUELS_INITIAL_SPAWN,
   CONTRACT_RENEWAL_DUELS,
   CONTRACT_RENEWAL_WAGE_MULT,
+  RELEASE_WAGE_MULT,
+  MIN_RELEASE_FEE,
   DAILY_BONUS_AMOUNT,
   DAILY_DUEL_CAP,
   FREE_AGENT_POOL_SIZE,
@@ -2413,6 +2415,54 @@ export function handle(
           trainingGained,
           teamFans,
         },
+      };
+    }
+
+    case 'release-player': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const player = db.loadPlayer(msg.playerId);
+      if (!player || player.teamId !== team.id) {
+        return { kind: 'error', code: 'not-your-player', message: 'Player not on your roster.' };
+      }
+      if (team.playerIds.length <= 5) {
+        return { kind: 'error', code: 'min-roster', message: 'Need at least 5 players to keep duels running — sign someone before releasing.' };
+      }
+      // Release fee: severance pay. RELEASE_WAGE_MULT × monthly wage,
+      // with a floor so even peppercorn contracts cost something.
+      const wage = player.contract?.wage ?? 1000;
+      const fee = Math.max(MIN_RELEASE_FEE, Math.round(wage * RELEASE_WAGE_MULT));
+      if (team.money < fee) {
+        return {
+          kind: 'error',
+          code: 'insufficient-funds',
+          message: `Severance is $${fee.toLocaleString()} (${RELEASE_WAGE_MULT}× monthly wage) — you have $${team.money.toLocaleString()}.`,
+        };
+      }
+      // Free the player: clear ownership, drop from roster, free from any
+      // open peer-market-related concerns (player market listing if any).
+      team.money -= fee;
+      const previousNick = player.nickname;
+      player.teamId = null;
+      player.contract = null;
+      player.squadTier = 'reserve';
+      team.playerIds = team.playerIds.filter((id) => id !== player.id);
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      db.setTeamPlayers(team.id, team.playerIds);
+      db.persistPlayer(player);
+      log(`released: ${team.tag} → ${previousNick} (fee $${fee})`);
+      const newsItem = db.publishNews(
+        'transfer',
+        `${previousNick} released early by ${team.tag} (severance $${fee.toLocaleString()}) — now a free agent.`,
+      );
+      broadcast({ kind: 'news-item', item: newsItem as NewsItem });
+      return {
+        kind: 'player-released',
+        playerId: player.id,
+        nickname: previousNick,
+        cost: fee,
+        newMoney: team.money,
       };
     }
 

@@ -277,6 +277,7 @@ interface OnlineState {
   claimDailyBonus: () => void;
   refillDuels: () => void;
   renewContract: (playerId: string) => void;
+  releasePlayer: (playerId: string) => void;
   bookMassage: () => void;
   dismissMassageReveal: () => void;
   playMoraleGame: (choice: RpsChoice) => void;
@@ -1166,6 +1167,17 @@ export const useOnline = create<OnlineState>((set, get) => ({
           pushToast('warn', `${msg.nickname}'s contract expired — now a free agent.`);
           break;
         }
+        case 'player-released': {
+          const t = get().team;
+          const ps = { ...get().players };
+          delete ps[msg.playerId];
+          set({
+            team: t ? { ...t, money: msg.newMoney, playerIds: t.playerIds.filter((id) => id !== msg.playerId) } : t,
+            players: ps,
+          });
+          pushToast('info', `Released ${msg.nickname} — severance $${msg.cost.toLocaleString()}.`);
+          break;
+        }
         case 'duel-stats': {
           set({ duelsUsed: msg.used, duelsRefillsUsed: msg.refillsUsed });
           break;
@@ -1353,6 +1365,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   renewContract(playerId) {
     get().client?.send({ kind: 'renew-contract', playerId });
+  },
+  releasePlayer(playerId) {
+    get().client?.send({ kind: 'release-player', playerId });
   },
   bookMassage() {
     get().client?.send({ kind: 'book-massage' });
