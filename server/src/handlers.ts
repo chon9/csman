@@ -2445,13 +2445,30 @@ export function handle(
       // Block releasing a player who is only on this roster because of an
       // active loan — they're owned by another team and must be returned
       // via the loan-recall flow, not released into FA.
+      //
+      // Two-pronged check (belt + suspenders): primary lookup by player
+      // id, plus a fallback scan over every open loan TO this team in
+      // case the primary index returns stale data.
       const openLoan = db.loadOpenLoanForPlayer(player.id);
+      let loanedFromTeamId: string | null = null;
       if (openLoan && openLoan.status === 'active' && openLoan.toTeamId === team.id) {
-        const lender = db.loadTeam(openLoan.fromTeamId);
+        loanedFromTeamId = openLoan.fromTeamId;
+      } else {
+        // Defensive: walk every open loan inbound to this team and see if
+        // any of them name this player. Catches the edge case where the
+        // primary lookup (LIMIT 1, indeterminate order with multiple rows
+        // per player) returns a different row than the one we need.
+        const inbound = db.loadLoansToTeam(team.id);
+        const match = inbound.find((l) => l.playerId === player.id && l.status === 'active');
+        if (match) loanedFromTeamId = match.fromTeamId;
+      }
+      if (loanedFromTeamId) {
+        const lender = db.loadTeam(loanedFromTeamId);
+        log(`release blocked: ${team.tag} tried to release loanee ${player.nickname} (on loan from ${lender?.tag ?? loanedFromTeamId})`);
         return {
           kind: 'error',
           code: 'loaned-in',
-          message: `${player.nickname} is on loan from ${lender?.tag ?? 'another team'} — you can't release a loanee. Return them via Loans first.`,
+          message: `${player.nickname} is on loan from ${lender?.tag ?? 'another team'} — you can't release a loanee. Return them via the Loans panel first.`,
         };
       }
       if (team.playerIds.length <= 5) {
