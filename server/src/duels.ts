@@ -53,32 +53,55 @@ const AI_NAME_PREFIXES = [
   // Animals + predators
   'Apex', 'Cobra', 'Falcon', 'Mamba', 'Lynx', 'Raven', 'Wolf', 'Tiger',
   'Bison', 'Stag', 'Orca', 'Hawk', 'Viper', 'Jaguar', 'Wyvern', 'Drake',
+  'Panther', 'Crow', 'Kraken', 'Stallion', 'Mantis', 'Coyote', 'Lion',
+  'Bear', 'Anaconda', 'Owl', 'Ibex', 'Fox', 'Marlin', 'Buffalo',
   // Tactical / military
   'Vector', 'Vigil', 'Recon', 'Sentinel', 'Phalanx', 'Tactical', 'Squad-9',
   'Bravo', 'Echo', 'Foxtrot', 'Kilo', 'Tango', 'Zulu', 'Onyx-7',
+  'Iron', 'Steel', 'Shadow', 'Strike', 'Strike-12', 'Outpost', 'Alpha',
+  'Delta', 'Sigma', 'Theta', 'Omega', 'Charlie', 'Lima', 'Romeo',
   // Mythic / cosmic
   'Nova', 'Phantom', 'Spectre', 'Hydra', 'Phoenix', 'Tempest', 'Helix', 'Vanta',
   'Cipher', 'Mirage', 'Oblivion', 'Solaris', 'Lumen', 'Eclipse', 'Astral',
-  'Halo', 'Aegis', 'Specter', 'Genesis',
+  'Halo', 'Aegis', 'Specter', 'Genesis', 'Nebula', 'Quasar', 'Pulsar',
+  'Zenith', 'Nadir', 'Equinox', 'Solstice', 'Orion', 'Andromeda', 'Polaris',
+  'Hyperion', 'Atlas', 'Prometheus', 'Charon', 'Inferno', 'Valkyrie',
   // Power / weather / industrial
   'Pulse', 'Reign', 'Storm', 'Surge', 'Voltage', 'Fission', 'Forge',
   'Anvil', 'Granite', 'Tungsten', 'Quartz', 'Ironclad', 'Carbon',
+  'Magma', 'Cinder', 'Frostline', 'Thunder', 'Lightning', 'Plasma',
+  'Titanium', 'Obsidian', 'Glacier', 'Tide', 'Vortex',
   // Regional / cultural flair
   'Saigon', 'Mekong', 'Manila', 'Kuala', 'Bangkok', 'Penang', 'Taipei',
   'Sapporo', 'Tashkent', 'Almaty', 'Riga', 'Athens', 'Lisbon', 'Reykjavik',
+  'Bergen', 'Krakow', 'Bucharest', 'Sofia', 'Helsinki', 'Tallinn',
+  'Belgrade', 'Vilnius', 'Porto', 'Naples', 'Marseille', 'Hamburg',
+  'Rotterdam', 'Antwerp', 'Glasgow', 'Manchester',
 ];
 const AI_NAME_SUFFIXES = [
   'Esports', 'Gaming', 'Club', 'Collective', 'Squad', 'Project',
   'Initiative', 'United', 'Coalition', 'Order', 'Division', 'Federation',
   'Syndicate', 'Brigade', 'Foundation', 'Crew', 'Society', 'Dynasty',
-  'Legion', 'Vanguard',
+  'Legion', 'Vanguard', 'Academy', 'Empire', 'Republic', 'Pack',
+  'Alliance', 'Cartel', 'Movement', 'Guild', 'Network', 'Force',
+  'Reserve', 'Elite', 'Spartans',
 ];
 /** Roll-once brands that show up sans suffix — gives ~20% of generated
  *  teams the real-CS "one word" feel (think Liquid, Furia, Astralis). */
 const AI_BRAND_ONLY = [
+  // Originals
   'Liquid', 'Astralis', 'Furia', 'Verve', 'Eternity', 'Helios', 'Korona',
   'Cobalt', 'Riot', 'Outlaws', 'Pacific', 'Atlas', 'Citadel', 'Cosmos',
   'Diamond', 'Stratus', 'Catalyst', 'Aurora', 'Phantasm', 'Daydream',
+  // Expanded — short punchy one-worders
+  'Spirit', 'Bolt', 'Saga', 'Phantasma', 'Nimbus', 'Karbon',
+  'Lumina', 'Onslaught', 'Rebel', 'Origin', 'Pinnacle',
+  'Cascade', 'Empyrean', 'Mythic', 'Insomnia', 'Triton', 'Aether',
+  'Verde', 'Tundra', 'Renegade', 'Tempo',
+  'Beacon', 'Tides', 'Constellation',
+  'Mantra', 'Saturn', 'Comet', 'Echelon', 'Reverb',
+  'Wraith', 'Lattice', 'Vandal', 'Vortice',
+  'Resonance', 'Aurum', 'Solace', 'Eden', 'Ravage', 'Outburst',
 ];
 
 /** Build a synthetic Team record for an AI opponent. Not persisted —
