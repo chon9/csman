@@ -102,11 +102,16 @@ export default function OnlineLiveReplayScreen() {
   const layout = curMap ? MAP_LAYOUTS[curMap.map] : null;
   const userIsA = r.teamAId === team.id;
   const userIsB = r.teamBId === team.id;
-  // Spectator mode: neither team is the viewer's own (AI vs AI bet replay).
-  // Anchor team-A membership on the server-supplied roster IDs instead of
-  // the viewer's own players, and skip the team.tag substitution in the
-  // header + scoreboard so both AI tags surface correctly.
-  const spectator = !userIsA && !userIsB;
+  // Spectator mode: neither team is the viewer's own (AI vs AI bet
+  // replay). Two signals — both forced true here for robustness:
+  //   1. Neither side's teamId matches the viewer's own team
+  //   2. The matchId carries the AI bet prefix (server stamps these as
+  //      `aibet-match-${cardId}`), which works even if a future code
+  //      path slips a viewer's teamId into one of the team slots.
+  // Header + scoreboard skip the team.tag substitution when spectator
+  // is true so both AI tags surface correctly.
+  const isAiBetMatch = r.matchId.startsWith('aibet-');
+  const spectator = isAiBetMatch || (!userIsA && !userIsB);
   const specRosterA = useMemo(() => new Set(replay?.teamARosterIds ?? []), [replay?.teamARosterIds]);
 
   // Side detection — every frame carries each player's current side. Use the
