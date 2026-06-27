@@ -47,22 +47,32 @@ export default function RankBadge({ mmr, placementMatchesPlayed, size = 'compact
     <span
       title={`${tier.name} · MMR ${safeMmr}`}
       style={{
-        display: 'inline-flex', flexDirection: 'column', gap: showProgress ? 4 : 0,
-        alignItems: 'flex-start', whiteSpace: 'nowrap',
+        display: 'flex', flexDirection: 'column', gap: showProgress ? 4 : 0,
+        alignItems: 'flex-start',
+        // Container shrinks to parent width and lets the pill wrap inside —
+        // the longest tier names (Silver Elite Master, Distinguished Master
+        // Guardian, Legendary Eagle Master) used to clip in the sidebar.
+        maxWidth: '100%', minWidth: 0,
       }}
     >
       <span
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 4,
-          padding: size === 'full' ? '3px 9px' : '2px 7px', borderRadius: 999,
+          padding: size === 'full' ? '3px 9px' : '2px 7px', borderRadius: 12,
           background: `${tier.color}22`,
           border: `1px solid ${tier.color}80`,
           color: tier.color, fontSize: size === 'full' ? 12 : 10, fontWeight: 800,
           letterSpacing: 0.4,
+          // Allow the pill to break to a second line if the tier name is
+          // long for the parent's width — keeps the rank label fully visible
+          // instead of clipping mid-word.
+          flexWrap: 'wrap',
+          maxWidth: '100%',
+          lineHeight: 1.3,
         }}
       >
-        🏅 {size === 'full' ? tier.name : tier.short}
-        {size === 'full' && <span style={{ color: '#d4d8e1', fontWeight: 600, marginLeft: 4 }}>· {safeMmr}</span>}
+        <span>🏅 {size === 'full' ? tier.name : tier.short}</span>
+        {size === 'full' && <span style={{ color: '#d4d8e1', fontWeight: 600 }}>· {safeMmr}</span>}
       </span>
       {showProgress && prog && prog.next && (
         <span style={{ position: 'relative', display: 'block', width: '100%', minWidth: 110, height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 999, overflow: 'hidden' }}>
