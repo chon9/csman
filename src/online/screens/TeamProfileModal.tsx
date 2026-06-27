@@ -1,30 +1,29 @@
-// Click-to-view team profile modal. Pops up when any TeamTag is
-// clicked anywhere in the app. Shows a scrubbed view of the target
-// team — branding, roster headlines (no full attribute sheet —
-// scouting should be flavour, not perfect intel), season + PvP
-// record, and total fans.
+// Click-to-view team profile modal. Legacy in-app modal still exists
+// (fetchTeamProfile path) for AI-bet flows and similar, but TeamTag now
+// opens the public Facebook-style /team/:id page in a new tab so
+// commenters land on the canonical shareable URL.
 
 import { useOnline } from '../onlineStore';
 import type { PublicPlayer, PublicTeamProfile } from '../protocol';
 import { PlayerName } from './PlayerProfileModal';
+import { publicOrigin } from '../serverUrl';
 import RankBadge from './RankBadge';
 
-/** Clickable team-tag chip — drops into any screen that shows a team
- *  tag, fires fetchTeamProfile on click. Renders the tag in the team's
- *  accent if available, else the global accent. */
+/** Clickable team-tag chip — every team tag anywhere in the app links
+ *  to the public Facebook-style profile page in a new tab. Renders the
+ *  tag in the team's accent if available, else the global accent. */
 export function TeamTag({ teamId, tag, accent }: { teamId: string; tag: string; accent?: string }): React.ReactElement {
-  const fetchTeamProfile = useOnline((s) => s.fetchTeamProfile);
-  const loading = useOnline((s) => s.teamProfileLoading);
-  const isLoading = loading === teamId;
+  const href = `${publicOrigin()}/team/${encodeURIComponent(teamId)}`;
   return (
-    <button
-      onClick={(e) => { e.stopPropagation(); fetchTeamProfile(teamId); }}
-      disabled={isLoading}
-      title={`View ${tag} profile`}
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      title={`View ${tag} public profile (new tab)`}
       style={{
-        // No className — the global .link-btn floats right, which would
-        // break any inline layout the tag is dropped into (notably the
-        // live-feed "TSF 1-0 JULY" score line).
+        // No className — global .link-btn floats right, which breaks
+        // inline layout (notably the live-feed "TSF 1-0 JULY" line).
         background: 'transparent',
         border: 'none',
         padding: 0,
@@ -32,15 +31,15 @@ export function TeamTag({ teamId, tag, accent }: { teamId: string; tag: string; 
         font: 'inherit',
         float: 'none',
         display: 'inline',
-        cursor: isLoading ? 'wait' : 'pointer',
+        cursor: 'pointer',
         color: accent ?? 'var(--accent)',
         fontWeight: 700,
         textDecoration: 'underline dotted rgba(255,255,255,0.25)',
         textUnderlineOffset: 3,
       }}
     >
-      {isLoading ? `${tag}…` : tag}
-    </button>
+      {tag}
+    </a>
   );
 }
 

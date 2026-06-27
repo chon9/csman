@@ -14,7 +14,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { openDb } from './db.ts';
 import { handle, newConnSession, type ConnSession } from './handlers.ts';
 import { handleHttp } from './httpRoutes.ts';
-import { backfillLegacyContracts, sanitizePlayerAges, seedRealNamePool } from './freeAgents.ts';
+import { backfillLegacyContracts, backfillPlayerTraits, sanitizePlayerAges, seedRealNamePool } from './freeAgents.ts';
 import { startBustTicker as startCrashBustTicker } from './crashSessions.ts';
 import { cleanupStaleCards, ensureCards, settleDueCards } from './aiBetting.ts';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../src/online/protocol.ts';
@@ -45,6 +45,13 @@ if (backfillResult.updated > 0) {
 const ageCleanup = sanitizePlayerAges(db);
 if (ageCleanup.cleaned > 0) {
   console.log(`[csm] sanitized ${ageCleanup.cleaned} player ages with float drift`);
+}
+
+// One-shot: roll traits onto every legacy player who didn't have any.
+// Canary-gated; subsequent boots no-op.
+const traitsBackfill = backfillPlayerTraits(db);
+if (traitsBackfill.updated > 0) {
+  console.log(`[csm] backfilled traits onto ${traitsBackfill.updated} legacy players`);
 }
 
 // Shared http.Server: serves /team/:id HTML profiles + upgrades to WebSocket

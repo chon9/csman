@@ -53,8 +53,20 @@ export interface SessionRow {
 export function openDb(path: string) {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
+  // Durability + perf tuning.
+  //   WAL: concurrent readers don't block writers; survives crashes.
+  //   synchronous=NORMAL: fsync less often than FULL (safe under WAL); ~2-4× faster writes.
+  //   cache_size=-65536: 64 MB page cache (default is 2 MB — way too small for this workload).
+  //   mmap_size=268435456: 256 MB read-side memory map; cheaper random reads on big DBs.
+  //   temp_store=MEMORY: keep B-tree sorts / temp tables off disk.
+  //   busy_timeout=5000: wait up to 5s for a contended lock before throwing.
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('cache_size = -65536');
+  db.pragma('mmap_size = 268435456');
+  db.pragma('temp_store = MEMORY');
+  db.pragma('busy_timeout = 5000');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS owners (
@@ -163,6 +175,8 @@ export function openDb(path: string) {
     );
     CREATE INDEX IF NOT EXISTS idx_history_team_a ON match_history(team_a_id, played_at DESC);
     CREATE INDEX IF NOT EXISTS idx_history_team_b ON match_history(team_b_id, played_at DESC);
+    -- Stats / leaderboard scans pull "all PvP matches in time window" — needs an index by kind.
+    CREATE INDEX IF NOT EXISTS idx_history_kind_played ON match_history(kind, played_at DESC);
 
     -- Named tactics presets, scoped to an owner nickname.
     CREATE TABLE IF NOT EXISTS tactics_presets (
@@ -205,6 +219,8 @@ export function openDb(path: string) {
     CREATE INDEX IF NOT EXISTS idx_loans_status ON player_loans(status, ends_at);
     CREATE INDEX IF NOT EXISTS idx_loans_to ON player_loans(to_team_id, status);
     CREATE INDEX IF NOT EXISTS idx_loans_from ON player_loans(from_team_id, status);
+    -- Pre-offer guard + release-time check both look up by player_id only.
+    CREATE INDEX IF NOT EXISTS idx_loans_player ON player_loans(player_id, status);
 
     -- Permanent honour list of retired players. Snapshot at retirement
     -- time — independent of the players table (rows may eventually be
@@ -308,6 +324,30 @@ export function openDb(path: string) {
       FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
       FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
     );
+
+    -- Generic key/value store for one-shot migration canaries, feature
+    -- flags, and similar bookkeeping. Cheap, explicit, and self-documenting
+    -- compared to overloading existing tables.
+    CREATE TABLE IF NOT EXISTS meta_kv (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
+    -- Public Facebook-style comments on /team/:id pages. Anonymous —
+    -- author_nick is whatever name the commenter typed into the form,
+    -- escaped server-side on render. ip is used only for the
+    -- per-IP rate limit and never displayed.
+    CREATE TABLE IF NOT EXISTS team_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      team_id TEXT NOT NULL,
+      author_nick TEXT NOT NULL,
+      text TEXT NOT NULL,
+      posted_at INTEGER NOT NULL,
+      ip TEXT NOT NULL,
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_team_comments_team ON team_comments(team_id, posted_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_team_comments_ip_time ON team_comments(ip, posted_at DESC);
   `);
 
   // ----- Lightweight schema migrations -----
@@ -428,6 +468,34 @@ export function openDb(path: string) {
       FOREIGN KEY (bettor_team_id) REFERENCES teams(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_ai_bet_team ON ai_match_bets(bettor_team_id);
+
+    -- Permanent settlement log for AI bets. Snapshot of the resolved
+    -- matchup + bet outcome — survives the card-cleanup pass (which
+    -- cascades the original ai_match_bets row out of existence after the
+    -- 10-min replay window). Trimmed to the most recent 100 entries per
+    -- team on each insert.
+    CREATE TABLE IF NOT EXISTS ai_bet_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bettor_team_id TEXT NOT NULL,
+      card_id TEXT NOT NULL,
+      team_a_tag TEXT NOT NULL,
+      team_b_tag TEXT NOT NULL,
+      team_a_logo TEXT NOT NULL,
+      team_b_logo TEXT NOT NULL,
+      team_a_color TEXT NOT NULL,
+      team_b_color TEXT NOT NULL,
+      side TEXT NOT NULL,
+      stake INTEGER NOT NULL,
+      odds_at_bet REAL NOT NULL,
+      status TEXT NOT NULL,
+      payout INTEGER NOT NULL DEFAULT 0,
+      winner_side TEXT NOT NULL,
+      maps_a INTEGER NOT NULL,
+      maps_b INTEGER NOT NULL,
+      settled_at INTEGER NOT NULL,
+      FOREIGN KEY (bettor_team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_bet_hist_team ON ai_bet_history(bettor_team_id, settled_at DESC);
   `);
   // Skin inventory rows owned by this team — JSON-blob per skin instance.
   db.exec(`
@@ -899,6 +967,75 @@ export function openDb(path: string) {
   }
   function settleAiBetRow(cardId: string, bettorTeamId: string, status: 'won' | 'lost', payout: number): void {
     settleAiBet.run(status, Date.now(), payout, cardId, bettorTeamId);
+  }
+
+  // ----- AI bet history (permanent settlement log) -----
+
+  const insertAiBetHistory = db.prepare(
+    `INSERT INTO ai_bet_history
+       (bettor_team_id, card_id, team_a_tag, team_b_tag, team_a_logo, team_b_logo, team_a_color, team_b_color,
+        side, stake, odds_at_bet, status, payout, winner_side, maps_a, maps_b, settled_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const selectAiBetHistory = db.prepare(
+    `SELECT card_id, team_a_tag, team_b_tag, team_a_logo, team_b_logo, team_a_color, team_b_color,
+            side, stake, odds_at_bet, status, payout, winner_side, maps_a, maps_b, settled_at
+       FROM ai_bet_history
+      WHERE bettor_team_id = ?
+      ORDER BY settled_at DESC
+      LIMIT ?`,
+  );
+  const trimAiBetHistory = db.prepare(
+    `DELETE FROM ai_bet_history
+      WHERE bettor_team_id = ?
+        AND id NOT IN (
+          SELECT id FROM ai_bet_history WHERE bettor_team_id = ? ORDER BY settled_at DESC LIMIT ?
+        )`,
+  );
+
+  interface AiBetHistoryRow {
+    card_id: string;
+    team_a_tag: string; team_b_tag: string;
+    team_a_logo: string; team_b_logo: string;
+    team_a_color: string; team_b_color: string;
+    side: 'A' | 'B';
+    stake: number;
+    odds_at_bet: number;
+    status: 'won' | 'lost';
+    payout: number;
+    winner_side: 'A' | 'B';
+    maps_a: number;
+    maps_b: number;
+    settled_at: number;
+  }
+  function recordAiBetHistory(args: {
+    bettorTeamId: string;
+    cardId: string;
+    teamATag: string; teamBTag: string;
+    teamALogo: string; teamBLogo: string;
+    teamAColor: string; teamBColor: string;
+    side: 'A' | 'B';
+    stake: number;
+    oddsAtBet: number;
+    status: 'won' | 'lost';
+    payout: number;
+    winnerSide: 'A' | 'B';
+    mapsA: number;
+    mapsB: number;
+  }): void {
+    insertAiBetHistory.run(
+      args.bettorTeamId, args.cardId,
+      args.teamATag, args.teamBTag, args.teamALogo, args.teamBLogo, args.teamAColor, args.teamBColor,
+      args.side, args.stake, args.oddsAtBet, args.status, args.payout,
+      args.winnerSide, args.mapsA, args.mapsB, Date.now(),
+    );
+  }
+  function loadAiBetHistory(teamId: string, limit = 10): AiBetHistoryRow[] {
+    return selectAiBetHistory.all(teamId, limit) as AiBetHistoryRow[];
+  }
+  /** Cap history per team — generous (100) since we only display 10. */
+  function trimAiBetHistoryForTeam(teamId: string, keep: number): void {
+    trimAiBetHistory.run(teamId, teamId, keep);
   }
 
   // -------- Wall-clock auto-advance --------
@@ -2310,6 +2447,49 @@ export function openDb(path: string) {
     return !!isRegistered.get(tournamentId, teamId);
   }
 
+  // -------- Meta / canary store --------
+
+  const getMetaStmt = db.prepare(`SELECT value FROM meta_kv WHERE key = ?`);
+  const setMetaStmt = db.prepare(`INSERT INTO meta_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`);
+  function getMeta(key: string): string | null {
+    const r = getMetaStmt.get(key) as { value: string } | undefined;
+    return r ? r.value : null;
+  }
+  function setMeta(key: string, value: string): void {
+    setMetaStmt.run(key, value);
+  }
+
+  // -------- Public team-page comments --------
+
+  const insertTeamComment = db.prepare(
+    `INSERT INTO team_comments (team_id, author_nick, text, posted_at, ip) VALUES (?, ?, ?, ?, ?)`,
+  );
+  const selectTeamComments = db.prepare(
+    `SELECT id, author_nick AS authorNick, text, posted_at AS postedAt FROM team_comments WHERE team_id = ? ORDER BY posted_at DESC LIMIT ?`,
+  );
+  const countRecentIpComments = db.prepare(
+    `SELECT COUNT(*) AS n FROM team_comments WHERE ip = ? AND posted_at > ?`,
+  );
+  const deleteOldTeamComments = db.prepare(
+    `DELETE FROM team_comments WHERE team_id = ? AND id NOT IN (SELECT id FROM team_comments WHERE team_id = ? ORDER BY posted_at DESC LIMIT ?)`,
+  );
+  interface TeamCommentRow { id: number; authorNick: string; text: string; postedAt: number }
+  function addTeamComment(args: { teamId: string; authorNick: string; text: string; ip: string }): void {
+    insertTeamComment.run(args.teamId, args.authorNick, args.text, Date.now(), args.ip);
+  }
+  function loadTeamComments(teamId: string, limit = 50): TeamCommentRow[] {
+    return selectTeamComments.all(teamId, limit) as TeamCommentRow[];
+  }
+  function countIpCommentsSince(ip: string, since: number): number {
+    return (countRecentIpComments.get(ip, since) as { n: number }).n;
+  }
+  /** Trim a team's comment thread to the most recent `keep` entries —
+   *  prevents the wall growing without bound. Called opportunistically
+   *  after every successful post. */
+  function trimTeamComments(teamId: string, keep: number): void {
+    deleteOldTeamComments.run(teamId, teamId, keep);
+  }
+
   return {
     raw: db,
     authenticateOrRegister,
@@ -2353,6 +2533,9 @@ export function openDb(path: string) {
     loadAiBet,
     loadAllAiBetsForCard,
     settleAiBetRow,
+    recordAiBetHistory,
+    loadAiBetHistory,
+    trimAiBetHistoryForTeam,
     applyMmrChange,
     loadMmrLeaderboard,
     getAutoTickAnchor,
@@ -2425,6 +2608,12 @@ export function openDb(path: string) {
     loadRegistrations,
     countTournamentRegistrations,
     teamIsRegistered,
+    getMeta,
+    setMeta,
+    addTeamComment,
+    loadTeamComments,
+    countIpCommentsSince,
+    trimTeamComments,
     appendChatMessage,
     loadChatHistory,
     setGoal,

@@ -51,6 +51,8 @@ import type {
   TournamentDetail,
   TournamentSummary,
   AiMatchCardWire,
+  AiBetTeamProfile,
+  AiBetHistoryEntry,
 } from './protocol';
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
@@ -261,6 +263,11 @@ interface OnlineState {
 
   // ----- AI vs AI betting market -----
   aiBetCards: AiMatchCardWire[];
+  /** Last ~10 settled bets the user has placed. Pulled from
+   *  ai_bet_history (survives card cleanup). */
+  aiBetMyHistory: AiBetHistoryEntry[];
+  /** Currently-viewed synthetic team profile (modal). Null = dismissed. */
+  aiBetTeamView: { cardId: string; side: 'A' | 'B'; profile: AiBetTeamProfile } | null;
 
   // ----- UI -----
   screen: OnlineScreen;
@@ -402,8 +409,11 @@ interface OnlineState {
   respondSponsor: (sponsorId: string, accept: boolean) => void;
   // AI vs AI betting market
   refreshAiBets: () => void;
+  refreshAiBetHistory: () => void;
   placeAiBet: (cardId: string, side: 'A' | 'B', stake: number) => void;
   fetchAiBetReplay: (cardId: string) => void;
+  fetchAiBetTeam: (cardId: string, side: 'A' | 'B') => void;
+  dismissAiBetTeam: () => void;
 }
 
 let nextToastId = 1;
@@ -493,6 +503,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   myCoach: null,
   sponsors: [],
   aiBetCards: [],
+  aiBetMyHistory: [],
+  aiBetTeamView: null,
   screen: 'connect',
   errorBanner: null,
   toasts: [],
@@ -1336,8 +1348,10 @@ export const useOnline = create<OnlineState>((set, get) => ({
           } else {
             pushToast('warn', `Bet lost — $${msg.bet.stake.toLocaleString()} gone.`);
           }
-          // Refresh the card list so the bet shows as settled with a payout.
+          // Refresh the card list so the bet shows as settled with a payout,
+          // and pull the now-extended history so the new row appears at top.
           client.send({ kind: 'list-ai-bets' });
+          client.send({ kind: 'list-my-ai-bet-history' });
           break;
         }
         case 'ai-bet-card-update': {
@@ -1350,6 +1364,14 @@ export const useOnline = create<OnlineState>((set, get) => ({
           } else {
             set({ aiBetCards: [...existing, msg.card] });
           }
+          break;
+        }
+        case 'ai-bet-team': {
+          set({ aiBetTeamView: { cardId: msg.cardId, side: msg.side, profile: msg.profile } });
+          break;
+        }
+        case 'ai-bet-my-history': {
+          set({ aiBetMyHistory: msg.entries });
           break;
         }
         case 'team-deleted-by-admin': {
@@ -1824,11 +1846,22 @@ export const useOnline = create<OnlineState>((set, get) => ({
     get().client?.send({ kind: 'list-ai-bets' });
   },
 
+  refreshAiBetHistory() {
+    get().client?.send({ kind: 'list-my-ai-bet-history' });
+  },
+
   placeAiBet(cardId, side, stake) {
     get().client?.send({ kind: 'place-ai-bet', cardId, side, stake });
   },
 
   fetchAiBetReplay(cardId) {
     get().client?.send({ kind: 'fetch-ai-bet-replay', cardId });
+  },
+
+  fetchAiBetTeam(cardId, side) {
+    get().client?.send({ kind: 'fetch-ai-bet-team', cardId, side });
+  },
+  dismissAiBetTeam() {
+    set({ aiBetTeamView: null });
   },
 }));

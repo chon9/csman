@@ -27,6 +27,8 @@ import {
   AI_BET_LOCK_LEAD_MS,
   AI_BET_REPLAY_WINDOW_MS,
   LOGO_PACK,
+  type AiBetHistoryEntry,
+  type AiBetTeamProfile,
   type AiMatchCardWire,
 } from '../../src/online/protocol.ts';
 import { DEFAULT_TACTICS, type Player, type Tactics, type Team } from '../../src/types.ts';
@@ -229,12 +231,35 @@ function resolveCard(
   // Persist the resolved payload back.
   db.resolveAiCard(row.id, matchId, JSON.stringify(payload));
 
-  // Settle every bet on this card. Winners get stake × oddsAtBet.
+  // Settle every bet on this card. Winners get stake × oddsAtBet. Each
+  // settlement is also snapshotted into ai_bet_history — the live
+  // ai_match_bets row gets nuked by cascade when cleanupStaleCards
+  // deletes the card 10 min later, but the history row survives so the
+  // "My Recent Bets" panel keeps showing it.
   const bets = db.loadAllAiBetsForCard(row.id);
   for (const bet of bets) {
     const won = bet.side === winnerSide;
     const payout = won ? Math.round(bet.stake * bet.odds_at_bet) : 0;
     db.settleAiBetRow(bet.card_id, bet.bettor_team_id, won ? 'won' : 'lost', payout);
+    db.recordAiBetHistory({
+      bettorTeamId: bet.bettor_team_id,
+      cardId: row.id,
+      teamATag: payload.teamA.team.tag,
+      teamBTag: payload.teamB.team.tag,
+      teamALogo: payload.teamA.logoId,
+      teamBLogo: payload.teamB.logoId,
+      teamAColor: payload.teamA.primaryColor,
+      teamBColor: payload.teamB.primaryColor,
+      side: bet.side,
+      stake: bet.stake,
+      oddsAtBet: bet.odds_at_bet,
+      status: won ? 'won' : 'lost',
+      payout,
+      winnerSide,
+      mapsA: result.mapsA,
+      mapsB: result.mapsB,
+    });
+    db.trimAiBetHistoryForTeam(bet.bettor_team_id, 100);
     if (payout > 0) {
       const team = db.loadTeam(bet.bettor_team_id);
       if (team) {
@@ -400,6 +425,60 @@ export function placeBet(
     teamMoney: team.money,
     card: toWire(db, cardId, payload, 'open', row.scheduled_start_at, bettorTeamId, row.match_history_id ?? undefined),
   };
+}
+
+/** Build the in-app "view team" profile for one side of a bet card.
+ *  Pulled live from the card payload — these synthetic teams are NEVER
+ *  written to the teams table, keeping the DB clean of throwaway rows. */
+export function loadTeamProfileForCard(
+  db: DB, cardId: string, side: 'A' | 'B',
+): AiBetTeamProfile | null {
+  const row = db.loadAiCard(cardId);
+  if (!row) return null;
+  const payload = JSON.parse(row.payload_json) as CardPayload;
+  const s = side === 'A' ? payload.teamA : payload.teamB;
+  return {
+    name: s.team.name,
+    tag: s.team.tag,
+    logoId: s.logoId,
+    primaryColor: s.primaryColor,
+    totalCA: s.totalCA,
+    synergy: s.synergy,
+    players: s.players.slice(0, 5).map((p) => ({
+      nickname: p.nickname,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      nationality: p.nationality,
+      role: p.role,
+      age: p.age,
+      ca: p.currentAbility,
+      pa: p.potentialAbility,
+      traits: p.traits ?? [],
+    })),
+  };
+}
+
+/** Last N settled bets for one team — read directly from the permanent
+ *  history table so entries survive the card cleanup window. */
+export function loadMyBetHistory(db: DB, teamId: string, limit = 10): AiBetHistoryEntry[] {
+  return db.loadAiBetHistory(teamId, limit).map((r) => ({
+    cardId: r.card_id,
+    teamATag: r.team_a_tag,
+    teamBTag: r.team_b_tag,
+    teamALogo: r.team_a_logo,
+    teamBLogo: r.team_b_logo,
+    teamAColor: r.team_a_color,
+    teamBColor: r.team_b_color,
+    side: r.side,
+    stake: r.stake,
+    oddsAtBet: r.odds_at_bet,
+    status: r.status,
+    payout: r.payout,
+    winnerSide: r.winner_side,
+    mapsA: r.maps_a,
+    mapsB: r.maps_b,
+    settledAt: r.settled_at,
+  }));
 }
 
 // Re-export for handlers

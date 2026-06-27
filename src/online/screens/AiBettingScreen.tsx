@@ -10,6 +10,8 @@ import {
   AI_BET_LOCK_LEAD_MS,
   AI_BET_MAX_STAKE,
   AI_BET_MIN_STAKE,
+  findTrait,
+  type AiBetTeamProfile,
   type AiMatchCardWire,
 } from '../protocol';
 import ToastStack from './ToastStack';
@@ -18,7 +20,12 @@ export default function AiBettingScreen(): React.ReactElement | null {
   const team = useOnline((s) => s.team);
   const cards = useOnline((s) => s.aiBetCards);
   const refresh = useOnline((s) => s.refreshAiBets);
+  const refreshHistory = useOnline((s) => s.refreshAiBetHistory);
+  const myHistory = useOnline((s) => s.aiBetMyHistory);
   const fetchReplay = useOnline((s) => s.fetchAiBetReplay);
+  const fetchTeamView = useOnline((s) => s.fetchAiBetTeam);
+  const teamView = useOnline((s) => s.aiBetTeamView);
+  const dismissTeamView = useOnline((s) => s.dismissAiBetTeam);
   const go = useOnline((s) => s.go);
 
   // 1Hz heartbeat for countdown displays.
@@ -32,9 +39,10 @@ export default function AiBettingScreen(): React.ReactElement | null {
   // most of the live-update work).
   useEffect(() => {
     refresh();
+    refreshHistory();
     const id = setInterval(() => refresh(), 30_000);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [refresh, refreshHistory]);
 
   // Modal state — the card the user is actively placing a bet on.
   const [betFor, setBetFor] = useState<{ card: AiMatchCardWire; side: 'A' | 'B' } | null>(null);
@@ -119,6 +127,57 @@ export default function AiBettingScreen(): React.ReactElement | null {
         </div>
       )}
 
+      {/* ===== Last 10 resolved bets ===== */}
+      {myHistory.length > 0 && (
+        <div className="panel" style={{ padding: 14 }}>
+          <div className="panel-title">Last {Math.min(10, myHistory.length)} Resolved Bets</div>
+          <table className="table table-dense" style={{ marginTop: 6 }}>
+            <thead>
+              <tr>
+                <th>Match</th>
+                <th>My Pick</th>
+                <th className="num">Stake</th>
+                <th className="num">Odds</th>
+                <th>Result</th>
+                <th className="num">P/L</th>
+                <th>When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {myHistory.map((h) => {
+                const pickedTag = h.side === 'A' ? h.teamATag : h.teamBTag;
+                const pickedColor = h.side === 'A' ? h.teamAColor : h.teamBColor;
+                const winnerTag = h.winnerSide === 'A' ? h.teamATag : h.teamBTag;
+                const pnl = h.status === 'won' ? h.payout - h.stake : -h.stake;
+                return (
+                  <tr key={`${h.cardId}-${h.settledAt}`}>
+                    <td>
+                      <span style={{ color: h.teamAColor, fontWeight: 700 }}>{h.teamATag}</span>
+                      <span className="muted"> {h.mapsA}-{h.mapsB} </span>
+                      <span style={{ color: h.teamBColor, fontWeight: 700 }}>{h.teamBTag}</span>
+                    </td>
+                    <td><span style={{ color: pickedColor, fontWeight: 700 }}>{pickedTag}</span></td>
+                    <td className="num">${h.stake.toLocaleString()}</td>
+                    <td className="num">{h.oddsAtBet.toFixed(2)}×</td>
+                    <td>
+                      {h.status === 'won' ? (
+                        <span style={{ color: '#6ed09a', fontWeight: 700 }}>✅ won</span>
+                      ) : (
+                        <span style={{ color: '#e25555' }}>❌ {winnerTag} won</span>
+                      )}
+                    </td>
+                    <td className="num" style={{ color: pnl >= 0 ? '#6ed09a' : '#e25555', fontWeight: 700 }}>
+                      {pnl >= 0 ? '+' : ''}${pnl.toLocaleString()}
+                    </td>
+                    <td className="muted small">{formatHistoryTime(h.settledAt, clock)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* ===== Card grid ===== */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 12 }}>
         {sorted.map((c) => (
@@ -128,6 +187,7 @@ export default function AiBettingScreen(): React.ReactElement | null {
             now={clock}
             onBet={(side) => setBetFor({ card: c, side })}
             onReplay={() => fetchReplay(c.id)}
+            onTeamClick={(side) => fetchTeamView(c.id, side)}
           />
         ))}
         {sorted.length === 0 && (
@@ -145,18 +205,23 @@ export default function AiBettingScreen(): React.ReactElement | null {
         />
       )}
 
+      {teamView && (
+        <AiTeamProfileModal profile={teamView.profile} onClose={dismissTeamView} />
+      )}
+
       <ToastStack />
     </div>
   );
 }
 
 function BetCard({
-  card, now, onBet, onReplay,
+  card, now, onBet, onReplay, onTeamClick,
 }: {
   card: AiMatchCardWire;
   now: number;
   onBet: (side: 'A' | 'B') => void;
   onReplay: () => void;
+  onTeamClick: (side: 'A' | 'B') => void;
 }): React.ReactElement {
   const msToStart = card.scheduledStartAt - now;
   const lockMs = msToStart - AI_BET_LOCK_LEAD_MS;
@@ -186,6 +251,7 @@ function BetCard({
           isResolved={isResolved}
           myBet={myBet}
           onBet={() => onBet('A')}
+          onTeamClick={() => onTeamClick('A')}
         />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9fb4e4', fontWeight: 700, padding: '0 4px' }}>vs</div>
         <SidePanel
@@ -195,6 +261,7 @@ function BetCard({
           isResolved={isResolved}
           myBet={myBet}
           onBet={() => onBet('B')}
+          onTeamClick={() => onTeamClick('B')}
         />
       </div>
 
@@ -216,7 +283,7 @@ function BetCard({
 }
 
 function SidePanel({
-  card, side, locked, isResolved, myBet, onBet,
+  card, side, locked, isResolved, myBet, onBet, onTeamClick,
 }: {
   card: AiMatchCardWire;
   side: 'A' | 'B';
@@ -224,6 +291,7 @@ function SidePanel({
   isResolved: boolean;
   myBet: AiMatchCardWire['myBet'];
   onBet: () => void;
+  onTeamClick: () => void;
 }): React.ReactElement {
   const team = side === 'A' ? card.teamA : card.teamB;
   const odds = side === 'A' ? card.oddsA : card.oddsB;
@@ -245,15 +313,23 @@ function SidePanel({
         gap: 6,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <button
+        onClick={onTeamClick}
+        title={`View ${team.name} roster`}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
+          color: 'inherit', textAlign: 'left', font: 'inherit',
+        }}
+      >
         <span style={{ fontSize: 22 }}>{team.logoId}</span>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 700, color: '#fff', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div style={{ fontWeight: 700, color: '#fff', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'underline dotted rgba(255,255,255,0.25)', textUnderlineOffset: 3 }}>
             {team.tag}
           </div>
           <div className="muted small" style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team.name}</div>
         </div>
-      </div>
+      </button>
       <div style={{ display: 'flex', gap: 8, fontSize: 11 }} className="muted">
         <span>CA <strong style={{ color: '#d4d8e1' }}>{team.totalCA}</strong></span>
         <span>Syn <strong style={{ color: team.synergy >= 1 ? '#6ed09a' : '#e25555' }}>{team.synergy.toFixed(2)}×</strong></span>
@@ -413,4 +489,102 @@ function formatCountdown(ms: number): string {
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+/** Relative time string for the history table. `now` is threaded through
+ *  so the cell re-renders with the 1Hz heartbeat. */
+function formatHistoryTime(settledAt: number, now: number): string {
+  const diff = Math.max(0, now - settledAt);
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  return `${day}d ago`;
+}
+
+/** Read-only profile modal for a synthetic AI bet team. Roster comes from
+ *  the card payload — these teams are NEVER persisted to the teams table,
+ *  so the in-app modal is the only surface for inspecting them. */
+function AiTeamProfileModal({
+  profile, onClose,
+}: {
+  profile: AiBetTeamProfile;
+  onClose: () => void;
+}): React.ReactElement {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 680, padding: 18 }}>
+        <div className="modal-head" style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 36 }}>{profile.logoId}</span>
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: profile.primaryColor }}>{profile.tag}</div>
+              <div className="muted small">{profile.name}</div>
+            </div>
+          </div>
+          <button className="link-btn" onClick={onClose}>close ✕</button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, marginBottom: 12, fontSize: 12 }} className="muted">
+          <span>Total CA <strong style={{ color: '#d4d8e1' }}>{profile.totalCA}</strong></span>
+          <span>Synergy <strong style={{ color: profile.synergy >= 1 ? '#6ed09a' : '#e25555' }}>{profile.synergy.toFixed(2)}×</strong></span>
+          <span style={{ marginLeft: 'auto', fontStyle: 'italic', opacity: 0.7 }}>Synthetic team · betting-only</span>
+        </div>
+
+        <table className="table table-dense" style={{ width: '100%' }}>
+          <thead>
+            <tr>
+              <th>Player</th>
+              <th>Role</th>
+              <th>Nat</th>
+              <th className="num">Age</th>
+              <th className="num">CA</th>
+              <th className="num">PA</th>
+              <th>Traits</th>
+            </tr>
+          </thead>
+          <tbody>
+            {profile.players.map((p, i) => (
+              <tr key={i}>
+                <td><strong>{p.nickname}</strong> <span className="muted small">{p.firstName} {p.lastName}</span></td>
+                <td>{p.role}</td>
+                <td>{p.nationality}</td>
+                <td className="num">{Math.floor(p.age)}</td>
+                <td className="num">{p.ca}</td>
+                <td className="num">{p.pa}</td>
+                <td>
+                  {p.traits.length === 0 ? <span className="muted small">—</span> :
+                    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+                      {p.traits.map((id) => {
+                        const t = findTrait(id);
+                        if (!t) return null;
+                        const positive = t.tone === 'positive';
+                        return (
+                          <span
+                            key={id}
+                            title={t.description}
+                            style={{
+                              fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 999,
+                              background: positive ? 'rgba(110,208,154,0.16)' : 'rgba(226,85,85,0.14)',
+                              border: `1px solid ${positive ? 'rgba(110,208,154,0.6)' : 'rgba(226,85,85,0.6)'}`,
+                              color: positive ? '#6ed09a' : '#e25555',
+                            }}
+                          >
+                            {t.icon}
+                          </span>
+                        );
+                      })}
+                    </span>
+                  }
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }

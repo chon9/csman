@@ -233,6 +233,7 @@ export function seedRealNamePool(db: DB): { added: number } {
 
   const startDate = new Date().toISOString().slice(0, 10);
   const { ids: usedIds, nicks: usedNicks } = db.loadAllPlayerKeys();
+  const rng = new RNG(hashSeed('seed-real-name-pool'));
   let added = 0;
 
   const insertSpec = (spec: PlayerSpec): void => {
@@ -284,6 +285,35 @@ export function backfillLegacyContracts(db: DB): { updated: number } {
     db.persistPlayer(p);
     updated++;
   }
+  return { updated };
+}
+
+/**
+ * One-shot trait backfill for legacy player rows that predate the traits
+ * system (or that were seeded before the trait-roll was wired in). Walks
+ * every player whose `traits` field is missing or empty and runs the
+ * standard `rollPlayerTraits` over them — most will still roll empty (55%
+ * base hit rate) but the rare positive trait drops in.
+ *
+ * Canary-gated via meta_kv: runs exactly once per DB. Re-running after
+ * the canary is set returns {updated: 0} without scanning.
+ */
+export function backfillPlayerTraits(db: DB): { updated: number } {
+  if (db.getMeta('players_traits_backfilled') === '1') return { updated: 0 };
+  const rng = new RNG(hashSeed(`player-traits-backfill-${Date.now()}`));
+  const rows = db.raw.prepare(`SELECT id, json FROM players`).all() as { id: string; json: string }[];
+  let updated = 0;
+  for (const r of rows) {
+    let p: Player;
+    try { p = JSON.parse(r.json) as Player; }
+    catch { continue; }
+    if (Array.isArray(p.traits) && p.traits.length > 0) continue;
+    p.traits = rollPlayerTraits(rng);
+    if (p.traits.length === 0) continue; // rolled nothing — no write needed
+    db.persistPlayer(p);
+    updated++;
+  }
+  db.setMeta('players_traits_backfilled', '1');
   return { updated };
 }
 

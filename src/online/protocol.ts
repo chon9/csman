@@ -615,6 +615,56 @@ export interface AiBetSummary {
   placedAt: number;
 }
 
+/** One player on an AI bet team — slimmed-down player shape so the
+ *  reveal modal can show roster headlines without dumping the full
+ *  Player JSON over the wire. */
+export interface AiBetTeamPlayerWire {
+  nickname: string;
+  firstName: string;
+  lastName: string;
+  nationality: string;
+  role: string;
+  age: number;
+  ca: number;
+  pa: number;
+  traits: string[];
+}
+
+/** One settled-bet row in the user's permanent AI bet history. Stored
+ *  in ai_bet_history server-side (survives the card cleanup pass that
+ *  cascades the live bet rows out after the replay window). */
+export interface AiBetHistoryEntry {
+  cardId: string;
+  teamATag: string;
+  teamBTag: string;
+  teamALogo: string;
+  teamBLogo: string;
+  teamAColor: string;
+  teamBColor: string;
+  side: 'A' | 'B';
+  stake: number;
+  oddsAtBet: number;
+  status: 'won' | 'lost';
+  payout: number;
+  winnerSide: 'A' | 'B';
+  mapsA: number;
+  mapsB: number;
+  settledAt: number;
+}
+
+/** Per-card team detail shown in the AI bet "view team" modal. Lives
+ *  ENTIRELY in the card payload server-side — never persisted as a real
+ *  team row, so the DB stays clean. */
+export interface AiBetTeamProfile {
+  name: string;
+  tag: string;
+  logoId: string;
+  primaryColor: string;
+  totalCA: number;
+  synergy: number;
+  players: AiBetTeamPlayerWire[];
+}
+
 // ============ Daily quests + login streak ============
 
 /** Quest difficulty drives both the target threshold and the cash payout. */
@@ -1384,6 +1434,8 @@ export type ClientMessage =
   | { kind: 'list-ai-bets' }
   | { kind: 'place-ai-bet'; cardId: string; side: 'A' | 'B'; stake: number }
   | { kind: 'fetch-ai-bet-replay'; cardId: string }
+  | { kind: 'fetch-ai-bet-team'; cardId: string; side: 'A' | 'B' }
+  | { kind: 'list-my-ai-bet-history' }
   // ----- MMR rank leaderboard -----
   | { kind: 'list-ranked-leaderboard' }
   // ----- Contract renewal: extend a starter's duels-remaining -----
@@ -1478,6 +1530,8 @@ export type ServerMessage =
   | { kind: 'ai-bet-placed'; cardId: string; newMoney: number }
   | { kind: 'ai-bet-settled'; cardId: string; bet: AiBetSummary; newMoney: number }
   | { kind: 'ai-bet-card-update'; card: AiMatchCardWire }
+  | { kind: 'ai-bet-team'; cardId: string; side: 'A' | 'B'; profile: AiBetTeamProfile }
+  | { kind: 'ai-bet-my-history'; entries: AiBetHistoryEntry[] }
   | { kind: 'ranked-leaderboard'; rows: RankedLeaderRow[] }
   | { kind: 'loan-offers'; incoming: LoanOffer[]; outgoing: LoanOffer[] }
   | { kind: 'loan-event'; loan: LoanOffer }
@@ -1537,7 +1591,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 38;
+export const PROTOCOL_VERSION = 39;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

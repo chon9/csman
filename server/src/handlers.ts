@@ -344,7 +344,7 @@ import {
   registerForTournament,
   runReadyTournaments,
 } from './tournaments.ts';
-import { loadVisibleWire as loadAiBetCards, placeBet as placeAiBet } from './aiBetting.ts';
+import { loadMyBetHistory as loadMyAiBetHistory, loadTeamProfileForCard as loadAiBetTeam, loadVisibleWire as loadAiBetCards, placeBet as placeAiBet } from './aiBetting.ts';
 import { AI_BET_MAX_STAKE, AI_BET_MIN_STAKE } from '../../src/online/protocol.ts';
 
 /** ISO timestamp of the next 00:00 UTC — used to tell the client when the
@@ -2426,6 +2426,18 @@ export function handle(
       if (!player || player.teamId !== team.id) {
         return { kind: 'error', code: 'not-your-player', message: 'Player not on your roster.' };
       }
+      // Block releasing a player who is only on this roster because of an
+      // active loan — they're owned by another team and must be returned
+      // via the loan-recall flow, not released into FA.
+      const openLoan = db.loadOpenLoanForPlayer(player.id);
+      if (openLoan && openLoan.status === 'active' && openLoan.toTeamId === team.id) {
+        const lender = db.loadTeam(openLoan.fromTeamId);
+        return {
+          kind: 'error',
+          code: 'loaned-in',
+          message: `${player.nickname} is on loan from ${lender?.tag ?? 'another team'} — you can't release a loanee. Return them via Loans first.`,
+        };
+      }
       if (team.playerIds.length <= 5) {
         return { kind: 'error', code: 'min-roster', message: 'Need at least 5 players to keep duels running — sign someone before releasing.' };
       }
@@ -3033,6 +3045,18 @@ export function handle(
         teamATag: payload.teamA.team.tag,
         teamBTag: payload.teamB.team.tag,
       };
+    }
+
+    case 'fetch-ai-bet-team': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const profile = loadAiBetTeam(db, msg.cardId, msg.side);
+      if (!profile) return { kind: 'error', code: 'no-card', message: 'AI bet card not found.' };
+      return { kind: 'ai-bet-team', cardId: msg.cardId, side: msg.side, profile };
+    }
+
+    case 'list-my-ai-bet-history': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      return { kind: 'ai-bet-my-history', entries: loadMyAiBetHistory(db, conn.teamId, 10) };
     }
 
     // ---------- Phase 5: chat ----------
