@@ -550,6 +550,71 @@ export function eloDelta(myMmr: number, oppMmr: number, isWin: boolean, inPlacem
   return Math.round(delta);
 }
 
+// ============ AI vs AI betting market ============
+//
+// Server keeps a rolling set of synthetic AI match cards open at all
+// times. Each card has two fully-generated teams (random names, logos,
+// 5-player rosters), a scheduled start time, and decimal odds derived
+// from CA + role synergy + per-team random "form" + tactical advantage
+// rolls. Users place bets up to ~30 seconds before kickoff. At
+// scheduled start time the sim runs, the bets settle, the replay
+// becomes watchable for ~10 minutes.
+
+/** How many open cards the server tries to maintain at any moment. */
+export const AI_BET_ACTIVE_CARDS = 4;
+/** Countdown duration for newly-spawned cards. */
+export const AI_BET_COUNTDOWN_MS = 8 * 60 * 1000;
+/** Stop accepting new bets this many ms before kickoff. */
+export const AI_BET_LOCK_LEAD_MS = 20 * 1000;
+/** Card stays viewable post-resolve for replay watching. */
+export const AI_BET_REPLAY_WINDOW_MS = 10 * 60 * 1000;
+/** Bookmaker margin baked into the odds line. 0.05 = 5% house edge. */
+export const AI_BET_HOUSE_EDGE = 0.05;
+/** Stake bounds. */
+export const AI_BET_MIN_STAKE = 500;
+export const AI_BET_MAX_STAKE = 50_000;
+
+/** Slim team summary for the betting card UI. */
+export interface AiMatchTeamSummary {
+  name: string;
+  tag: string;
+  logoId: string;
+  primaryColor: string;
+  /** Sum of the 5 starters' CA — main strength indicator for the user. */
+  totalCA: number;
+  /** Pre-computed role synergy multiplier (1.0 = neutral). Surfaced so the
+   *  user can spot a 2-AWPer roster about to get punished. */
+  synergy: number;
+}
+
+/** One open or resolved bet card. */
+export interface AiMatchCardWire {
+  id: string;
+  teamA: AiMatchTeamSummary;
+  teamB: AiMatchTeamSummary;
+  oddsA: number;
+  oddsB: number;
+  scheduledStartAt: number;
+  status: 'open' | 'closing' | 'live' | 'resolved';
+  winnerSide?: 'A' | 'B' | null;
+  /** Total stake on each side — drives the "X/Y/Z teams have bet" feel. */
+  poolA?: number;
+  poolB?: number;
+  /** This user's bet on the card, if any. */
+  myBet?: AiBetSummary | null;
+  /** Match-history id once resolved — client can fetch the replay. */
+  matchHistoryId?: string;
+}
+
+export interface AiBetSummary {
+  side: 'A' | 'B';
+  stake: number;
+  oddsAtBet: number;
+  status: 'pending' | 'won' | 'lost';
+  payout?: number;
+  placedAt: number;
+}
+
 // ============ Daily quests + login streak ============
 
 /** Quest difficulty drives both the target threshold and the cash payout. */
@@ -1315,6 +1380,10 @@ export type ClientMessage =
   | { kind: 'list-quests' }
   | { kind: 'claim-quest'; questId: string }
   | { kind: 'claim-all-done-bonus' }
+  // ----- AI vs AI betting -----
+  | { kind: 'list-ai-bets' }
+  | { kind: 'place-ai-bet'; cardId: string; side: 'A' | 'B'; stake: number }
+  | { kind: 'fetch-ai-bet-replay'; cardId: string }
   // ----- MMR rank leaderboard -----
   | { kind: 'list-ranked-leaderboard' }
   // ----- Contract renewal: extend a starter's duels-remaining -----
@@ -1405,6 +1474,10 @@ export type ServerMessage =
   | { kind: 'quest-snapshot'; snapshot: QuestSnapshot }
   | { kind: 'quest-claimed'; questId: string; cashEarned: number; newMoney: number; snapshot: QuestSnapshot }
   | { kind: 'all-done-bonus-claimed'; cashEarned: number; newMoney: number; snapshot: QuestSnapshot }
+  | { kind: 'ai-bet-list'; cards: AiMatchCardWire[] }
+  | { kind: 'ai-bet-placed'; cardId: string; newMoney: number }
+  | { kind: 'ai-bet-settled'; cardId: string; bet: AiBetSummary; newMoney: number }
+  | { kind: 'ai-bet-card-update'; card: AiMatchCardWire }
   | { kind: 'ranked-leaderboard'; rows: RankedLeaderRow[] }
   | { kind: 'loan-offers'; incoming: LoanOffer[]; outgoing: LoanOffer[] }
   | { kind: 'loan-event'; loan: LoanOffer }
@@ -1464,7 +1537,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 36;
+export const PROTOCOL_VERSION = 37;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

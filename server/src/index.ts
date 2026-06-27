@@ -16,6 +16,7 @@ import { handle, newConnSession, type ConnSession } from './handlers.ts';
 import { handleHttp } from './httpRoutes.ts';
 import { backfillLegacyContracts, sanitizePlayerAges, seedRealNamePool } from './freeAgents.ts';
 import { startBustTicker as startCrashBustTicker } from './crashSessions.ts';
+import { cleanupStaleCards, ensureCards, settleDueCards } from './aiBetting.ts';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../src/online/protocol.ts';
 
 const PORT = Number(process.env.CSM_PORT ?? 8787);
@@ -126,6 +127,22 @@ startCrashBustTicker(50, (session) => {
     },
   });
 });
+
+// AI vs AI betting market ticker. Every 2 seconds:
+//   - Top up the active-card count to AI_BET_ACTIVE_CARDS (broadcast new cards)
+//   - Settle any cards whose scheduled kickoff has passed (run sim, pay bets)
+//   - Drop resolved cards once their replay window has elapsed
+// All three calls are cheap idempotent SQL operations; safe to run frequently.
+ensureCards(db, broadcastAll);
+setInterval(() => {
+  try {
+    ensureCards(db, broadcastAll);
+    settleDueCards(db, notifyTeam, broadcastAll, (line) => console.log(`[csm:ai-bet] ${line}`));
+    cleanupStaleCards(db);
+  } catch (err) {
+    console.error('[csm:ai-bet] tick error', err);
+  }
+}, 2_000).unref();
 
 function bindTeamSocket(ws: WebSocket, teamId: string): void {
   let set = socketsByTeam.get(teamId);

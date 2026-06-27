@@ -19,6 +19,7 @@ import OnlineMassageScreen from './online/screens/OnlineMassageScreen';
 import OnlineMiniGamesScreen from './online/screens/OnlineMiniGamesScreen';
 import OnlineScoutScreen from './online/screens/OnlineScoutScreen';
 import OnlineStreamScreen from './online/screens/OnlineStreamScreen';
+import AiBettingScreen from './online/screens/AiBettingScreen';
 import OnlineSidebar from './online/screens/OnlineSidebar';
 import ChatWidget from './online/screens/ChatWidget';
 import DevReportModal from './online/screens/DevReportModal';
@@ -146,6 +147,7 @@ export default function App() {
     else if (onlineScreen === 'mini-games') body = <OnlineMiniGamesScreen />;
     else if (onlineScreen === 'scout') body = <OnlineScoutScreen />;
     else if (onlineScreen === 'streaming') body = <OnlineStreamScreen />;
+    else if (onlineScreen === 'ai-bets') body = <AiBettingScreen />;
     else body = <OnlineHomeScreen />;
     return (
       <div className="online-layout">

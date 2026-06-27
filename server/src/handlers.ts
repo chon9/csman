@@ -344,6 +344,8 @@ import {
   registerForTournament,
   runReadyTournaments,
 } from './tournaments.ts';
+import { loadVisibleWire as loadAiBetCards, placeBet as placeAiBet } from './aiBetting.ts';
+import { AI_BET_MAX_STAKE, AI_BET_MIN_STAKE } from '../../src/online/protocol.ts';
 
 /** ISO timestamp of the next 00:00 UTC — used to tell the client when the
  *  daily bonus resets so it can show a countdown without polling. */
@@ -2981,6 +2983,58 @@ export function handle(
         result: cached,
         teamATag,
         teamBTag,
+      };
+    }
+
+    // ---------- AI vs AI betting market ----------
+
+    case 'list-ai-bets': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      return { kind: 'ai-bet-list', cards: loadAiBetCards(db, conn.teamId) };
+    }
+
+    case 'place-ai-bet': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      if (msg.side !== 'A' && msg.side !== 'B') {
+        return { kind: 'error', code: 'bad-side', message: 'Bet side must be A or B.' };
+      }
+      const stake = Math.round(Number(msg.stake) || 0);
+      if (stake < AI_BET_MIN_STAKE || stake > AI_BET_MAX_STAKE) {
+        return {
+          kind: 'error',
+          code: 'bad-stake',
+          message: `Stake must be between $${AI_BET_MIN_STAKE.toLocaleString()} and $${AI_BET_MAX_STAKE.toLocaleString()}.`,
+        };
+      }
+      const res = placeAiBet(db, msg.cardId, conn.teamId, msg.side, stake);
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      // Echo the new wallet state for the betting team and broadcast the
+      // updated card so other clients see the pool counter tick up.
+      notifyTeam(conn.teamId, { kind: 'team-money-updated', teamId: conn.teamId, money: res.teamMoney });
+      broadcast({ kind: 'ai-bet-card-update', card: res.card });
+      return { kind: 'ai-bet-placed', cardId: msg.cardId, newMoney: res.teamMoney };
+    }
+
+    case 'fetch-ai-bet-replay': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      // The card payload holds the synthetic team tags — needed because
+      // these matches never get written to match_history (the teams aren't
+      // real DB rows). Replay frames live in the live-replay cache.
+      const card = db.loadAiCard(msg.cardId);
+      if (!card || !card.match_history_id) {
+        return { kind: 'live-replay-expired', matchId: msg.cardId };
+      }
+      const cached = getLiveReplay(card.match_history_id);
+      if (!cached) {
+        return { kind: 'live-replay-expired', matchId: card.match_history_id };
+      }
+      const payload = JSON.parse(card.payload_json) as { teamA: { team: { tag: string } }; teamB: { team: { tag: string } } };
+      return {
+        kind: 'live-replay',
+        matchId: card.match_history_id,
+        result: cached,
+        teamATag: payload.teamA.team.tag,
+        teamBTag: payload.teamB.team.tag,
       };
     }
 

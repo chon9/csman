@@ -396,6 +396,38 @@ export function openDb(path: string) {
       FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_daily_quest_team_date ON daily_quests(team_id, utc_date);
+
+    -- AI vs AI betting cards. Each row carries the full synthetic match
+    -- (teams + players + odds + scheduled time) in payload_json. Status
+    -- ratchets open → closing → live → resolved. The cleanup pass deletes
+    -- resolved cards past the replay-window.
+    CREATE TABLE IF NOT EXISTS ai_match_cards (
+      id TEXT PRIMARY KEY,
+      status TEXT NOT NULL,
+      scheduled_start_at INTEGER NOT NULL,
+      resolved_at INTEGER,
+      match_history_id TEXT,
+      payload_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_card_status ON ai_match_cards(status, scheduled_start_at);
+
+    -- Bets placed on the above cards. PK on (card_id, bettor_team_id)
+    -- because each team can only have ONE active bet per card.
+    CREATE TABLE IF NOT EXISTS ai_match_bets (
+      card_id TEXT NOT NULL,
+      bettor_team_id TEXT NOT NULL,
+      side TEXT NOT NULL,
+      stake INTEGER NOT NULL,
+      odds_at_bet REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      placed_at INTEGER NOT NULL,
+      settled_at INTEGER,
+      payout INTEGER,
+      PRIMARY KEY (card_id, bettor_team_id),
+      FOREIGN KEY (card_id) REFERENCES ai_match_cards(id) ON DELETE CASCADE,
+      FOREIGN KEY (bettor_team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_bet_team ON ai_match_bets(bettor_team_id);
   `);
   // Skin inventory rows owned by this team — JSON-blob per skin instance.
   db.exec(`
@@ -756,6 +788,117 @@ export function openDb(path: string) {
   }
   function claimDailyQuest(id: string): void {
     markQuestClaimed.run(Date.now(), id);
+  }
+
+  // -------- AI vs AI betting market --------
+
+  const insertAiCard = db.prepare(
+    `INSERT INTO ai_match_cards (id, status, scheduled_start_at, payload_json) VALUES (?, ?, ?, ?)`,
+  );
+  const updateAiCardStatus = db.prepare(
+    `UPDATE ai_match_cards SET status = ? WHERE id = ?`,
+  );
+  const updateAiCardResolved = db.prepare(
+    `UPDATE ai_match_cards SET status = 'resolved', resolved_at = ?, match_history_id = ?, payload_json = ? WHERE id = ?`,
+  );
+  const deleteAiCard = db.prepare(`DELETE FROM ai_match_cards WHERE id = ?`);
+  const loadAiCardById = db.prepare(`SELECT * FROM ai_match_cards WHERE id = ?`);
+  const loadAiCardsActiveOrRecent = db.prepare(
+    // 'open' / 'closing' / 'live' or recently resolved (within replay window)
+    `SELECT * FROM ai_match_cards
+     WHERE status IN ('open','closing','live') OR (status = 'resolved' AND resolved_at >= ?)
+     ORDER BY scheduled_start_at ASC`,
+  );
+  const loadAiCardsToStart = db.prepare(
+    `SELECT * FROM ai_match_cards WHERE status IN ('open','closing') AND scheduled_start_at <= ?`,
+  );
+  const loadAiCardsToCleanup = db.prepare(
+    `SELECT id FROM ai_match_cards WHERE status = 'resolved' AND resolved_at < ?`,
+  );
+  const countAiOpenCards = db.prepare(
+    `SELECT COUNT(*) AS n FROM ai_match_cards WHERE status IN ('open','closing')`,
+  );
+
+  interface AiCardRow {
+    id: string;
+    status: string;
+    scheduled_start_at: number;
+    resolved_at: number | null;
+    match_history_id: string | null;
+    payload_json: string;
+  }
+  function createAiCard(args: { id: string; status: string; scheduledStartAt: number; payloadJson: string }): void {
+    insertAiCard.run(args.id, args.status, args.scheduledStartAt, args.payloadJson);
+  }
+  function setAiCardStatus(id: string, status: string): void { updateAiCardStatus.run(status, id); }
+  function resolveAiCard(id: string, matchHistoryId: string, payloadJson: string): void {
+    updateAiCardResolved.run(Date.now(), matchHistoryId, payloadJson, id);
+  }
+  function loadAiCard(id: string): AiCardRow | null {
+    return (loadAiCardById.get(id) as AiCardRow | undefined) ?? null;
+  }
+  function loadVisibleAiCards(): AiCardRow[] {
+    const cutoff = Date.now() - 0; // replay window check happens caller-side
+    return loadAiCardsActiveOrRecent.all(cutoff - 0) as AiCardRow[];
+  }
+  /** Cards whose start time has passed but haven't yet been simulated. */
+  function loadDueAiCards(now: number): AiCardRow[] {
+    return loadAiCardsToStart.all(now) as AiCardRow[];
+  }
+  function loadStaleAiCardIds(before: number): string[] {
+    const rows = loadAiCardsToCleanup.all(before) as Array<{ id: string }>;
+    return rows.map((r) => r.id);
+  }
+  function deleteAiCardById(id: string): void { deleteAiCard.run(id); }
+  function countOpenAiCards(): number {
+    const r = countAiOpenCards.get() as { n: number };
+    return r.n;
+  }
+
+  // ----- AI bets -----
+
+  const upsertAiBet = db.prepare(
+    `INSERT INTO ai_match_bets (card_id, bettor_team_id, side, stake, odds_at_bet, status, placed_at)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?)
+     ON CONFLICT(card_id, bettor_team_id) DO UPDATE SET
+       side = excluded.side,
+       stake = ai_match_bets.stake + excluded.stake,
+       odds_at_bet = ((ai_match_bets.stake * ai_match_bets.odds_at_bet) + (excluded.stake * excluded.odds_at_bet)) / (ai_match_bets.stake + excluded.stake)`,
+  );
+  const loadAiBetByTeam = db.prepare(
+    `SELECT * FROM ai_match_bets WHERE card_id = ? AND bettor_team_id = ?`,
+  );
+  const loadAiBetsForCard = db.prepare(
+    `SELECT * FROM ai_match_bets WHERE card_id = ?`,
+  );
+  const settleAiBet = db.prepare(
+    `UPDATE ai_match_bets SET status = ?, settled_at = ?, payout = ? WHERE card_id = ? AND bettor_team_id = ?`,
+  );
+
+  interface AiBetRow {
+    card_id: string;
+    bettor_team_id: string;
+    side: 'A' | 'B';
+    stake: number;
+    odds_at_bet: number;
+    status: 'pending' | 'won' | 'lost';
+    placed_at: number;
+    settled_at: number | null;
+    payout: number | null;
+  }
+  function placeAiBet(args: {
+    cardId: string; bettorTeamId: string; side: 'A' | 'B'; stake: number; oddsAtBet: number;
+  }): void {
+    upsertAiBet.run(args.cardId, args.bettorTeamId, args.side, args.stake, args.oddsAtBet, Date.now());
+  }
+  function loadAiBet(cardId: string, bettorTeamId: string): AiBetRow | null {
+    return (loadAiBetByTeam.get(cardId, bettorTeamId) as AiBetRow | undefined) ?? null;
+  }
+  function loadAllAiBetsForCard(cardId: string): AiBetRow[] {
+    return loadAiBetsForCard.all(cardId) as AiBetRow[];
+  }
+  function settleAiBetRow(cardId: string, bettorTeamId: string, status: 'won' | 'lost', payout: number): void {
+    settleAiBet.run(status, Date.now(), payout, cardId, bettorTeamId);
   }
 
   // -------- Wall-clock auto-advance --------
@@ -2197,6 +2340,19 @@ export function openDb(path: string) {
     loadDailyQuest,
     bumpDailyQuestProgress,
     claimDailyQuest,
+    createAiCard,
+    setAiCardStatus,
+    resolveAiCard,
+    loadAiCard,
+    loadVisibleAiCards,
+    loadDueAiCards,
+    loadStaleAiCardIds,
+    deleteAiCardById,
+    countOpenAiCards,
+    placeAiBet,
+    loadAiBet,
+    loadAllAiBetsForCard,
+    settleAiBetRow,
     applyMmrChange,
     loadMmrLeaderboard,
     getAutoTickAnchor,

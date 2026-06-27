@@ -51,11 +51,12 @@ import type {
   TeamProfileFields,
   TournamentDetail,
   TournamentSummary,
+  AiMatchCardWire,
 } from './protocol';
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -259,6 +260,9 @@ interface OnlineState {
   myCoach: CoachListing | null;
   sponsors: SponsorOffer[];
 
+  // ----- AI vs AI betting market -----
+  aiBetCards: AiMatchCardWire[];
+
   // ----- UI -----
   screen: OnlineScreen;
   errorBanner: string | null;
@@ -397,6 +401,10 @@ interface OnlineState {
   fireCoach: () => void;
   listSponsors: () => void;
   respondSponsor: (sponsorId: string, accept: boolean) => void;
+  // AI vs AI betting market
+  refreshAiBets: () => void;
+  placeAiBet: (cardId: string, side: 'A' | 'B', stake: number) => void;
+  fetchAiBetReplay: (cardId: string) => void;
 }
 
 let nextToastId = 1;
@@ -485,6 +493,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   coachPool: [],
   myCoach: null,
   sponsors: [],
+  aiBetCards: [],
   screen: 'connect',
   errorBanner: null,
   toasts: [],
@@ -1305,7 +1314,42 @@ export const useOnline = create<OnlineState>((set, get) => ({
         case 'team-money-updated': {
           const t = get().team;
           if (t && t.id === msg.teamId) set({ team: { ...t, money: msg.money } });
-          pushToast('info', `Admin adjusted your cash → $${msg.money.toLocaleString()}.`);
+          // No toast here — this also fires after AI bet placement / settlement,
+          // and the betting flow surfaces its own dedicated toast.
+          break;
+        }
+        case 'ai-bet-list': {
+          set({ aiBetCards: msg.cards });
+          break;
+        }
+        case 'ai-bet-placed': {
+          const t = get().team;
+          if (t) set({ team: { ...t, money: msg.newMoney } });
+          pushToast('success', `Bet placed — good luck.`);
+          break;
+        }
+        case 'ai-bet-settled': {
+          const t = get().team;
+          if (t) set({ team: { ...t, money: msg.newMoney } });
+          if (msg.bet.status === 'won') {
+            pushToast('success', `Bet WON — payout $${(msg.bet.payout ?? 0).toLocaleString()}.`);
+          } else {
+            pushToast('warn', `Bet lost — $${msg.bet.stake.toLocaleString()} gone.`);
+          }
+          // Refresh the card list so the bet shows as settled with a payout.
+          client.send({ kind: 'list-ai-bets' });
+          break;
+        }
+        case 'ai-bet-card-update': {
+          const existing = get().aiBetCards;
+          const idx = existing.findIndex((c) => c.id === msg.card.id);
+          if (idx >= 0) {
+            const next = existing.slice();
+            next[idx] = msg.card;
+            set({ aiBetCards: next });
+          } else {
+            set({ aiBetCards: [...existing, msg.card] });
+          }
           break;
         }
         case 'team-deleted-by-admin': {
@@ -1774,5 +1818,17 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   respondSponsor(sponsorId, accept) {
     get().client?.send({ kind: 'respond-sponsor', sponsorId, accept });
+  },
+
+  refreshAiBets() {
+    get().client?.send({ kind: 'list-ai-bets' });
+  },
+
+  placeAiBet(cardId, side, stake) {
+    get().client?.send({ kind: 'place-ai-bet', cardId, side, stake });
+  },
+
+  fetchAiBetReplay(cardId) {
+    get().client?.send({ kind: 'fetch-ai-bet-replay', cardId });
   },
 }));
