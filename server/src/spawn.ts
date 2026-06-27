@@ -6,6 +6,37 @@ import { RNG, hashSeed } from '../../src/engine/rng.ts';
 import { NEWGEN_POOLS } from '../../src/data/newgenNames.ts';
 import { buildPlayer, type PlayerSpec } from '../../src/data/dbBuild.ts';
 import type { Player, PlayerRole, Region } from '../../src/types.ts';
+import { TRAIT_GEN_CHANCE, TRAIT_LIBRARY, type TraitDef } from '../../src/online/protocol.ts';
+
+/** Weighted pick from a TraitDef array using its `weight` field. */
+function weightedTrait(rng: RNG, pool: TraitDef[]): TraitDef {
+  const total = pool.reduce((s, t) => s + t.weight, 0);
+  let r = rng.next() * total;
+  for (const t of pool) {
+    r -= t.weight;
+    if (r <= 0) return t;
+  }
+  return pool[pool.length - 1]!;
+}
+
+/** Roll a player's traits at creation time. Most players get 0 or 1 trait;
+ *  a small minority get a second (often negative) one — gives every roster
+ *  flavour without making every player special. */
+export function rollPlayerTraits(rng: RNG): string[] {
+  if (!rng.chance(TRAIT_GEN_CHANCE.hasAnyTrait)) return [];
+  const traits: string[] = [];
+  const positives = TRAIT_LIBRARY.filter((t) => t.tone === 'positive');
+  const first = weightedTrait(rng, positives);
+  traits.push(first.id);
+  if (rng.chance(TRAIT_GEN_CHANCE.hasSecondTrait)) {
+    const wantNegative = rng.chance(TRAIT_GEN_CHANCE.secondTraitIsNegative);
+    const pool = TRAIT_LIBRARY.filter(
+      (t) => t.tone === (wantNegative ? 'negative' : 'positive') && t.id !== first.id,
+    );
+    if (pool.length > 0) traits.push(weightedTrait(rng, pool).id);
+  }
+  return traits;
+}
 
 /** Roles every team needs at least one of, in the order we spawn them. */
 const DEFAULT_ROLES: PlayerRole[] = ['IGL', 'AWPer', 'Entry', 'Lurker', 'Support'];
@@ -59,6 +90,7 @@ export function spawnInitialRoster(
     // Bump PA so wonderkid arcs are possible from day one.
     player.potentialAbility = Math.min(200, player.potentialAbility + rng.int(8, 28));
     player.squadTier = 'first';
+    player.traits = rollPlayerTraits(rng);
     out.push(player);
   }
   return out;

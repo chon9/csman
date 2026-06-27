@@ -9,7 +9,7 @@
 import { useMemo } from 'react';
 import { useOnline } from '../onlineStore';
 import type { Player, PlayerAttributes } from '../../types';
-import type { PublicPlayer } from '../protocol';
+import { findTrait, type PublicPlayer } from '../protocol';
 import { TeamTag } from './TeamProfileModal';
 
 /** Clickable player nickname — drops into any roster/scoreboard cell. */
@@ -145,6 +145,37 @@ export default function PlayerProfileModal(): React.ReactElement | null {
             <ProfileStat label="Contract" value={`${ownPlayer.contract.duelsRemaining ?? '∞'}d left`} color={typeof ownPlayer.contract.duelsRemaining === 'number' && ownPlayer.contract.duelsRemaining <= 5 ? '#e25555' : '#d4d8e1'} />
           )}
         </div>
+
+        {/* ===== Traits — engine modifiers ===== */}
+        {ownPlayer?.traits && ownPlayer.traits.length > 0 && (
+          <div style={{ marginBottom: 14, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {ownPlayer.traits.map((id) => {
+              const trait = findTrait(id);
+              if (!trait) return null;
+              const positive = trait.tone === 'positive';
+              const pillColor = positive ? '#6ed09a' : '#e25555';
+              return (
+                <span
+                  key={id}
+                  title={trait.description}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '4px 10px', borderRadius: 999,
+                    background: positive ? 'rgba(110,208,154,0.12)' : 'rgba(226,85,85,0.10)',
+                    border: `1px solid ${positive ? 'rgba(110,208,154,0.45)' : 'rgba(226,85,85,0.45)'}`,
+                    color: pillColor, fontSize: 12, fontWeight: 700, letterSpacing: 0.3,
+                  }}
+                >
+                  <span style={{ fontSize: 14 }}>{trait.icon}</span>
+                  {trait.label}
+                  <span style={{ opacity: 0.7, fontWeight: 600, fontSize: 11 }}>
+                    {positive ? '+' : ''}{Math.round((trait.mult - 1) * 100)}%
+                  </span>
+                </span>
+              );
+            })}
+          </div>
+        )}
 
         {/* ===== Role impact ===== */}
         {roleImpact && (

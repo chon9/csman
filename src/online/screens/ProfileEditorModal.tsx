@@ -1,8 +1,8 @@
 // Modal to edit team profile fields (bio + color + social links).
 // Server enforces hex format on primaryColor + length caps on text fields.
 
-import { useState } from 'react';
-import type { TeamProfileFields } from '../protocol';
+import { useMemo, useState } from 'react';
+import { LOGO_PACK, type TeamProfileFields } from '../protocol';
 import { useOnline } from '../onlineStore';
 
 export default function ProfileEditorModal({ onClose }: { onClose: () => void }) {
@@ -14,11 +14,19 @@ export default function ProfileEditorModal({ onClose }: { onClose: () => void })
   const [twitch, setTwitch] = useState(team?.twitchUrl ?? '');
   const [twitter, setTwitter] = useState(team?.twitterUrl ?? '');
   const [youtube, setYoutube] = useState(team?.youtubeUrl ?? '');
+  const [logoId, setLogoId] = useState(team?.logoId ?? '');
+
+  // Group LOGO_PACK by category for the picker so the gallery scans cleanly.
+  const grouped = useMemo(() => {
+    const out: Record<string, typeof LOGO_PACK> = {};
+    for (const l of LOGO_PACK) (out[l.category] ??= []).push(l);
+    return out;
+  }, []);
 
   if (!team) return null;
 
   function save(): void {
-    const fields: TeamProfileFields = { bio, primaryColor: color, twitchUrl: twitch, twitterUrl: twitter, youtubeUrl: youtube };
+    const fields: TeamProfileFields = { bio, primaryColor: color, twitchUrl: twitch, twitterUrl: twitter, youtubeUrl: youtube, logoId };
     update(fields);
     onClose();
   }
@@ -44,6 +52,53 @@ export default function ProfileEditorModal({ onClose }: { onClose: () => void })
               placeholder="Brief team description — who you are, what you're playing for."
             />
           </label>
+          {/* Logo picker — curated emoji pack the user picks from. */}
+          <div className="field">
+            <span className="field-label">Logo</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <div
+                style={{
+                  width: 48, height: 48, borderRadius: 10,
+                  background: `linear-gradient(135deg, ${color}, ${color}88)`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 28, color: '#0a0d12', fontWeight: 800,
+                  boxShadow: `0 0 12px ${color}55`,
+                }}
+              >
+                {logoId || team.tag.slice(0, 2).toUpperCase()}
+              </div>
+              <div className="muted small">
+                Preview · {logoId ? <button className="link-btn" style={{ float: 'none', display: 'inline' }} onClick={() => setLogoId('')}>clear (use tag)</button> : 'default initials'}
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 280, overflowY: 'auto', padding: 6, background: 'rgba(255,255,255,0.02)', borderRadius: 6 }}>
+              {Object.entries(grouped).map(([cat, items]) => (
+                <div key={cat}>
+                  <div className="muted small" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{cat}</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {items.map((opt) => {
+                      const picked = opt.id === logoId;
+                      return (
+                        <button
+                          key={opt.id}
+                          title={opt.label}
+                          onClick={() => setLogoId(opt.id)}
+                          style={{
+                            width: 36, height: 36, borderRadius: 6,
+                            background: picked ? `${color}40` : 'rgba(255,255,255,0.04)',
+                            border: picked ? `2px solid ${color}` : '1px solid rgba(255,255,255,0.10)',
+                            cursor: 'pointer', fontSize: 22, padding: 0,
+                          }}
+                        >
+                          {opt.id}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
           <label className="field">
             <span className="field-label">Primary color</span>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

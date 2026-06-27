@@ -27,6 +27,8 @@ export interface TeamRow {
   twitchUrl: string;
   twitterUrl: string;
   youtubeUrl: string;
+  /** Chosen emoji logo id from LOGO_PACK. Empty = no custom logo set. */
+  logoId: string;
   /** Competitive PvP MMR. Seeded at 1000 on first load. */
   mmr: number;
   peakMmr: number;
@@ -319,6 +321,10 @@ export function openDb(path: string) {
   };
   tryAddColumn('teams', 'tactics_json', 'TEXT', "'{}'");
   tryAddColumn('teams', 'logo_data', 'TEXT', "''");
+  // Pre-curated emoji logo chosen from LOGO_PACK. Empty = default 2-char
+  // initials-on-color mark. Persisted via update-profile, surfaced in
+  // OnlineSidebar + TeamProfileModal + TeamTag tooltip.
+  tryAddColumn('teams', 'logo_id', 'TEXT', "''");
   tryAddColumn('teams', 'bio', 'TEXT', "''");
   tryAddColumn('teams', 'primary_color', 'TEXT', "'#de9b35'");
   tryAddColumn('teams', 'twitch_url', 'TEXT', "''");
@@ -983,6 +989,7 @@ export function openDb(path: string) {
       twitchUrl: (row.twitch_url as string | null) ?? '',
       twitterUrl: (row.twitter_url as string | null) ?? '',
       youtubeUrl: (row.youtube_url as string | null) ?? '',
+      logoId: (row.logo_id as string | null) ?? '',
       mmr: (row.mmr as number | null) ?? 1000,
       peakMmr: (row.peak_mmr as number | null) ?? 1000,
       placementMatchesPlayed: (row.placement_matches_played as number | null) ?? 0,
@@ -1020,6 +1027,9 @@ export function openDb(path: string) {
     if (typeof fields.twitchUrl === 'string') { sets.push('twitch_url = ?'); args.push(fields.twitchUrl.slice(0, 200)); }
     if (typeof fields.twitterUrl === 'string') { sets.push('twitter_url = ?'); args.push(fields.twitterUrl.slice(0, 200)); }
     if (typeof fields.youtubeUrl === 'string') { sets.push('youtube_url = ?'); args.push(fields.youtubeUrl.slice(0, 200)); }
+    // Logo id — short emoji code from LOGO_PACK. Capped at 8 chars so
+    // we don't accept arbitrarily long blobs even if the client lies.
+    if (typeof fields.logoId === 'string') { sets.push('logo_id = ?'); args.push(fields.logoId.slice(0, 8)); }
     if (sets.length === 0) return;
     args.push(teamId);
     db.prepare(`UPDATE teams SET ${sets.join(', ')} WHERE id = ?`).run(...args);

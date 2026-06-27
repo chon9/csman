@@ -29,6 +29,7 @@ import {
   type BuyDecision,
 } from './economy';
 import { runVeto } from './veto';
+import { findTrait } from '../online/protocol';
 import { pickStrat, pickUtilityLineup, rollUtilityDamage, clockAt, TEMPO_TICKS, AWP_LANES } from './strats';
 import { roleSkillModifier as analyticsRoleSkillModifier } from '../sim/playerAnalytics';
 
@@ -125,7 +126,28 @@ export function roleFitMultiplier(player: Player, assignedRole: PlayerRole, duty
 
 // ============ Effective skill ============
 
-function effectiveSkill(p: Player, mapProf: number, coachSkill: number, pressure: number, dayVariance: number): number {
+/** Resolve the trait multiplier for this match context. Map specialists
+ *  fire when the trait's map matches the current map. Big-game / stage
+ *  fright fire when pressure crosses 0.5 (i.e. tournament finals,
+ *  high-stake PvPs). Multipliers compose — a Mirage Specialist with Big
+ *  Game on Mirage in a final gets BOTH bumps stacked. */
+function traitMultiplier(player: Player, map: MapName, pressure: number): number {
+  const ids = player.traits;
+  if (!ids || ids.length === 0) return 1.0;
+  let mult = 1.0;
+  for (const id of ids) {
+    const trait = findTrait(id);
+    if (!trait) continue;
+    if (trait.effect === 'map_specialist' || trait.effect === 'map_weak') {
+      if (trait.map === map) mult *= trait.mult;
+    } else if (trait.effect === 'big_game' || trait.effect === 'stage_fright') {
+      if (pressure >= 0.5) mult *= trait.mult;
+    }
+  }
+  return mult;
+}
+
+function effectiveSkill(p: Player, map: MapName, mapProf: number, coachSkill: number, pressure: number, dayVariance: number): number {
   const a = p.attributes;
   let base =
     a.aim * 0.28 +
@@ -144,6 +166,9 @@ function effectiveSkill(p: Player, mapProf: number, coachSkill: number, pressure
   base *= 1 + ((mapProf - 10) / 10) * 0.07;
   // coach ±3%
   base *= 1 + ((coachSkill - 10) / 10) * 0.03;
+  // Per-player traits: map specialist / weak (+12%/-10% on a specific
+  // map) and pressure traits (+10%/-12% under high-stake matches).
+  base *= traitMultiplier(p, map, pressure);
   // Big-stage choke: low composure makes players crumble under pressure; high
   // resilience claws some of that back (you can be jittery the first round but
   // settle in). Effective stage tolerance = (composure + resilience) / 2.
@@ -1135,7 +1160,7 @@ function simulateMap(
         weapon: '',
         hasBomb: false,
         eff:
-          effectiveSkill(p, prof, team.team.coachSkill, pressure, rng.next()) *
+          effectiveSkill(p, map, prof, team.team.coachSkill, pressure, rng.next()) *
           (idx === 0 ? mapFormA : mapFormB) *
           fit *
           // Role composition: penalty/bonus per side from IGL/AWPer/Entry/
@@ -1364,7 +1389,7 @@ export function resimulateMapFromRound(
       return {
         p, side: 'T' as const, teamIdx: idx, alive: true, zone: '', path: [], weapon: '',
         hasBomb: false,
-        eff: effectiveSkill(p, prof, team.team.coachSkill, pressure, rng.next())
+        eff: effectiveSkill(p, map, prof, team.team.coachSkill, pressure, rng.next())
           * (idx === 0 ? mapFormA : mapFormB) * fit
           * (1 + ((team.chemistry - 50) / 50) * 0.08),
         utilSkill: p.attributes.utility,

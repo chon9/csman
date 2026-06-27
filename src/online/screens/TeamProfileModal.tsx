@@ -59,9 +59,9 @@ export default function TeamProfileModal(): React.ReactElement | null {
                 style={{
                   width: 56, height: 56, borderRadius: 10, background: `linear-gradient(135deg, ${accent}, ${accent}88)`,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontWeight: 800, fontSize: 22, color: '#0a0d12', boxShadow: `0 0 18px ${accent}55`,
+                  fontWeight: 800, fontSize: profile.logoId ? 32 : 22, color: '#0a0d12', boxShadow: `0 0 18px ${accent}55`,
                 }}
-              >{profile.tag.slice(0, 2).toUpperCase()}</div>
+              >{profile.logoId || profile.tag.slice(0, 2).toUpperCase()}</div>
               <div>
                 <h3 style={{ margin: 0 }}>
                   <span style={{ color: accent }}>{profile.tag}</span>

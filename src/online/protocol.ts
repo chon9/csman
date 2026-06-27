@@ -32,6 +32,9 @@ export interface OnlineTeam {
   twitchUrl?: string;
   twitterUrl?: string;
   youtubeUrl?: string;
+  /** Chosen logo emoji from LOGO_PACK (e.g. "🐉"). Empty = default
+   *  initials-on-color brand mark. */
+  logoId?: string;
   /** Competitive MMR (PvP only). 1000 = Silver Elite Master. */
   mmr?: number;
   /** All-time peak MMR. Used as a "best rank" trophy stat. */
@@ -62,6 +65,7 @@ export interface TeamProfileFields {
   twitchUrl?: string;
   twitterUrl?: string;
   youtubeUrl?: string;
+  logoId?: string;
 }
 
 /** Public-roster snapshot of one player — scrubbed for the click-to-view
@@ -95,6 +99,7 @@ export interface PublicTeamProfile {
   twitchUrl?: string;
   twitterUrl?: string;
   youtubeUrl?: string;
+  logoId?: string;
   /** Total fans (derived from full-roster CA + PA via fansForRoster). */
   fans: number;
   starters: PublicPlayer[];
@@ -399,6 +404,70 @@ export interface MinesResult {
   bustTileIndex?: number;
   /** How many safe tiles the user revealed before the round ended. */
   safePicks: number;
+}
+
+// ============ Player traits ============
+//
+// Per-player flavour modifiers that the match engine actually reads.
+// Three families today: map specialist (boosts), map weakness (penalty),
+// and pressure traits (high-stake matches). Every trait has a numeric
+// engine effect — none are cosmetic. Generated probabilistically at
+// player creation (see freeAgents/spawn).
+
+export type TraitEffectKind =
+  | 'map_specialist'   // +mult on a specific map
+  | 'map_weak'         // -mult on a specific map
+  | 'big_game'         // +mult under high pressure
+  | 'stage_fright';    // -mult under high pressure
+
+export interface TraitDef {
+  id: string;
+  label: string;
+  icon: string;
+  /** One-line summary the player profile renders. */
+  description: string;
+  effect: TraitEffectKind;
+  /** Multiplier applied when the trait's condition is met. 1.10 = +10%. */
+  mult: number;
+  /** Map id this trait keys off — only for map_specialist / map_weak. */
+  map?: string;
+  /** Spawn weight in TRAIT_GENERATION_POOL — controls how rare the trait is. */
+  weight: number;
+  /** Visual tone: positive (green chip) or negative (red chip). */
+  tone: 'positive' | 'negative';
+}
+
+export const TRAIT_LIBRARY: TraitDef[] = [
+  // ===== Map specialists (+12% on that map) =====
+  { id: 'mirage_spec',   label: 'Mirage Specialist',  icon: '🌅', description: '+12% effective skill on Mirage.',          effect: 'map_specialist', mult: 1.12, map: 'Mirage',  weight: 5, tone: 'positive' },
+  { id: 'inferno_spec',  label: 'Inferno Specialist', icon: '🔥', description: '+12% effective skill on Inferno.',         effect: 'map_specialist', mult: 1.12, map: 'Inferno', weight: 5, tone: 'positive' },
+  { id: 'dust2_spec',    label: 'Dust 2 Specialist',  icon: '🏜', description: '+12% effective skill on Dust 2.',          effect: 'map_specialist', mult: 1.12, map: 'Dust2',   weight: 5, tone: 'positive' },
+  { id: 'nuke_spec',     label: 'Nuke Specialist',    icon: '☢', description: '+12% effective skill on Nuke.',            effect: 'map_specialist', mult: 1.12, map: 'Nuke',    weight: 4, tone: 'positive' },
+  { id: 'ancient_spec',  label: 'Ancient Specialist', icon: '🗿', description: '+12% effective skill on Ancient.',         effect: 'map_specialist', mult: 1.12, map: 'Ancient', weight: 4, tone: 'positive' },
+  { id: 'vertigo_spec',  label: 'Vertigo Specialist', icon: '🏗', description: '+12% effective skill on Vertigo.',         effect: 'map_specialist', mult: 1.12, map: 'Vertigo', weight: 4, tone: 'positive' },
+
+  // ===== Map weaknesses (-10% on that map) =====
+  { id: 'mirage_weak',   label: 'Mirage Weak',  icon: '🌅', description: '−10% effective skill on Mirage. Avoid the pick.', effect: 'map_weak', mult: 0.90, map: 'Mirage',  weight: 2, tone: 'negative' },
+  { id: 'nuke_weak',     label: 'Nuke Weak',    icon: '☢', description: '−10% effective skill on Nuke. Loses verticality.', effect: 'map_weak', mult: 0.90, map: 'Nuke',    weight: 2, tone: 'negative' },
+  { id: 'ancient_weak',  label: 'Ancient Weak', icon: '🗿', description: '−10% effective skill on Ancient.',                effect: 'map_weak', mult: 0.90, map: 'Ancient', weight: 2, tone: 'negative' },
+
+  // ===== Pressure traits (+/− under high-stake matches) =====
+  { id: 'big_game',      label: 'Big Game Player', icon: '⭐', description: '+10% under high pressure (big matches, tournament finals).', effect: 'big_game',     mult: 1.10, weight: 3, tone: 'positive' },
+  { id: 'stage_fright',  label: 'Stage Fright',    icon: '😰', description: '−10% under high pressure. Chokes on the big stage.',        effect: 'stage_fright', mult: 0.90, weight: 2, tone: 'negative' },
+];
+
+/** Probabilities controlling trait generation per player. */
+export const TRAIT_GEN_CHANCE = {
+  /** Probability the player gets ANY trait at all. */
+  hasAnyTrait: 0.55,
+  /** Probability they get a SECOND trait (rolled only if first hit). */
+  hasSecondTrait: 0.25,
+  /** Probability the SECOND trait is a negative weakness. */
+  secondTraitIsNegative: 0.45,
+};
+
+export function findTrait(id: string): TraitDef | null {
+  return TRAIT_LIBRARY.find((t) => t.id === id) ?? null;
 }
 
 // ============ MMR rank ladder ============
@@ -752,6 +821,49 @@ export interface AdminUserRow {
   rosterSize: number;
   createdAt: number;
 }
+
+// ============ Team logo pack ============
+//
+// Curated emoji set the user picks from in the profile editor. Stored
+// as a single string code (the emoji itself) on the team row so any
+// future expansion just adds rows to the pack — no asset hosting, no
+// DB migration. The sidebar / team profile / leaderboard all read the
+// same field and render at whatever size they want.
+
+export interface TeamLogoOption {
+  id: string;      // the emoji itself, used as the stable code
+  label: string;   // friendly tooltip label
+  category: string;
+}
+
+export const LOGO_PACK: TeamLogoOption[] = [
+  { id: '🐉', label: 'Dragon',    category: 'Beasts' },
+  { id: '🦁', label: 'Lion',      category: 'Beasts' },
+  { id: '🐺', label: 'Wolf',      category: 'Beasts' },
+  { id: '🐍', label: 'Snake',     category: 'Beasts' },
+  { id: '🦅', label: 'Eagle',     category: 'Beasts' },
+  { id: '🦈', label: 'Shark',     category: 'Beasts' },
+  { id: '🐯', label: 'Tiger',     category: 'Beasts' },
+  { id: '🐻', label: 'Bear',      category: 'Beasts' },
+  { id: '🦂', label: 'Scorpion',  category: 'Beasts' },
+  { id: '🦇', label: 'Bat',       category: 'Beasts' },
+
+  { id: '🔥', label: 'Fire',      category: 'Elements' },
+  { id: '⚡', label: 'Bolt',      category: 'Elements' },
+  { id: '☄',  label: 'Comet',     category: 'Elements' },
+  { id: '🌟', label: 'Star',      category: 'Elements' },
+  { id: '🌊', label: 'Wave',      category: 'Elements' },
+  { id: '🌌', label: 'Galaxy',    category: 'Elements' },
+
+  { id: '🛡', label: 'Shield',    category: 'Combat' },
+  { id: '⚔',  label: 'Swords',    category: 'Combat' },
+  { id: '🎯', label: 'Bullseye',  category: 'Combat' },
+  { id: '🔱', label: 'Trident',   category: 'Combat' },
+  { id: '💎', label: 'Diamond',   category: 'Symbols' },
+  { id: '👑', label: 'Crown',     category: 'Symbols' },
+  { id: '🏆', label: 'Trophy',    category: 'Symbols' },
+  { id: '🧠', label: 'Mastermind',category: 'Symbols' },
+];
 
 /** Fields the admin can rewrite on any team. Mirrors create-team plus name. */
 export interface AdminTeamEditFields {
@@ -1352,7 +1464,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 35;
+export const PROTOCOL_VERSION = 36;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

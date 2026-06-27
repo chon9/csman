@@ -10,6 +10,7 @@ import { NEWGEN_POOLS } from '../../src/data/newgenNames.ts';
 import { RNG, hashSeed } from '../../src/engine/rng.ts';
 import { CONTRACT_DUELS_INITIAL_FA, MINT_TIERS, SCOUT_CONTRACT_DUELS, type MintTier, type ScoutStripEntry } from '../../src/online/protocol.ts';
 import type { Player, PlayerRole, Region } from '../../src/types.ts';
+import { rollPlayerTraits } from './spawn.ts';
 import { ROSTERS_A } from '../../src/data/rostersA.ts';
 import { ROSTERS_B } from '../../src/data/rostersB.ts';
 import { FREE_AGENTS as REAL_FREE_AGENTS, ROSTERS_C } from '../../src/data/rostersC.ts';
@@ -132,6 +133,7 @@ export function mintWonderkid(db: DB, tier: MintTier, teamId: string, startDate:
   const frac = meta.caFraction[0] + rng.next() * (meta.caFraction[1] - meta.caFraction[0]);
   player.currentAbility = Math.max(40, Math.min(player.potentialAbility, Math.round(pa * frac)));
   player.squadTier = 'first';
+  player.traits = rollPlayerTraits(rng);
   // Short scout contract — give them 30 ranked duels before the renewal
   // decision lands. Wage scales with rolled CA, same as buildPlayer would
   // have done if it had seen this CA directly.
@@ -193,6 +195,7 @@ export function seedRealNamePool(db: DB): { added: number } {
     // buildPlayer with teamId=null yields contract=null — pure free agent.
     const player = buildPlayer(spec, null, startDate);
     player.id = id;
+    player.traits = rollPlayerTraits(rng);
     db.savePlayer(player); // INSERT OR IGNORE — duplicate ids silently no-op
     added++;
   };

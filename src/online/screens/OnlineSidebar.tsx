@@ -65,7 +65,9 @@ export default function OnlineSidebar(): React.ReactElement {
     <aside className="osb">
       {/* ===== Brand / team badge ===== */}
       <div className="osb-brand">
-        <div className="osb-brand-mark">{team?.tag.slice(0, 2) ?? '··'}</div>
+        <div className="osb-brand-mark" style={team?.primaryColor ? { background: `linear-gradient(135deg, ${team.primaryColor}, ${team.primaryColor}88)`, color: '#0a0d12' } : undefined}>
+          {team?.logoId || team?.tag.slice(0, 2).toUpperCase() || '··'}
+        </div>
         <div className="osb-brand-text">
           <div className="osb-brand-name">{team?.name ?? 'CS2 Manager'}</div>
           <div className="osb-brand-meta">

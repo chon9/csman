@@ -197,6 +197,9 @@ export interface Player {
    * Increments by ~1 per match played at that role.
    */
   roleExperience?: Partial<Record<PlayerRole, number>>;
+  /** Per-player traits — engine-readable flavour modifiers (map specialist,
+   *  pressure, etc). See TRAIT_LIBRARY in online/protocol.ts. */
+  traits?: string[];
   attributes: PlayerAttributes;
   currentAbility: number; // 1-200 derived
   potentialAbility: number; // 1-200
