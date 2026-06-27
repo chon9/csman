@@ -322,6 +322,34 @@ export default function OnlineLiveReplayScreen() {
             />
           </div>
 
+          {/* ===== Center kill flash — last kill, 50% opacity floats
+              over the map. Keyed by killer+tick so each new kill re-fires
+              the CSS pop-in animation. Pointer-events disabled so the
+              map stays interactive underneath. ===== */}
+          {killFeed.length > 0 && (() => {
+            const latest = killFeed[killFeed.length - 1]!;
+            const killerA = teamAPlayerIds.has(latest.killerId);
+            const victimA = teamAPlayerIds.has(latest.victimId);
+            const kSide = killerA ? teamASide : teamBSide;
+            const vSide = victimA ? teamASide : teamBSide;
+            const kColor = kSide === 'T' ? T_COLOR : kSide === 'CT' ? CT_COLOR : '#d8dce4';
+            const vColor = vSide === 'T' ? T_COLOR : vSide === 'CT' ? CT_COLOR : '#d8dce4';
+            return (
+              <div
+                key={`${latest.killerId}-${latest.victimId}-${latest.tick}`}
+                className="md-overlay-killflash"
+                aria-hidden
+              >
+                <div className="kf-flash-line">
+                  <span style={{ color: kColor }}>{nicknames[latest.killerId] ?? latest.killerId}</span>
+                  <span className="kf-flash-weapon">{latest.weapon}</span>
+                  <span style={{ color: vColor }}>{nicknames[latest.victimId] ?? latest.victimId}</span>
+                  {latest.headshot && <span className="kf-flash-hs">HS</span>}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Kill feed — overlays the LEFT of the stage */}
           <div className="md-overlay md-overlay-killfeed">
             <div className="md-overlay-label">KILL FEED</div>

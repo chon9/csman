@@ -5194,6 +5194,51 @@ input[type='range'] {
   max-width: 26%;
   opacity: 0.85;
 }
+/* Big center kill flash — floats in the middle of the map at 50% opacity,
+ * cycles through the last few kills as the playhead reveals them.
+ * Pointer-events disabled so it never blocks map interaction. */
+.md-overlay-killflash {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  pointer-events: none;
+  background: transparent;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  opacity: 0.5;
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.85), 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+.kf-flash-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  animation: kf-flash-pop 360ms ease-out;
+}
+.kf-flash-weapon {
+  font-size: 16px;
+  font-weight: 600;
+  color: #d4d8e1;
+  opacity: 0.85;
+}
+.kf-flash-hs {
+  font-size: 14px;
+  font-weight: 800;
+  color: #ffd700;
+  letter-spacing: 0.5px;
+}
+@keyframes kf-flash-pop {
+  0%   { transform: scale(1.25); opacity: 0; }
+  35%  { transform: scale(1.0);  opacity: 1; }
+  100% { transform: scale(1.0);  opacity: 1; }
+}
 .kf-overlay-line {
   display: flex;
   align-items: baseline;

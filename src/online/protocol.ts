@@ -51,6 +51,9 @@ export interface Achievement {
   achievedAt: number;
   /** Human-readable label — server populates on push, clients store. */
   label?: string;
+  /** Cash bonus paid (or pending) for unlocking this. Surfaced in the
+   *  unlock toast + the achievements panel so users see the payout. */
+  rewardCash?: number;
 }
 
 export interface TeamProfileFields {
@@ -1340,7 +1343,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 33;
+export const PROTOCOL_VERSION = 34;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past
@@ -1492,6 +1495,45 @@ export const ACHIEVEMENT_LABELS: Record<string, string> = {
   collector_15: '🎖️🎖️ Completionist-in-Training — unlocked 15 achievements',
   collector_30: '🎖️🎖️🎖️ True Completionist — unlocked 30 achievements',
 };
+
+/** Cash reward paid when an achievement first unlocks. Tier from light
+ *  ($5k starter) → mythic ($250k career-defining). Auto-credited at
+ *  unlock time. Unknown kinds default to $5k so future achievements
+ *  always pay SOMETHING even before they're listed here. */
+export const ACHIEVEMENT_REWARDS: Record<string, number> = {
+  // ===== Easy / first-time ($5k) =====
+  first_blood: 5000, first_tournament: 5000, first_fa_sign: 5000,
+  first_market_sale: 5000, first_goal_reached: 5000, pvp_first_blood: 5000,
+  first_retire: 5000, coached_up: 5000, first_sponsor: 5000, first_loan: 5000,
+  first_stream: 5000, first_profile_edit: 5000, first_dm: 5000,
+  dragon_in_between: 5000, first_trade_up: 5000, covert_drop: 5000,
+
+  // ===== Medium ($15k) =====
+  ten_wins: 15000, fifty_wins: 15000, pvp_ten_wins: 15000, streak_5: 15000,
+  bankroll_100k: 15000, full_roster: 15000, five_tournaments: 15000,
+  streamer_50: 15000, case_opener: 15000, skin_seller_5: 15000,
+  crash_cashout_10x: 15000, mines_perfect: 15000, collector_5: 15000,
+
+  // ===== Hard ($50k) =====
+  hundred_wins: 50000, pvp_fifty_wins: 50000, streak_10: 50000,
+  perfect_map: 50000, underdog_win: 50000,
+  bankroll_500k: 50000, millionaire: 50000,
+  famous: 50000, case_addict: 50000, collector_15: 50000,
+
+  // ===== Legendary ($100k) =====
+  two_fifty_wins: 100000, pvp_hundred_wins: 100000,
+  twenty_tournaments: 100000,
+  giant_slayer: 100000, rare_special_drop: 100000, white_float_drop: 100000,
+  big_money: 100000,
+
+  // ===== Mythic ($250k) =====
+  five_hundred_wins: 250000, mogul: 250000, collector_30: 250000,
+};
+
+/** Look up the cash reward for a kind. Unknown kind → $5k floor. */
+export function achievementReward(kind: string): number {
+  return ACHIEVEMENT_REWARDS[kind] ?? 5000;
+}
 /** Cap on saved tactics presets per owner. */
 export const MAX_TACTICS_PRESETS = 10;
 /** Channel-string prefix that marks a private team-to-team DM. */

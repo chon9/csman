@@ -16,6 +16,12 @@ export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
 
   if (!team) return null;
   const won = result.winnerId === team.id;
+  // Score must show USER's number first regardless of teamA/teamB
+  // assignment — otherwise a user on the teamB side reads "VICTORY 1-3"
+  // (correct VICTORY label but score looks like a loss).
+  const userIsA = result.teamAId === team.id;
+  const userMaps = userIsA ? result.mapsA : result.mapsB;
+  const oppMaps = userIsA ? result.mapsB : result.mapsA;
   // Flatten per-player stats across maps.
   const flat: Record<string, { kills: number; deaths: number; assists: number; rating: number; n: number }> = {};
   for (const m of result.maps) {
@@ -44,7 +50,7 @@ export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 760 }}>
         <div className="modal-head">
           <h3 style={{ color: won ? '#6ed09a' : '#e25555' }}>
-            {won ? 'VICTORY' : 'DEFEAT'} — {team.tag} {result.mapsA}-{result.mapsB}{' '}
+            {won ? 'VICTORY' : 'DEFEAT'} — {team.tag} {userMaps}-{oppMaps}{' '}
             {outcome.opponentTeamId
               ? <TeamTag teamId={outcome.opponentTeamId} tag={outcome.opponentTag} />
               : outcome.opponentTag}
@@ -53,7 +59,7 @@ export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
         </div>
         <div className="modal-body">
           <div className="muted small" style={{ marginBottom: 4 }}>
-            {result.maps.map((m) => `${m.map} ${m.scoreA}-${m.scoreB}`).join('  •  ')}
+            {result.maps.map((m) => `${m.map} ${userIsA ? m.scoreA : m.scoreB}-${userIsA ? m.scoreB : m.scoreA}`).join('  •  ')}
           </div>
           <div style={{ fontSize: 15, fontWeight: 700, color: won ? '#6ed09a' : '#e25555', marginBottom: 4 }}>
             {outcome.moneyDelta > 0 ? '+' : ''}${outcome.moneyDelta.toLocaleString()} → balance ${outcome.newMoney.toLocaleString()}

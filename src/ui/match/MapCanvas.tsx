@@ -269,7 +269,10 @@ export default function MapCanvas({ layout, frame, prevFrame, lerp, teamAPlayerI
       ctx.textBaseline = 'bottom';
       ctx.fillStyle = 'rgba(0,0,0,0.75)';
       ctx.fillText(name, x + 1, y - 9);
-      ctx.fillStyle = teamAPlayerIds.has(dot.playerId) ? '#f5e3c4' : '#d2e2f7';
+      // Name colour follows CURRENT side, not team membership — at half
+      // time teams switch sides and the labels must follow (CT = blue,
+      // T = orange), same as the dot colour.
+      ctx.fillStyle = dot.side === 'T' ? '#f5e3c4' : '#d2e2f7';
       ctx.fillText(name, x, y - 10);
     }
     // Detach the radar-loaded listener if the effect re-runs or component

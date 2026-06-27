@@ -3,7 +3,7 @@
 // dominate the layout.
 
 import { useEffect, useState } from 'react';
-import { ACHIEVEMENT_LABELS } from '../protocol';
+import { ACHIEVEMENT_LABELS, achievementReward } from '../protocol';
 import { useOnline } from '../onlineStore';
 
 export default function AchievementsPanel() {
@@ -30,18 +30,27 @@ export default function AchievementsPanel() {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
           {allKinds.map((kind) => {
             const has = unlockedSet.has(kind);
+            const cash = achievementReward(kind);
             return (
               <span
                 key={kind}
                 className="achievement-chip"
                 style={{
-                  opacity: has ? 1 : 0.35,
+                  opacity: has ? 1 : 0.45,
                   background: has ? 'rgba(76,175,125,0.18)' : 'var(--panel-2)',
                   borderColor: has ? 'rgba(76,175,125,0.5)' : 'var(--border)',
                 }}
-                title={ACHIEVEMENT_LABELS[kind]}
+                title={`${ACHIEVEMENT_LABELS[kind]} · ${has ? 'unlocked' : 'locked'} · reward $${cash.toLocaleString()}`}
               >
-                {ACHIEVEMENT_LABELS[kind]}
+                {ACHIEVEMENT_LABELS[kind]}{' '}
+                <span style={{
+                  fontSize: 9, marginLeft: 4, padding: '1px 5px', borderRadius: 999,
+                  background: has ? 'rgba(110,208,154,0.20)' : 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${has ? 'rgba(110,208,154,0.50)' : 'rgba(255,255,255,0.10)'}`,
+                  color: has ? '#9be29b' : '#8b93a3', fontWeight: 800, letterSpacing: 0.3,
+                }}>
+                  +${cash >= 1000 ? `${Math.round(cash / 1000)}k` : cash}
+                </span>
               </span>
             );
           })}

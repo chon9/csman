@@ -366,6 +366,11 @@ export function openDb(path: string) {
   tryAddColumn('teams', 'mmr', 'INTEGER', '1000');
   tryAddColumn('teams', 'peak_mmr', 'INTEGER', '1000');
   tryAddColumn('teams', 'placement_matches_played', 'INTEGER', '0');
+  // Cash reward bookkeeping for achievements — set to 1 after the cash
+  // payout has been credited so we don't double-pay on retry. Pre-
+  // existing achievements row in upgrade systems default to 0; the
+  // server back-pays them on first hello after deploy.
+  tryAddColumn('achievements', 'reward_paid', 'INTEGER', '0');
 
   // Daily quests table — one row per (team, utcDate, quest). Generation
   // is deterministic (seeded by team+date) so rolling lazily on demand
@@ -1047,6 +1052,25 @@ export function openDb(path: string) {
       value: r.value ?? undefined,
       achievedAt: r.achieved_at,
     }));
+  }
+
+  // -------- Achievement cash rewards --------
+
+  const loadUnpaidAchievementsStmt = db.prepare(
+    `SELECT team_id, kind, value, achieved_at FROM achievements
+     WHERE team_id = ? AND (reward_paid IS NULL OR reward_paid = 0)`,
+  );
+  const markAchievementPaidStmt = db.prepare(
+    `UPDATE achievements SET reward_paid = 1 WHERE team_id = ? AND kind = ?`,
+  );
+  function loadUnpaidAchievements(teamId: string): Array<{ teamId: string; kind: string; value?: number; achievedAt: number }> {
+    const rows = loadUnpaidAchievementsStmt.all(teamId) as AchievementRow[];
+    return rows.map((r) => ({
+      teamId: r.team_id, kind: r.kind, value: r.value ?? undefined, achievedAt: r.achieved_at,
+    }));
+  }
+  function markAchievementRewardPaid(teamId: string, kind: string): void {
+    markAchievementPaidStmt.run(teamId, kind);
   }
 
   function loadTeam(teamId: string): TeamRow | null {
@@ -2195,6 +2219,8 @@ export function openDb(path: string) {
     setTeamTactics,
     updateTeamProfile,
     unlockAchievement,
+    loadUnpaidAchievements,
+    markAchievementRewardPaid,
     loadAchievements,
     savePlayer,
     persistPlayer,

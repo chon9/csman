@@ -830,7 +830,12 @@ export const useOnline = create<OnlineState>((set, get) => ({
           break;
         }
         case 'achievement-unlocked': {
-          pushToast('success', msg.achievement.label ?? `🏅 Achievement: ${msg.achievement.kind}`);
+          const label = msg.achievement.label ?? `🏅 Achievement: ${msg.achievement.kind}`;
+          const cash = msg.achievement.rewardCash;
+          const text = typeof cash === 'number' && cash > 0
+            ? `${label} · +$${cash.toLocaleString()}`
+            : label;
+          pushToast('success', text);
           set({ achievements: [...get().achievements.filter((a) => a.kind !== msg.achievement.kind), msg.achievement] });
           break;
         }

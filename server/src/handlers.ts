@@ -135,9 +135,19 @@ function tryUnlock(
   value?: number,
 ): void {
   if (!db.unlockAchievement(teamId, kind, value)) return;
+  // Auto-credit the cash reward right at unlock time. Marking paid on
+  // the achievement row keeps the post-hello backfill from double-paying.
+  const rewardCash = achievementReward(kind);
+  const team = db.loadTeam(teamId);
+  if (team && rewardCash > 0) {
+    team.money += rewardCash;
+    db.setTeamMoneyDay(team.id, team.money, team.day);
+    db.markAchievementRewardPaid(teamId, kind);
+    notifyTeam(teamId, { kind: 'team-money-updated', teamId, money: team.money });
+  }
   notifyTeam(teamId, {
     kind: 'achievement-unlocked',
-    achievement: { teamId, kind, label, value, achievedAt: Date.now() },
+    achievement: { teamId, kind, label, value, achievedAt: Date.now(), rewardCash },
   });
   // Don't recurse on collector unlocks (they ARE collector unlocks).
   if (kind === 'collector_5' || kind === 'collector_15' || kind === 'collector_30') return;
@@ -148,6 +158,29 @@ function tryUnlock(
   if (total >= 5) tryUnlock(db, notifyTeam, teamId, 'collector_5', ACHIEVEMENT_LABELS.collector_5, total);
   if (total >= 15) tryUnlock(db, notifyTeam, teamId, 'collector_15', ACHIEVEMENT_LABELS.collector_15, total);
   if (total >= 30) tryUnlock(db, notifyTeam, teamId, 'collector_30', ACHIEVEMENT_LABELS.collector_30, total);
+}
+
+/** One-shot back-pay: credit every still-unpaid achievement for `teamId`
+ *  in a single bundled cash deposit + return the total. Called on hello
+ *  so users get their retro payouts the first time they log in after the
+ *  rewards feature ships. Idempotent — re-running pays nothing. */
+function backPayAchievementRewards(db: DB, teamId: string): { total: number; count: number } {
+  const unpaid = db.loadUnpaidAchievements(teamId);
+  if (unpaid.length === 0) return { total: 0, count: 0 };
+  let total = 0;
+  for (const a of unpaid) {
+    const cash = achievementReward(a.kind);
+    if (cash > 0) total += cash;
+    db.markAchievementRewardPaid(teamId, a.kind);
+  }
+  if (total > 0) {
+    const team = db.loadTeam(teamId);
+    if (team) {
+      team.money += total;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+    }
+  }
+  return { total, count: unpaid.length };
 }
 
 /** Compute + apply MMR change to both sides of a PvP duel. Returns the
@@ -299,6 +332,7 @@ import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorP
 import { bumpQuestProgress, ensureTodayQuests, tickLoginStreak, utcToday } from './dailyQuests.ts';
 import { QUEST_ALL_DONE_BONUS, questStreakMultiplier } from '../../src/online/protocol.ts';
 import { PLACEMENT_MATCHES, eloDelta } from '../../src/online/protocol.ts';
+import { achievementReward } from '../../src/online/protocol.ts';
 import {
   buildTournamentDetail,
   createTournament,
@@ -697,6 +731,15 @@ export function handle(
       const sessionToken = auth.teamId ? db.issueSession(auth.teamId) : randomBytes(16).toString('hex');
       conn.sessionToken = sessionToken;
       const admin = isAdminConn(conn);
+      // Back-pay any achievement cash that was unlocked before the
+      // rewards feature shipped (and any future unlocks where the
+      // notify-side path didn't credit, e.g. team-deleted edge cases).
+      if (auth.teamId) {
+        const backpay = backPayAchievementRewards(db, auth.teamId);
+        if (backpay.total > 0) {
+          log(`achievement back-pay: ${nick} +$${backpay.total.toLocaleString()} for ${backpay.count} pre-existing unlocks`);
+        }
+      }
       log(`hello ok: ${nick}${auth.teamId ? ' (team ' + auth.teamId + ')' : ' (no team yet)'}${admin ? ' [ADMIN]' : ''}`);
       return { kind: 'hello-ok', sessionToken, hasTeam: !!auth.teamId, isAdmin: admin };
     }
