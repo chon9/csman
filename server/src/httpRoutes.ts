@@ -124,7 +124,25 @@ const PAGE_CSS = `
   .comment-body { font-size: 14px; color: var(--text); white-space: pre-wrap; word-wrap: break-word; }
   .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 16px; }
 
+  /* Shared data-table style for /hof, /stats, replay scoreboards. */
+  .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .data-table thead th {
+    text-align: left; color: var(--muted); font-weight: 700;
+    text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px;
+    padding: 8px 10px; border-bottom: 1px solid var(--border);
+  }
+  .data-table tbody td {
+    padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.04);
+    color: var(--text); vertical-align: middle;
+  }
+  .data-table tbody tr:nth-child(odd) td { background: rgba(255,255,255,0.015); }
+  .data-table tbody tr:hover td { background: rgba(75,142,255,0.06); }
+  .data-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .data-table .rank-cell { color: var(--muted); width: 36px; }
+  .data-table strong { color: #fff; }
+
   .footer { padding: 20px; color: var(--muted); font-size: 12px; text-align: center; border-top: 1px solid var(--border); margin-top: 20px; }
+  .footer a { color: var(--muted); }
 `;
 
 function shellHead(title: string): string {
@@ -144,7 +162,12 @@ function shellHead(title: string): string {
 <div class="wrap">`;
 }
 
-const SHELL_FOOT = `<div class="footer">CS2 Manager · public team page · <a href="/">home</a></div></body></html>`;
+const SHELL_FOOT = `<div class="footer">
+  CS2 Manager ·
+  <a href="/team/" onclick="return false" style="opacity:.5;cursor:default">team</a> ·
+  <a href="/stats">stats</a> ·
+  <a href="/hof">hall of fame</a>
+</div></body></html>`;
 
 // ---------------------------------------------------------------------
 // FB-style team profile page
@@ -494,30 +517,60 @@ function renderReplayPage(db: DB, matchId: string): { status: number; body: stri
 function renderStatsPage(db: DB): { status: number; body: string; contentType: string } {
   const totals = db.raw.prepare(`SELECT COUNT(*) AS n FROM teams`).get() as { n: number };
   const matches = db.raw.prepare(`SELECT COUNT(*) AS n FROM match_history`).get() as { n: number };
-  const topMoney = db.raw.prepare(`SELECT tag, name, money FROM teams ORDER BY money DESC LIMIT 10`).all() as Array<{ tag: string; name: string; money: number }>;
+  // Include id so the team-link goes to the correct /team/<id> URL (the
+  // tag was being passed before, which 404'd because the route matches
+  // against the team id).
+  const topMoney = db.raw.prepare(`SELECT id, tag, name, money FROM teams ORDER BY money DESC LIMIT 10`)
+    .all() as Array<{ id: string; tag: string; name: string; money: number }>;
   const topWins = db.raw.prepare(
     `SELECT s.team_id, t.tag, t.name, s.wins, s.losses
        FROM season_standings s INNER JOIN teams t ON t.id = s.team_id
        WHERE s.season_no = (SELECT MAX(season_no) FROM seasons)
        ORDER BY s.wins DESC LIMIT 10`,
-  ).all() as Array<{ tag: string; name: string; wins: number; losses: number }>;
+  ).all() as Array<{ team_id: string; tag: string; name: string; wins: number; losses: number }>;
   const recentNews = db.raw.prepare(`SELECT kind, body, at FROM news_items ORDER BY id DESC LIMIT 12`)
     .all() as Array<{ kind: string; body: string; at: number }>;
 
-  const tbl = (rows: string) => `<table style="width:100%;border-collapse:collapse"><tbody style="font-size:13px">${rows}</tbody></table>`;
-  const moneyRows = topMoney.map((t, i) => `<tr><td>${i + 1}</td><td><a href="/team/${escapeHtml(t.tag)}" style="font-weight:700">${escapeHtml(t.tag)}</a></td><td style="color:var(--muted)">${escapeHtml(t.name)}</td><td style="text-align:right">$${t.money.toLocaleString()}</td></tr>`).join('');
-  const winRows = topWins.map((t, i) => `<tr><td>${i + 1}</td><td><strong>${escapeHtml(t.tag)}</strong></td><td style="color:var(--muted)">${escapeHtml(t.name)}</td><td style="text-align:right">${t.wins}-${t.losses}</td></tr>`).join('');
-  const newsList = recentNews.map((n) => `<li><span style="color:var(--muted)">${new Date(n.at).toUTCString().slice(0, 22)}</span> · ${escapeHtml(n.body)}</li>`).join('');
+  const moneyRows = topMoney.length === 0
+    ? `<tr><td colspan="4" class="empty">No teams yet.</td></tr>`
+    : topMoney.map((t, i) => `
+      <tr>
+        <td class="rank-cell">${i + 1}</td>
+        <td><a href="/team/${encodeURIComponent(t.id)}"><strong>${escapeHtml(t.tag)}</strong></a></td>
+        <td style="color:var(--muted)">${escapeHtml(t.name)}</td>
+        <td class="num">$${t.money.toLocaleString()}</td>
+      </tr>`).join('');
+  const winRows = topWins.length === 0
+    ? `<tr><td colspan="4" class="empty">No PvP matches recorded yet.</td></tr>`
+    : topWins.map((t, i) => `
+      <tr>
+        <td class="rank-cell">${i + 1}</td>
+        <td><a href="/team/${encodeURIComponent(t.team_id)}"><strong>${escapeHtml(t.tag)}</strong></a></td>
+        <td style="color:var(--muted)">${escapeHtml(t.name)}</td>
+        <td class="num">${t.wins}-${t.losses}</td>
+      </tr>`).join('');
+  const newsList = recentNews.length === 0
+    ? `<li class="empty" style="list-style:none">Quiet day — no recent headlines.</li>`
+    : recentNews.map((n) => `<li><span style="color:var(--muted)">${new Date(n.at).toUTCString().slice(0, 22)}</span> · ${escapeHtml(n.body)}</li>`).join('');
 
   const body = shellHead('Server Stats') +
     `<div style="padding:24px">
       <div class="card">
-        <h2>Server Stats</h2>
-        <div style="color:var(--muted);font-size:13px">${totals.n} teams · ${matches.n} matches recorded</div>
+        <h2>📊 Server Stats</h2>
+        <div style="color:var(--muted);font-size:13px">${totals.n} team${totals.n === 1 ? '' : 's'} · ${matches.n} match${matches.n === 1 ? '' : 'es'} recorded</div>
       </div>
-      <div class="card"><h2>Top 10 by Cash</h2>${tbl(moneyRows)}</div>
-      <div class="card"><h2>Top 10 Current-Season Wins</h2>${tbl(winRows)}</div>
-      <div class="card"><h2>Recent Headlines</h2><ul style="line-height:1.7;font-size:13px;padding-left:18px">${newsList}</ul></div>
+      <div class="card">
+        <h2>Top 10 by Cash</h2>
+        <table class="data-table"><tbody>${moneyRows}</tbody></table>
+      </div>
+      <div class="card">
+        <h2>Top 10 Current-Season Wins</h2>
+        <table class="data-table"><tbody>${winRows}</tbody></table>
+      </div>
+      <div class="card">
+        <h2>Recent Headlines</h2>
+        <ul style="line-height:1.7;font-size:13px;padding-left:18px;margin:0">${newsList}</ul>
+      </div>
     </div>` + SHELL_FOOT;
   return { status: 200, body, contentType: 'text/html; charset=utf-8' };
 }
@@ -526,29 +579,30 @@ function renderHallOfFamePage(db: DB): { status: number; body: string; contentTy
   const rows = db.loadHallOfFame(50);
   const list = rows.map((r, i) => `
     <tr>
-      <td>${i + 1}</td>
+      <td class="rank-cell">${i + 1}</td>
       <td><strong>${escapeHtml(r.nickname)}</strong></td>
       <td>${escapeHtml(r.role)}</td>
       <td>${escapeHtml(r.nationality)}</td>
-      <td style="text-align:right">${r.peakCA}</td>
-      <td style="text-align:right">${r.careerWins}-${r.careerLosses}</td>
-      <td style="text-align:right">${r.lastAge}</td>
-      <td>${escapeHtml(r.lastTeamTag ?? '')}</td>
+      <td class="num"><strong>${r.peakCA}</strong></td>
+      <td class="num">${r.careerWins}-${r.careerLosses}</td>
+      <td class="num">${r.lastAge}</td>
+      <td>${escapeHtml(r.lastTeamTag ?? '—')}</td>
     </tr>`).join('');
+  const tableOrEmpty = rows.length === 0
+    ? `<div class="empty">No retired players yet — Hall of Fame fills up as careers wind down.</div>`
+    : `<table class="data-table">
+        <thead><tr>
+          <th>#</th><th>Player</th><th>Role</th><th>Nat</th><th class="num">Peak CA</th><th class="num">W-L</th><th class="num">Age</th><th>Last team</th>
+        </tr></thead>
+        <tbody>${list}</tbody>
+      </table>`;
   const body = shellHead('Hall of Fame') +
     `<div style="padding:24px">
       <div class="card">
-        <h2>Hall of Fame</h2>
-        <div style="color:var(--muted);font-size:13px">${rows.length} retired players honoured · sorted by peak CA</div>
+        <h2>🏛 Hall of Fame</h2>
+        <div style="color:var(--muted);font-size:13px">${rows.length} retired player${rows.length === 1 ? '' : 's'} honoured · sorted by peak CA · server-wide</div>
       </div>
-      <div class="card">
-        <table style="width:100%;border-collapse:collapse">
-          <thead><tr style="text-align:left;color:var(--muted);font-size:11px;text-transform:uppercase">
-            <th>#</th><th>Player</th><th>Role</th><th>Nat</th><th style="text-align:right">Peak CA</th><th style="text-align:right">W-L</th><th style="text-align:right">Age</th><th>Last team</th>
-          </tr></thead>
-          <tbody style="font-size:13px">${list}</tbody>
-        </table>
-      </div>
+      <div class="card">${tableOrEmpty}</div>
     </div>` + SHELL_FOOT;
   return { status: 200, body, contentType: 'text/html; charset=utf-8' };
 }
