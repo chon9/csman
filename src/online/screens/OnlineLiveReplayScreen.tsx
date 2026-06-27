@@ -101,32 +101,44 @@ export default function OnlineLiveReplayScreen() {
   const prevFrame = curRound?.frames[Math.max(0, frameIdx - 1)] ?? null;
   const layout = curMap ? MAP_LAYOUTS[curMap.map] : null;
   const userIsA = r.teamAId === team.id;
+  const userIsB = r.teamBId === team.id;
+  // Spectator mode: neither team is the viewer's own (AI vs AI bet replay).
+  // Anchor team-A membership on the server-supplied roster IDs instead of
+  // the viewer's own players, and skip the team.tag substitution in the
+  // header + scoreboard so both AI tags surface correctly.
+  const spectator = !userIsA && !userIsB;
+  const specRosterA = useMemo(() => new Set(replay?.teamARosterIds ?? []), [replay?.teamARosterIds]);
 
   // Side detection — every frame carries each player's current side. Use the
-  // user's team as the anchor (we always have one of their player records).
+  // user's team as the anchor (we always have one of their player records);
+  // in spectator mode anchor on the server-supplied team A roster instead.
   const userPlayerIds = useMemo(() => new Set(team.playerIds), [team.playerIds]);
   const teamASide: 'T' | 'CT' | null = useMemo(() => {
     if (!frame) return null;
-    const anchor = userIsA
-      ? frame.dots.find((d) => userPlayerIds.has(d.playerId))
-      : frame.dots.find((d) => !userPlayerIds.has(d.playerId));
+    const anchor = spectator
+      ? frame.dots.find((d) => specRosterA.has(d.playerId))
+      : userIsA
+        ? frame.dots.find((d) => userPlayerIds.has(d.playerId))
+        : frame.dots.find((d) => !userPlayerIds.has(d.playerId));
     return anchor?.side ?? null;
-  }, [frame, userIsA, userPlayerIds]);
+  }, [frame, userIsA, userPlayerIds, spectator, specRosterA]);
   const teamBSide: 'T' | 'CT' | null = teamASide === 'T' ? 'CT' : teamASide === 'CT' ? 'T' : null;
 
   // Team membership for kill-feed colouring. Frame dots are authoritative —
   // the user's own roster ids land on whichever side userIsA dictates; every
-  // other dot belongs to the opponent.
+  // other dot belongs to the opponent. In spectator mode we test membership
+  // against the server-supplied team A roster.
   const teamAPlayerIds = useMemo(() => {
     const ids = new Set<string>();
     if (!frame) return ids;
     for (const d of frame.dots) {
-      const isUser = userPlayerIds.has(d.playerId);
-      const onA = userIsA ? isUser : !isUser;
+      const onA = spectator
+        ? specRosterA.has(d.playerId)
+        : userIsA ? userPlayerIds.has(d.playerId) : !userPlayerIds.has(d.playerId);
       if (onA) ids.add(d.playerId);
     }
     return ids;
-  }, [frame, userIsA, userPlayerIds]);
+  }, [frame, userIsA, userPlayerIds, spectator, specRosterA]);
 
   // Kill feed — last 6 kills whose tick ≤ current frame.tick.
   const killFeed = useMemo(() => {
@@ -274,7 +286,9 @@ export default function OnlineLiveReplayScreen() {
             {/* No final score in the title — the whole point of the replay is
                 the suspense. Live in-progress score lives in the subline below
                 and only reveals as rounds play out. */}
-            Replay — {team.tag} <span className="muted">vs</span> {userIsA ? (replay.teamBTag || 'opp') : (replay.teamATag || 'opp')}
+            Replay — {spectator
+              ? <>{replay.teamATag || 'A'} <span className="muted">vs</span> {replay.teamBTag || 'B'}</>
+              : <>{team.tag} <span className="muted">vs</span> {userIsA ? (replay.teamBTag || 'opp') : (replay.teamATag || 'opp')}</>}
           </h2>
           <div className="muted small" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span>Map {mapIdx + 1}/{r.maps.length} · {curMap?.map}</span>
@@ -291,7 +305,7 @@ export default function OnlineLiveReplayScreen() {
                 {roundClock.planted ? '💣 ' : '⏱ '}{roundClock.label}
               </span>
             )}
-            {teamASide && <span className={`side-badge ${teamASide.toLowerCase()}`}>{userIsA ? teamASide : teamBSide}</span>}
+            {teamASide && <span className={`side-badge ${teamASide.toLowerCase()}`}>{spectator || userIsA ? teamASide : teamBSide}</span>}
           </div>
         </div>
         {locked ? (
@@ -405,8 +419,8 @@ export default function OnlineLiveReplayScreen() {
         <div className="panel" style={{ padding: 10 }}>
           <div className="md-bottom-scoreboards">
             {[
-              { rosterIds: teamABoard, tag: userIsA ? team.tag : (replay.teamATag || 'OPP'), side: teamASide },
-              { rosterIds: teamBBoard, tag: userIsA ? (replay.teamBTag || 'OPP') : team.tag, side: teamBSide },
+              { rosterIds: teamABoard, tag: spectator ? (replay.teamATag || 'A') : (userIsA ? team.tag : (replay.teamATag || 'OPP')), side: teamASide },
+              { rosterIds: teamBBoard, tag: spectator ? (replay.teamBTag || 'B') : (userIsA ? (replay.teamBTag || 'OPP') : team.tag), side: teamBSide },
             ].map((board, bi) => (
               <table key={bi} className="sb-table md-bottom-sb">
                 <thead>

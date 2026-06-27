@@ -240,7 +240,11 @@ function resolveCard(
 
   // Synced replay push — every bettor on this card gets routed into the
   // replay viewer in locked mode (4× speed, no scrub) so everyone with
-  // money on the line watches the same match at the same beat.
+  // money on the line watches the same match at the same beat. We also
+  // send team A's roster ids so the spectator-mode replay viewer can
+  // correctly identify which dots belong to which team (it can't anchor
+  // on the user's own players for an AI vs AI match).
+  const teamARosterIds = payload.teamA.players.slice(0, 5).map((p) => p.id);
   for (const bet of bets) {
     notifyTeam(bet.bettor_team_id, {
       kind: 'ai-bet-replay-starting',
@@ -249,6 +253,7 @@ function resolveCard(
       result,
       teamATag: payload.teamA.team.tag,
       teamBTag: payload.teamB.team.tag,
+      teamARosterIds,
     });
   }
 

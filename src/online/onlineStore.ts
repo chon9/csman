@@ -144,7 +144,7 @@ interface OnlineState {
   lastDevChanges: DevChange[];
   showDevReport: boolean;
   /** Latest live-replay frames cached server-side — null if expired. */
-  liveReplay: { matchId: string; result: import('../types').MatchResult; teamATag: string; teamBTag: string } | null;
+  liveReplay: { matchId: string; result: import('../types').MatchResult; teamATag: string; teamBTag: string; /** Spectator-mode anchor: explicit team A roster ids when neither team is the viewer's own (e.g. AI bet replays). */ teamARosterIds?: string[] } | null;
   /** Chat history (whole-server snapshot — clients filter per channel). */
   chatHistory: ChatMessage[];
   chatOpen: boolean;
@@ -1420,12 +1420,15 @@ export const useOnline = create<OnlineState>((set, get) => ({
           // Server pushed the full match frames for a card we bet on.
           // Route into the locked replay viewer so every bettor on this
           // card sees the same match at the same beat (synced playback).
+          // teamARosterIds drives the spectator-mode team membership
+          // resolution — neither team is the viewer's own here.
           set({
             liveReplay: {
               matchId: msg.matchId,
               result: msg.result,
               teamATag: msg.teamATag,
               teamBTag: msg.teamBTag,
+              teamARosterIds: msg.teamARosterIds,
             },
             aiBetReplayLocked: true,
             screen: 'replay',
