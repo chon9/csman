@@ -79,11 +79,11 @@ import {
   MAX_TACTICS_PRESETS,
   MAX_TIME_SKIP_DAYS,
   MIN_DUEL_STAKE,
-  MINT_TIERS,
+  SCOUT_COST,
+  SCOUT_RARITY_META,
   STARTING_MONEY,
   TIME_SKIP_COST_PER_DAY,
   isDmParticipant,
-  type MintTier,
 } from '../../src/online/protocol.ts';
 import type { MatchResult, Player, Region, Team } from '../../src/types.ts';
 
@@ -1770,38 +1770,35 @@ export function handle(
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
       const team = db.loadTeam(conn.teamId);
       if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
-      const tier: MintTier = (['standard', 'premium', 'elite'] as const).includes(msg.tier)
-        ? msg.tier
-        : 'standard';
-      const meta = MINT_TIERS[tier];
-      if (team.money < meta.cost) {
+      if (team.money < SCOUT_COST) {
         return {
           kind: 'error',
           code: 'insufficient-funds',
-          message: `Need $${meta.cost.toLocaleString()} to commission a ${meta.label} — you have $${team.money.toLocaleString()}.`,
+          message: `Need $${SCOUT_COST.toLocaleString()} for a scout pack — you have $${team.money.toLocaleString()}.`,
         };
       }
-      team.money -= meta.cost;
+      team.money -= SCOUT_COST;
       const startDate = new Date().toISOString().slice(0, 10);
-      // Direct-sign flow: roll the player straight onto the caller's team.
-      const scout = mintWonderkid(db, tier, team.id, startDate);
+      // Single-button flow: rarity rolls server-side, player is signed
+      // straight onto the roster. The reveal animation runs over the
+      // returned rarity + player payload client-side.
+      const scout = mintWonderkid(db, team.id, startDate);
       team.playerIds = [...team.playerIds, scout.player.id];
       db.setTeamMoneyDay(team.id, team.money, team.day);
       db.setTeamPlayers(team.id, team.playerIds);
-      log(`scout(${tier}): ${team.tag} -$${meta.cost} → ${scout.player.nickname} (CA ${scout.player.currentAbility}/PA ${scout.player.potentialAbility}, ${scout.player.role})`);
+      const meta = SCOUT_RARITY_META[scout.rarity];
+      log(`scout(${scout.rarity}): ${team.tag} -$${SCOUT_COST} → ${scout.player.nickname} (CA ${scout.player.currentAbility}/PA ${scout.player.potentialAbility}, ${scout.player.role}, ${scout.player.traits?.length ?? 0} traits)`);
       const newsItem = db.publishNews(
         'transfer',
-        `${team.tag} scouted ${scout.player.nickname} (${scout.player.age}yo ${scout.player.role}, CA ${scout.player.currentAbility}/PA ${scout.player.potentialAbility}) via ${meta.label}.`,
+        `${team.tag} pulled a ${meta.label} ${scout.player.nickname} (${scout.player.age}yo ${scout.player.role}, CA ${scout.player.currentAbility}/PA ${scout.player.potentialAbility}) from a scout pack.`,
       );
       broadcast({ kind: 'news-item', item: newsItem as NewsItem });
       return {
         kind: 'player-scouted',
         player: scout.player,
-        cost: meta.cost,
-        tier,
+        cost: SCOUT_COST,
+        rarity: scout.rarity,
         newMoney: team.money,
-        strip: scout.strip,
-        winnerIndex: scout.winnerIndex,
       };
     }
 

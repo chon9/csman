@@ -1351,8 +1351,8 @@ export type ClientMessage =
   | { kind: 'fire-coach' }
   | { kind: 'list-sponsors' }
   | { kind: 'respond-sponsor'; sponsorId: string; accept: boolean }
-  // ----- Mint: scout a fresh wonderkid into the FA pool -----
-  | { kind: 'mint-free-agent'; tier: MintTier }
+  // ----- Mint: scout a fresh wonderkid (rarity rolled server-side) -----
+  | { kind: 'mint-free-agent' }
   // ----- Daily login bonus -----
   | { kind: 'claim-daily-bonus' }
   // ----- Duel cap: refill ALL missing duels for today (capped per day) -----
@@ -1488,7 +1488,7 @@ export type ServerMessage =
   | { kind: 'coach-pool'; openCoaches: CoachListing[]; myCoach: CoachListing | null }
   | { kind: 'coach-hired'; coach: CoachListing }
   | { kind: 'sponsors'; offers: SponsorOffer[]; paid: { sponsorId: string; amount: number }[] }
-  | { kind: 'player-scouted'; player: Player; cost: number; tier: MintTier; newMoney: number; strip: ScoutStripEntry[]; winnerIndex: number }
+  | { kind: 'player-scouted'; player: Player; cost: number; rarity: ScoutRarity; newMoney: number }
   // ----- Daily bonus + cases -----
   | { kind: 'daily-bonus-claimed'; amount: number; newMoney: number; nextClaimUtc: string }
   | { kind: 'duel-stats'; used: number; refillsUsed: number; cap: number; remaining: number }
@@ -1537,7 +1537,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 37;
+export const PROTOCOL_VERSION = 38;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past
@@ -1552,59 +1552,92 @@ export const SPONSOR_PAYMENT_INTERVAL_MS = 30 * 24 * 3600 * 1000;
 
 /** Gacha tiers — each scout commission rolls one player and signs them
  *  directly to the caller's team on a 30-day contract. */
-export type MintTier = 'standard' | 'premium' | 'elite';
+/** Rarity tiers for scout drops. FC-pack style — most rolls are Bronze /
+ *  Silver, with Gold a real treat and ICON a once-in-a-blue-moon drop.
+ *  The user can NOT pick the tier — it's rolled when the pack opens. */
+export type ScoutRarity = 'bronze' | 'silver' | 'gold' | 'rareGold' | 'icon';
 
-/** Per-tier metadata. paRange is the PA window for the rolled player;
- *  CA is rolled as a fraction of PA at sign time (server-side). */
-export const MINT_TIERS: Record<MintTier, {
+/** Flat cost per scout pack. Tuned to be expensive enough that you can't
+ *  spam-roll for a legendary, but cheap enough to grind a few per session. */
+export const SCOUT_COST = 15_000;
+
+/** Spawn weights — sum = 100, so these read as straight percentages. */
+export const SCOUT_RARITY_WEIGHTS: Record<ScoutRarity, number> = {
+  bronze: 45,
+  silver: 28,
+  gold: 18,
+  rareGold: 7,
+  icon: 2,
+};
+
+/** Per-rarity meta: PA window (hard), age window (younger = more growth),
+ *  CA fraction of PA, # of trait rolls, glow color, label. */
+export const SCOUT_RARITY_META: Record<ScoutRarity, {
   label: string;
-  cost: number;
-  paRange: [number, number];   // hard PA window
+  shortLabel: string;
+  color: string;
+  glow: string;
+  paRange: [number, number];
   ageRange: [number, number];
-  caFraction: [number, number]; // CA = PA × random in this range
-  color: string;                // tier accent on cards + strip border
-  hint: string;
+  caFraction: [number, number];
+  /** Probability distribution for trait count. Sum must = 1. */
+  traitCounts: { p0: number; p1: number; p2: number; p3: number };
 }> = {
-  standard: {
-    label: 'Standard Scout',
-    cost: 2_500,
-    paRange: [100, 140],
-    ageRange: [18, 22],
-    caFraction: [0.65, 0.85],   // CA 65-119 → some are matchday-ready
-    color: '#9aa0aa',
-    hint: 'A regional talent. Modest ceiling, ready to slot in.',
+  bronze: {
+    label: 'Bronze',
+    shortLabel: 'B',
+    color: '#a8743a',
+    glow: 'rgba(168,116,58,0.55)',
+    paRange: [70, 105],
+    ageRange: [19, 27],
+    caFraction: [0.70, 0.90],
+    traitCounts: { p0: 0.60, p1: 0.35, p2: 0.05, p3: 0 },
   },
-  premium: {
-    label: 'Premium Scout',
-    cost: 10_000,
-    paRange: [140, 170],
+  silver: {
+    label: 'Silver',
+    shortLabel: 'S',
+    color: '#bcc3cd',
+    glow: 'rgba(188,195,205,0.55)',
+    paRange: [100, 130],
+    ageRange: [17, 24],
+    caFraction: [0.62, 0.85],
+    traitCounts: { p0: 0.45, p1: 0.45, p2: 0.10, p3: 0 },
+  },
+  gold: {
+    label: 'Gold',
+    shortLabel: 'G',
+    color: '#f2c443',
+    glow: 'rgba(242,196,67,0.60)',
+    paRange: [125, 155],
+    ageRange: [16, 21],
+    caFraction: [0.55, 0.80],
+    traitCounts: { p0: 0.25, p1: 0.55, p2: 0.20, p3: 0 },
+  },
+  rareGold: {
+    label: 'Rare Gold',
+    shortLabel: 'RG',
+    color: '#ff9a3c',
+    glow: 'rgba(255,154,60,0.70)',
+    paRange: [150, 175],
+    ageRange: [16, 20],
+    caFraction: [0.50, 0.75],
+    traitCounts: { p0: 0.10, p1: 0.50, p2: 0.35, p3: 0.05 },
+  },
+  icon: {
+    label: 'ICON',
+    shortLabel: 'ICON',
+    color: '#ff5fb0',
+    glow: 'rgba(255,95,176,0.75)',
+    paRange: [175, 198],
     ageRange: [16, 19],
-    caFraction: [0.55, 0.75],   // CA 77-127 → developmental
-    color: '#4b69ff',
-    hint: 'A real wonderkid. Higher PA, room to grow.',
-  },
-  elite: {
-    label: 'Elite Scout',
-    cost: 35_000,
-    paRange: [170, 200],
-    ageRange: [16, 18],
-    caFraction: [0.50, 0.70],   // CA 85-140 → raw superstar
-    color: '#ffd700',
-    hint: 'The next superstar. PA caps over 190. Worth every cent.',
+    caFraction: [0.48, 0.72],
+    traitCounts: { p0: 0, p1: 0.20, p2: 0.50, p3: 0.30 },
   },
 };
 
 /** Initial contract length (in duels) for a scouted player — short by
  *  design so the user has to decide whether to renew. */
 export const SCOUT_CONTRACT_DUELS = 30;
-
-/** One tile on the scout reveal reel — slim render-only data. */
-export interface ScoutStripEntry {
-  nick: string;
-  role: string;
-  pa: number;
-  tier: MintTier;
-}
 /** Hard cap on per-team loan offer duration. */
 export const MAX_LOAN_DAYS = 21;
 /** Fatigue restored to each BENCH player every time the team plays a duel

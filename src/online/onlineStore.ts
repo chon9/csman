@@ -31,10 +31,9 @@ import type {
   MassageOutcome,
   MoraleGameResult,
   RpsChoice,
-  ScoutStripEntry,
+  ScoutRarity,
   MarketListing,
   MatchHistoryEntry,
-  MintTier,
   MyStandings,
   NewsItem,
   SkinInstanceWire,
@@ -182,7 +181,7 @@ interface OnlineState {
 
   // ----- Scout (pay-to-mint with case-style reveal) -----
   /** Last scout outcome — pops the reveal modal when set, null after dismiss. */
-  scoutReveal: { player: Player; tier: MintTier; cost: number; strip: ScoutStripEntry[]; winnerIndex: number } | null;
+  scoutReveal: { player: Player; rarity: ScoutRarity; cost: number } | null;
 
   // ----- Massage center -----
   /** Last massage outcome — pops a reveal modal when set, cleared on dismiss. */
@@ -332,7 +331,7 @@ interface OnlineState {
   // Phase 3 actions
   refreshFreeAgents: () => void;
   signFreeAgent: (playerId: string, wage: number) => void;
-  mintFreeAgent: (tier: MintTier) => void;
+  mintFreeAgent: () => void;
   dismissScoutReveal: () => void;
   refreshChallenges: () => void;
   postChallenge: (stake: number, format: MatchFormat, message?: string) => void;
@@ -703,12 +702,13 @@ export const useOnline = create<OnlineState>((set, get) => ({
         case 'player-scouted': {
           const t = get().team;
           // Optimistic state: deduct money + add to roster + cache the new
-          // player record. The reveal modal animates over a snapshot of the
-          // result; a refresh-state follows to re-sync canonical fields.
+          // player record. The pack-opening reveal animates over the rarity
+          // + player payload; a refresh-state follows to re-sync canonical
+          // fields once the user has dismissed the reveal.
           set({
             team: t ? { ...t, money: msg.newMoney, playerIds: [...t.playerIds, msg.player.id] } : t,
             players: { ...get().players, [msg.player.id]: msg.player },
-            scoutReveal: { player: msg.player, tier: msg.tier, cost: msg.cost, strip: msg.strip, winnerIndex: msg.winnerIndex },
+            scoutReveal: { player: msg.player, rarity: msg.rarity, cost: msg.cost },
           });
           client.send({ kind: 'refresh-state' });
           break;
@@ -1583,8 +1583,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
     get().client?.send({ kind: 'sign-free-agent', playerId, wage });
   },
 
-  mintFreeAgent(tier) {
-    get().client?.send({ kind: 'mint-free-agent', tier });
+  mintFreeAgent() {
+    get().client?.send({ kind: 'mint-free-agent' });
   },
   dismissScoutReveal() {
     set({ scoutReveal: null });

@@ -8,7 +8,15 @@ import { generateFreeAgentPool } from '../../src/data/faPool.ts';
 import { buildPlayer, type PlayerSpec, type TeamSpec } from '../../src/data/dbBuild.ts';
 import { NEWGEN_POOLS } from '../../src/data/newgenNames.ts';
 import { RNG, hashSeed } from '../../src/engine/rng.ts';
-import { CONTRACT_DUELS_INITIAL_FA, MINT_TIERS, SCOUT_CONTRACT_DUELS, type MintTier, type ScoutStripEntry } from '../../src/online/protocol.ts';
+import {
+  CONTRACT_DUELS_INITIAL_FA,
+  SCOUT_CONTRACT_DUELS,
+  SCOUT_RARITY_META,
+  SCOUT_RARITY_WEIGHTS,
+  TRAIT_LIBRARY,
+  type ScoutRarity,
+  type TraitDef,
+} from '../../src/online/protocol.ts';
 import type { Player, PlayerRole, Region } from '../../src/types.ts';
 import { rollPlayerTraits } from './spawn.ts';
 import { ROSTERS_A } from '../../src/data/rostersA.ts';
@@ -69,28 +77,83 @@ const MINT_ROLES: PlayerRole[] = ['IGL', 'AWPer', 'Entry', 'Lurker', 'Support', 
 
 export interface ScoutResult {
   player: Player;
-  strip: ScoutStripEntry[];
-  winnerIndex: number;
+  rarity: ScoutRarity;
 }
 
-/** Where the winning tile lands in the strip — gives the animation enough
- *  lead-in scrolling to feel like a real reveal. Mirrors the cs-cases value. */
-export const SCOUT_WINNER_INDEX = 55;
-const SCOUT_STRIP_LEN = 80;
+/** Roll the rarity for one scout pack. Pure RNG weighted by
+ *  SCOUT_RARITY_WEIGHTS — no pity / no streak protection so every pack
+ *  feels independent. */
+function rollScoutRarity(rng: RNG): ScoutRarity {
+  const tiers = Object.keys(SCOUT_RARITY_WEIGHTS) as ScoutRarity[];
+  const total = tiers.reduce((s, t) => s + SCOUT_RARITY_WEIGHTS[t], 0);
+  let r = rng.next() * total;
+  for (const t of tiers) {
+    r -= SCOUT_RARITY_WEIGHTS[t];
+    if (r <= 0) return t;
+  }
+  return 'bronze';
+}
+
+/** Roll N traits for a scout based on the rarity's trait-count distribution.
+ *  Higher rarities skew toward 2-3 positive traits; bronze usually rolls
+ *  zero. Negative traits only show up from the 2nd trait onward (and only
+ *  with a 30% chance to keep most rolls feel-good). */
+function rollScoutTraits(rng: RNG, rarity: ScoutRarity): string[] {
+  const meta = SCOUT_RARITY_META[rarity];
+  const r = rng.next();
+  let count: number;
+  if (r < meta.traitCounts.p0) count = 0;
+  else if (r < meta.traitCounts.p0 + meta.traitCounts.p1) count = 1;
+  else if (r < meta.traitCounts.p0 + meta.traitCounts.p1 + meta.traitCounts.p2) count = 2;
+  else count = 3;
+  if (count === 0) return [];
+
+  const out: string[] = [];
+  const positives = TRAIT_LIBRARY.filter((t) => t.tone === 'positive');
+  const negatives = TRAIT_LIBRARY.filter((t) => t.tone === 'negative');
+  function pickWeighted(pool: TraitDef[]): TraitDef {
+    const total = pool.reduce((s, t) => s + t.weight, 0);
+    let p = rng.next() * total;
+    for (const t of pool) {
+      p -= t.weight;
+      if (p <= 0) return t;
+    }
+    return pool[pool.length - 1]!;
+  }
+  for (let i = 0; i < count; i++) {
+    // Slot 0 is always positive. Slot 1+ has a 30% chance of being negative
+    // — except on Rare Gold / ICON where we want every trait to feel like a
+    // win, so we drop that to 15% / 0% respectively.
+    const negativeChance = i === 0 ? 0
+      : rarity === 'icon' ? 0
+      : rarity === 'rareGold' ? 0.15
+      : 0.30;
+    const wantNegative = rng.chance(negativeChance) && negatives.length > 0;
+    const pool = (wantNegative ? negatives : positives).filter((t) => !out.includes(t.id));
+    if (pool.length === 0) break;
+    out.push(pickWeighted(pool).id);
+  }
+  return out;
+}
 
 /**
- * Scout commission: rolls one player with PA in the tier's explicit window,
- * CA as a fraction of PA, age in the tier's window, signs them DIRECTLY to
- * the caller's team on a SCOUT_CONTRACT_DUELS deal. Returns the new Player
- * plus a render-only strip of fake names for the cs-cases reveal animation.
+ * Scout commission — single button on the client. Rolls a rarity tier
+ * server-side (Bronze 45% / Silver 28% / Gold 18% / Rare Gold 7% / ICON 2%),
+ * then rolls PA inside the tier's explicit window. CA is a random fraction
+ * of PA so younger / rarer drops are developmental but every scout produces
+ * SOMEONE who can play. Traits are rolled with rarity-tuned counts so an
+ * ICON drop almost always has 2-3 trait icons stamped on the card.
  *
- * Caller is responsible for charging the cost + appending player.id to
- * team.playerIds + db.setTeamPlayers + db.setTeamMoneyDay.
+ * Caller charges the flat SCOUT_COST + appends player.id to team.playerIds
+ * + saves team money/players.
  */
-export function mintWonderkid(db: DB, tier: MintTier, teamId: string, startDate: string): ScoutResult {
-  const meta = MINT_TIERS[tier];
-  const seedSrc = `scout-${tier}-${Date.now()}-${Math.random()}`;
+export function mintWonderkid(db: DB, teamId: string, startDate: string): ScoutResult {
+  const seedSrc = `scout-${Date.now()}-${Math.random()}`;
   const rng = new RNG(hashSeed(seedSrc));
+
+  // Rarity decides the PA window, age band, CA fraction, and trait counts.
+  const rarity = rollScoutRarity(rng);
+  const meta = SCOUT_RARITY_META[rarity];
 
   // Avoid id/nick collisions across the entire players table.
   const { ids: usedIds, nicks: usedNicks } = db.loadAllPlayerKeys();
@@ -133,7 +196,10 @@ export function mintWonderkid(db: DB, tier: MintTier, teamId: string, startDate:
   const frac = meta.caFraction[0] + rng.next() * (meta.caFraction[1] - meta.caFraction[0]);
   player.currentAbility = Math.max(40, Math.min(player.potentialAbility, Math.round(pa * frac)));
   player.squadTier = 'first';
-  player.traits = rollPlayerTraits(rng);
+  // Rarity-driven trait roll — higher rarity = more traits (and fewer
+  // negatives). The card surfaces the trait icons in the reveal animation
+  // so the user can see right away what they pulled.
+  player.traits = rollScoutTraits(rng, rarity);
   // Short scout contract — give them 30 ranked duels before the renewal
   // decision lands. Wage scales with rolled CA, same as buildPlayer would
   // have done if it had seen this CA directly.
@@ -146,23 +212,7 @@ export function mintWonderkid(db: DB, tier: MintTier, teamId: string, startDate:
   };
   db.savePlayer(player);
 
-  // Build the reveal strip. Other tiles use plausible fake nicks (sampled
-  // from the same regional pool) so the scroll looks varied; winner sits
-  // at SCOUT_WINNER_INDEX. Tiles all carry the tier so the strip border
-  // matches the rolled rarity colour client-side.
-  const strip: ScoutStripEntry[] = [];
-  for (let i = 0; i < SCOUT_STRIP_LEN; i++) {
-    if (i === SCOUT_WINNER_INDEX) {
-      strip.push({ nick: player.nickname, role: player.role, pa: player.potentialAbility, tier });
-    } else {
-      const fakeNick = pool.nicks[rng.int(0, pool.nicks.length - 1)];
-      const fakeRole = MINT_ROLES[rng.int(0, MINT_ROLES.length - 1)];
-      const fakePa = rng.int(meta.paRange[0], meta.paRange[1]);
-      strip.push({ nick: fakeNick, role: fakeRole, pa: fakePa, tier });
-    }
-  }
-
-  return { player, strip, winnerIndex: SCOUT_WINNER_INDEX };
+  return { player, rarity };
 }
 
 /**
