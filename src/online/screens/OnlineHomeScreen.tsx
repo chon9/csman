@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
+import { starterContractWarning } from '../contractWarn';
 import {
   CONTRACT_DUELS_WARN_AT,
   CONTRACT_RENEWAL_DUELS,
@@ -198,7 +199,15 @@ export default function OnlineHomeScreen() {
             <button
               className="btn btn-accent"
               disabled={!canDuel}
-              onClick={() => registerAiDuel(effectiveStake, format)}
+              onClick={() => {
+                // Scrims don't tick contracts (see server's isScrim guard
+                // around tickContractsAfterDuel) so skip the warning there.
+                if (!scrimMode) {
+                  const warn = starterContractWarning(team, players);
+                  if (warn && !window.confirm(warn.message)) return;
+                }
+                registerAiDuel(effectiveStake, format);
+              }}
               title={duelBlockedReason || (scrimMode ? 'Run a free scrim' : `Register a $${stake.toLocaleString()} duel`)}
             >
               {duelPending

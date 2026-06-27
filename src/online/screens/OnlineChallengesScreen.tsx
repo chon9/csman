@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
+import { starterContractWarning } from '../contractWarn';
 import {
   APVP_DEFENDER_WIN_SHARE,
   APVP_MAX_STAKE,
@@ -28,6 +29,7 @@ function timeAgo(ts: number): string {
 
 export default function OnlineChallengesScreen() {
   const team = useOnline((s) => s.team);
+  const players = useOnline((s) => s.players);
   const open = useOnline((s) => s.openChallenges);
   const mine = useOnline((s) => s.myChallenges);
   const duelPending = useOnline((s) => s.duelPending);
@@ -37,6 +39,11 @@ export default function OnlineChallengesScreen() {
   const accept = useOnline((s) => s.acceptChallenge);
   const findAsyncMatch = useOnline((s) => s.findAsyncMatch);
   const go = useOnline((s) => s.go);
+
+  function confirmContractsOk(): boolean {
+    const warn = starterContractWarning(team, players);
+    return !warn || window.confirm(warn.message);
+  }
 
   const [stake, setStake] = useState(5_000);
   const [format, setFormat] = useState<MatchFormat>('BO1');
@@ -105,7 +112,7 @@ export default function OnlineChallengesScreen() {
           <button
             className="btn btn-accent"
             disabled={duelPending || team.money < apvpStake || team.playerIds.length < 5}
-            onClick={() => findAsyncMatch(apvpStake)}
+            onClick={() => { if (confirmContractsOk()) findAsyncMatch(apvpStake); }}
             title={
               team.playerIds.length < 5 ? 'Need 5 players on the roster' :
               team.money < apvpStake ? `Need $${apvpStake.toLocaleString()} on hand` :
@@ -240,7 +247,7 @@ export default function OnlineChallengesScreen() {
                       <button
                         className="btn btn-tiny btn-accent"
                         disabled={!canAfford || duelPending || team.playerIds.length < 5}
-                        onClick={() => accept(c.id)}
+                        onClick={() => { if (confirmContractsOk()) accept(c.id); }}
                         title={
                           team.playerIds.length < 5
                             ? 'Need 5 players to accept'
