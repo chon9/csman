@@ -497,6 +497,13 @@ export interface MatchResult {
   winnerId: string;
   maps: MapResult[];
   vetoLog: string[];
+  /** Snapshot of who played for each side — populated by the engine at
+   *  series resolution. Lets the replay viewer split the scoreboard in
+   *  spectator mode (AI bet / tournament watch) without needing the
+   *  separate server-side roster anchor. Optional for backward compat
+   *  with older match_history rows that pre-date the field. */
+  teamARosterIds?: string[];
+  teamBRosterIds?: string[];
 }
 
 export interface PlayerMatchStats {

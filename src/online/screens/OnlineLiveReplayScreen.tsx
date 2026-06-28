@@ -236,7 +236,11 @@ export default function OnlineLiveReplayScreen() {
   // is true so both AI tags surface correctly.
   const isAiBetMatch = r.matchId.startsWith('aibet-');
   const spectator = isAiBetMatch || (!userIsA && !userIsB);
-  const specRosterA = useMemo(() => new Set(replay?.teamARosterIds ?? []), [replay?.teamARosterIds]);
+  // Roster anchor for spectator mode — prefer the engine-stamped result
+  // field (covers tournament + PvP + AI bet replays uniformly), fall
+  // back to the legacy outer message field, then to empty.
+  const specRosterSource = r.teamARosterIds ?? replay?.teamARosterIds ?? [];
+  const specRosterA = useMemo(() => new Set(specRosterSource), [specRosterSource]);
 
   // Side detection — every frame carries each player's current side. Use the
   // user's team as the anchor (we always have one of their player records);

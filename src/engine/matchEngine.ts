@@ -1674,6 +1674,10 @@ export function seriesResult(s: SeriesState): MatchResult {
     winnerId: sc.a > sc.b ? s.a.team.id : s.b.team.id,
     maps: s.maps,
     vetoLog: s.vetoLog,
+    // Snapshot rosters so the spectator-mode replay viewer can split
+    // the scoreboard correctly when neither side is the watching team.
+    teamARosterIds: s.a.players.slice(0, 5).map((p) => p.id),
+    teamBRosterIds: s.b.players.slice(0, 5).map((p) => p.id),
   };
 }
 
