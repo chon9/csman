@@ -1246,7 +1246,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
             team: t ? { ...t, money: msg.newMoney, playerIds: t.playerIds.filter((id) => id !== msg.playerId) } : t,
             players: ps,
           });
-          pushToast('info', `Released ${msg.nickname} — severance $${msg.cost.toLocaleString()}.`);
+          pushToast('info', `Released ${msg.nickname} to free agency.`);
           break;
         }
         case 'duel-stats': {

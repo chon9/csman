@@ -2227,6 +2227,16 @@ export function openDb(path: string) {
   );
   const findHoF = db.prepare(`SELECT * FROM hall_of_fame WHERE player_id = ?`);
   const topHoF = db.prepare(`SELECT * FROM hall_of_fame ORDER BY peak_ca DESC, retired_at DESC LIMIT ?`);
+  // Career W/L for a team — aggregated from every match in history.
+  // Used at HoF induction so the retiree's record reflects the team
+  // they played for (we don't track per-player W/L on the Player row).
+  const teamCareerRecordStmt = db.prepare(
+    `SELECT
+       SUM(CASE WHEN winner_id = ? THEN 1 ELSE 0 END) AS wins,
+       SUM(CASE WHEN winner_id != ? AND (team_a_id = ? OR team_b_id = ?) THEN 1 ELSE 0 END) AS losses
+       FROM match_history
+       WHERE team_a_id = ? OR team_b_id = ?`,
+  );
 
   function rowToHoF(r: HoFRow) {
     return {
@@ -2265,6 +2275,35 @@ export function openDb(path: string) {
 
   function loadHallOfFame(limit = 50) {
     return (topHoF.all(limit) as HoFRow[]).map(rowToHoF);
+  }
+
+  /** Career W/L for a team across all match_history rows. */
+  function loadTeamCareerRecord(teamId: string): { wins: number; losses: number } {
+    const r = teamCareerRecordStmt.get(teamId, teamId, teamId, teamId, teamId, teamId) as
+      | { wins: number | null; losses: number | null }
+      | undefined;
+    return { wins: r?.wins ?? 0, losses: r?.losses ?? 0 };
+  }
+
+  /** One-shot backfill: every HoF row that was inducted with the default
+   *  0-0 record gets its W/L recomputed from match_history using the
+   *  player's last team. Idempotent — canary-gated; safe to call on every
+   *  boot. Returns the count of rows updated. */
+  function backfillHallOfFameRecords(): { updated: number } {
+    if (getMeta('hof_wl_backfilled') === '1') return { updated: 0 };
+    const rows = db.prepare(
+      `SELECT player_id, last_team_id FROM hall_of_fame WHERE career_wins = 0 AND career_losses = 0 AND last_team_id IS NOT NULL`,
+    ).all() as Array<{ player_id: string; last_team_id: string }>;
+    const update = db.prepare(`UPDATE hall_of_fame SET career_wins = ?, career_losses = ? WHERE player_id = ?`);
+    let updated = 0;
+    for (const r of rows) {
+      const rec = loadTeamCareerRecord(r.last_team_id);
+      if (rec.wins === 0 && rec.losses === 0) continue;
+      update.run(rec.wins, rec.losses, r.player_id);
+      updated++;
+    }
+    setMeta('hof_wl_backfilled', '1');
+    return { updated };
   }
 
   function loadHoFEntry(playerId: string) {
@@ -2916,6 +2955,8 @@ export function openDb(path: string) {
     loadDueLoans,
     setLoanStatus,
     inductIntoHoF,
+    loadTeamCareerRecord,
+    backfillHallOfFameRecords,
     loadHallOfFame,
     loadHoFEntry,
     addCoachToPool,

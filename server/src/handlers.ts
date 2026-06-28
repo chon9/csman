@@ -2474,39 +2474,27 @@ export function handle(
       if (team.playerIds.length <= 5) {
         return { kind: 'error', code: 'min-roster', message: 'Need at least 5 players to keep duels running — sign someone before releasing.' };
       }
-      // Release fee: severance pay. RELEASE_WAGE_MULT × monthly wage,
-      // with a floor so even peppercorn contracts cost something.
-      const wage = player.contract?.wage ?? 1000;
-      const fee = Math.max(MIN_RELEASE_FEE, Math.round(wage * RELEASE_WAGE_MULT));
-      if (team.money < fee) {
-        return {
-          kind: 'error',
-          code: 'insufficient-funds',
-          message: `Severance is $${fee.toLocaleString()} (${RELEASE_WAGE_MULT}× monthly wage) — you have $${team.money.toLocaleString()}.`,
-        };
-      }
-      // Free the player: clear ownership, drop from roster, free from any
-      // open peer-market-related concerns (player market listing if any).
-      team.money -= fee;
+      // Release is free: no severance charged AND no cash credited.
+      // (Previously charged a wage-based severance — removed at user
+      // request: "release player should not give back cash".)
       const previousNick = player.nickname;
       player.teamId = null;
       player.contract = null;
       player.squadTier = 'reserve';
       team.playerIds = team.playerIds.filter((id) => id !== player.id);
-      db.setTeamMoneyDay(team.id, team.money, team.day);
       db.setTeamPlayers(team.id, team.playerIds);
       db.persistPlayer(player);
-      log(`released: ${team.tag} → ${previousNick} (fee $${fee})`);
+      log(`released: ${team.tag} → ${previousNick} (free)`);
       const newsItem = db.publishNews(
         'transfer',
-        `${previousNick} released early by ${team.tag} (severance $${fee.toLocaleString()}) — now a free agent.`,
+        `${previousNick} released by ${team.tag} — now a free agent.`,
       );
       broadcast({ kind: 'news-item', item: newsItem as NewsItem });
       return {
         kind: 'player-released',
         playerId: player.id,
         nickname: previousNick,
-        cost: fee,
+        cost: 0,
         newMoney: team.money,
       };
     }

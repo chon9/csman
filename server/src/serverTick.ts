@@ -102,7 +102,9 @@ export function processRetirements(
     const base = p.age >= 38 ? 0.5 : p.age >= 35 ? 0.18 : p.age >= 33 ? 0.08 : 0.04;
     const chance = Math.min(0.95, base * Math.max(1, weeksAdvanced));
     if (!rng.chance(chance)) { keepIds.push(p.id); continue; }
-    // Retire — induct into HoF.
+    // Retire — induct into HoF. Career W/L is the TEAM's W/L since we
+    // don't track per-player game-by-game history (every starter played).
+    const teamRecord = db.loadTeamCareerRecord(team.id);
     db.inductIntoHoF({
       playerId: p.id,
       nickname: p.nickname,
@@ -110,6 +112,8 @@ export function processRetirements(
       nationality: p.nationality,
       lastAge: p.age,
       peakCA: p.currentAbility,
+      careerWins: teamRecord.wins,
+      careerLosses: teamRecord.losses,
       lastTeamId: team.id,
       lastTeamTag: team.tag,
     });

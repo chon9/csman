@@ -55,6 +55,13 @@ if (traitsBackfill.updated > 0) {
   console.log(`[csm] backfilled traits onto ${traitsBackfill.updated} legacy players`);
 }
 
+// One-shot: recompute career W/L for HoF entries inducted with the old
+// 0-0 default. Canary-gated; subsequent boots no-op.
+const hofBackfill = db.backfillHallOfFameRecords();
+if (hofBackfill.updated > 0) {
+  console.log(`[csm] recomputed career W/L on ${hofBackfill.updated} HoF rows`);
+}
+
 // Shared http.Server: serves /team/:id HTML profiles + upgrades to WebSocket
 // on the same port. Reverse-proxy (Caddy) friendliness — one URL, one cert.
 const httpServer = createServer((req, res) => {

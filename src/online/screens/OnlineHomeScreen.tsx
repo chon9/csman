@@ -374,26 +374,24 @@ export default function OnlineHomeScreen() {
                         >Renew · ${renewCost.toLocaleString()}</button>
                       )}
                       {/* Release: terminate the contract early + send the
-                          player to FA. Costs a severance fee. Roster must
-                          stay ≥ 6 (one above the duel-minimum 5). */}
+                          player to FA. Free — no cash changes hands.
+                          Roster must stay ≥ 6 (one above duel-min 5). */}
                       {(() => {
-                        const releaseFee = Math.max(MIN_RELEASE_FEE, Math.round((p.contract?.wage ?? 1000) * RELEASE_WAGE_MULT));
-                        const canRelease = roster.length > 5 && team && team.money >= releaseFee;
+                        const canRelease = roster.length > 5;
                         return (
                           <button
                             className="btn btn-tiny btn-danger"
                             disabled={!canRelease}
                             title={
-                              roster.length <= 5 ? 'Need 6+ players to release one (duels need 5 minimum)' :
-                              !team || team.money < releaseFee ? `Need $${releaseFee.toLocaleString()} severance` :
-                              `Release ${p.nickname} to free agency for $${releaseFee.toLocaleString()} severance (${RELEASE_WAGE_MULT}× monthly wage)`
+                              !canRelease ? 'Need 6+ players to release one (duels need 5 minimum)' :
+                              `Release ${p.nickname} to free agency. No cost.`
                             }
                             onClick={() => {
-                              if (window.confirm(`Release ${p.nickname}? Pays $${releaseFee.toLocaleString()} severance and sends them to free agency.`)) {
+                              if (window.confirm(`Release ${p.nickname} to free agency? No cash changes hands.`)) {
                                 releasePlayer(p.id);
                               }
                             }}
-                          >Release · ${releaseFee.toLocaleString()}</button>
+                          >Release</button>
                         );
                       })()}
                     </td>
