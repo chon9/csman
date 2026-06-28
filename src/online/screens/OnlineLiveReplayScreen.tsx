@@ -11,11 +11,135 @@ import { useEffect, useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import { MAP_LAYOUTS } from '../../data/maps';
 import MapCanvas from '../../ui/match/MapCanvas';
-import type { Player } from '../../types';
+import type { Player, RoundFrame, RoundResult } from '../../types';
 
 const SPEEDS = [1, 2, 4, 8];
 const T_COLOR = '#f2a13c';
 const CT_COLOR = '#6aa7ec';
+
+type CenterHighlightSub = 'multikill' | 'plant' | 'defuse' | 'clutch' | 'awp' | 'headshot';
+
+interface CenterHighlight {
+  /** Stable key — React uses this to re-fire the pop-in CSS animation. */
+  key: string;
+  /** Big label, e.g. "Double Kill", "ACE", "1v3 Clutch", "Bomb Planted". */
+  type: string;
+  /** Subject player id (the killer, planter, defuser, clutcher). May be null
+   *  for events the engine doesn't tag (e.g. bomb defused — engine only
+   *  records the round-end reason, not who did the wires). */
+  playerId: string | null;
+  /** Optional weapon-style badge — 'AWP' or 'HS'. Skipped for non-kill events. */
+  weaponBadge: 'AWP' | 'HS' | null;
+  subType: CenterHighlightSub;
+}
+
+/** How many ticks the multi-kill / single-kill badge stays on screen
+ *  after the kill that triggered it. ~3 ticks ≈ 6 seconds in-engine; long
+ *  enough to read at 4× playback. */
+const HIGHLIGHT_DECAY_TICKS = 3;
+
+/** Pick the single most relevant highlight to flash in the centre of the
+ *  map for the current frame. Event priority (most recent wins):
+ *    1. Round-end events at the final frame (clutch / defuse)
+ *    2. Bomb plant transition this very frame
+ *    3. Multi-kill (Double / Triple / Quad / Ace) by the latest killer
+ *    4. Single AWP or headshot kill (still highlight-worthy)
+ *  Returns null when nothing exciting is happening so the centre stays
+ *  empty rather than spamming the screen with every pistol tap. */
+export function computeCenterHighlight(
+  round: RoundResult | null | undefined,
+  frame: RoundFrame | null | undefined,
+  prevFrame: RoundFrame | null | undefined,
+  frameIdx: number,
+): CenterHighlight | null {
+  if (!round || !frame) return null;
+  const curTick = frame.tick;
+  const isLastFrame = frameIdx >= round.frames.length - 1;
+
+  // (1) Round-end events — defuse + clutch. Fire on the FINAL frame so
+  //     the badge lands as the round resolves.
+  if (isLastFrame) {
+    if (round.clutch?.won) {
+      return {
+        key: `clutch-${round.roundNo}-${round.clutch.playerId}`,
+        type: `1v${round.clutch.vs} Clutch`,
+        playerId: round.clutch.playerId,
+        weaponBadge: null,
+        subType: 'clutch',
+      };
+    }
+    if (round.reason === 'defuse') {
+      return {
+        key: `defuse-${round.roundNo}`,
+        type: 'Bomb Defused',
+        playerId: null,
+        weaponBadge: null,
+        subType: 'defuse',
+      };
+    }
+  }
+
+  // (2) Bomb plant — detect frame where bombPlanted flipped on. Player
+  //     who planted is the dot carrying the bomb on the previous frame.
+  if (frame.bombPlanted && prevFrame && !prevFrame.bombPlanted) {
+    const planter = prevFrame.dots.find((d) => d.hasBomb)?.playerId ?? null;
+    return {
+      key: `plant-${round.roundNo}-${curTick}`,
+      type: 'Bomb Planted',
+      playerId: planter,
+      weaponBadge: null,
+      subType: 'plant',
+    };
+  }
+
+  // (3 / 4) Look at the most recent kill — drives multi-kill + single-kill
+  //         highlight detection. Both decay after a few ticks so the badge
+  //         clears between events instead of lingering.
+  const revealedKills = round.kills.filter((k) => k.tick <= curTick);
+  if (revealedKills.length === 0) return null;
+  const lastKill = revealedKills[revealedKills.length - 1]!;
+  if (curTick - lastKill.tick > HIGHLIGHT_DECAY_TICKS) return null;
+
+  const killerKillCount = revealedKills.filter((k) => k.killerId === lastKill.killerId).length;
+  const weapon = lastKill.weapon ?? '';
+  const isAwp = /awp/i.test(weapon);
+  const baseBadge: 'AWP' | 'HS' | null = isAwp ? 'AWP' : (lastKill.headshot ? 'HS' : null);
+
+  if (killerKillCount >= 2) {
+    const label = killerKillCount >= 5 ? 'ACE'
+      : killerKillCount === 4 ? 'Quad Kill'
+      : killerKillCount === 3 ? 'Triple Kill'
+      : 'Double Kill';
+    return {
+      key: `multi-${round.roundNo}-${lastKill.killerId}-${killerKillCount}-${lastKill.tick}`,
+      type: label,
+      playerId: lastKill.killerId,
+      weaponBadge: baseBadge,
+      subType: 'multikill',
+    };
+  }
+
+  // Single big kill — only flash when the weapon is notable (AWP or HS).
+  if (isAwp) {
+    return {
+      key: `awp-${round.roundNo}-${lastKill.killerId}-${lastKill.tick}`,
+      type: 'AWP Pickoff',
+      playerId: lastKill.killerId,
+      weaponBadge: 'AWP',
+      subType: 'awp',
+    };
+  }
+  if (lastKill.headshot) {
+    return {
+      key: `hs-${round.roundNo}-${lastKill.killerId}-${lastKill.tick}`,
+      type: 'Headshot',
+      playerId: lastKill.killerId,
+      weaponBadge: 'HS',
+      subType: 'headshot',
+    };
+  }
+  return null;
+}
 
 export default function OnlineLiveReplayScreen() {
   const team = useOnline((s) => s.team);
@@ -347,29 +471,45 @@ export default function OnlineLiveReplayScreen() {
             />
           </div>
 
-          {/* ===== Center kill flash — last kill, 50% opacity floats
-              over the map. Keyed by killer+tick so each new kill re-fires
-              the CSS pop-in animation. Pointer-events disabled so the
-              map stays interactive underneath. ===== */}
-          {killFeed.length > 0 && (() => {
-            const latest = killFeed[killFeed.length - 1]!;
-            const killerA = teamAPlayerIds.has(latest.killerId);
-            const victimA = teamAPlayerIds.has(latest.victimId);
-            const kSide = killerA ? teamASide : teamBSide;
-            const vSide = victimA ? teamASide : teamBSide;
-            const kColor = kSide === 'T' ? T_COLOR : kSide === 'CT' ? CT_COLOR : '#d8dce4';
-            const vColor = vSide === 'T' ? T_COLOR : vSide === 'CT' ? CT_COLOR : '#d8dce4';
+          {/* ===== Center highlight flash — only fires on noteworthy
+              moments (multi-kills, bomb plant/defuse, clutch, AWP/HS
+              single kills) instead of every single kill. Format:
+              "TYPE — Player [• weapon-badge]". Keyed by event signature
+              so each new highlight re-fires the CSS pop-in animation. ===== */}
+          {(() => {
+            const hl = computeCenterHighlight(curRound, frame, prevFrame, frameIdx);
+            if (!hl) return null;
+            const onA = hl.playerId ? teamAPlayerIds.has(hl.playerId) : false;
+            const pSide = hl.playerId ? (onA ? teamASide : teamBSide) : null;
+            const pColor = pSide === 'T' ? T_COLOR : pSide === 'CT' ? CT_COLOR : '#d8dce4';
+            const accent = hl.subType === 'plant' ? '#f2a13c'
+              : hl.subType === 'defuse' ? '#6aa7ec'
+              : hl.subType === 'clutch' ? '#f2c443'
+              : hl.subType === 'multikill' ? '#e25555'
+              : '#d8dce4';
             return (
               <div
-                key={`${latest.killerId}-${latest.victimId}-${latest.tick}`}
+                key={hl.key}
                 className="md-overlay-killflash"
                 aria-hidden
               >
                 <div className="kf-flash-line">
-                  <span style={{ color: kColor }}>{nicknames[latest.killerId] ?? latest.killerId}</span>
-                  <span className="kf-flash-weapon">{latest.weapon}</span>
-                  <span style={{ color: vColor }}>{nicknames[latest.victimId] ?? latest.victimId}</span>
-                  {latest.headshot && <span className="kf-flash-hs">HS</span>}
+                  <span className="kf-highlight-type" style={{ color: accent, fontWeight: 800, letterSpacing: 1.2, textTransform: 'uppercase', textShadow: `0 0 12px ${accent}88` }}>
+                    {hl.type}
+                  </span>
+                  {hl.playerId && (
+                    <>
+                      <span style={{ opacity: 0.5 }}>—</span>
+                      <span style={{ color: pColor }}>{nicknames[hl.playerId] ?? hl.playerId}</span>
+                    </>
+                  )}
+                  {hl.weaponBadge && (
+                    <span className="kf-flash-hs" style={{
+                      background: hl.weaponBadge === 'AWP' ? 'rgba(242,196,67,0.18)' : 'rgba(226,85,85,0.18)',
+                      borderColor: hl.weaponBadge === 'AWP' ? '#f2c443' : '#e25555',
+                      color: hl.weaponBadge === 'AWP' ? '#f2c443' : '#e25555',
+                    }}>{hl.weaponBadge}</span>
+                  )}
                 </div>
               </div>
             );
