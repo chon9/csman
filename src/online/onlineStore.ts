@@ -62,7 +62,7 @@ import type {
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets' | 'real-estate';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets' | 'real-estate' | 'ewallet';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -431,6 +431,11 @@ interface OnlineState {
   respondSponsor: (sponsorId: string, accept: boolean) => void;
   claimSponsor: (sponsorId: string) => void;
   cancelSponsor: (sponsorId: string) => void;
+  // E-Wallet
+  sendCash: (toTag: string, amount: number) => void;
+  sendSkin: (toTag: string, skinInstanceId: string) => void;
+  sendPlayer: (toTag: string, playerId: string) => void;
+  sendLot: (toTag: string, lotId: string) => void;
   // AI vs AI betting market
   refreshAiBets: () => void;
   refreshAiBetHistory: () => void;
@@ -1003,6 +1008,25 @@ export const useOnline = create<OnlineState>((set, get) => ({
           // Drop the sponsor from the list — it's claimed and done.
           set({ sponsors: get().sponsors.filter((s) => s.id !== msg.sponsorId) });
           pushToast('success', `💼 Sponsor reward collected — +$${msg.amount.toLocaleString()}.`);
+          break;
+        }
+        case 'ewallet-sent': {
+          const t = get().team;
+          if (t) set({ team: { ...t, money: msg.newMoney } });
+          pushToast('success', `📤 Sent ${msg.description} to ${msg.toTeamTag}.`);
+          // Roster / skin / lot lists may need a refresh depending on kind.
+          client.send({ kind: 'refresh-state' });
+          if (msg.assetKind === 'skin') client.send({ kind: 'list-skins' });
+          if (msg.assetKind === 'lot') client.send({ kind: 'list-my-lots' });
+          break;
+        }
+        case 'ewallet-received': {
+          const t = get().team;
+          if (t) set({ team: { ...t, money: msg.newMoney } });
+          pushToast('success', `📥 Received ${msg.description} from ${msg.fromTeamTag}.`);
+          client.send({ kind: 'refresh-state' });
+          if (msg.assetKind === 'skin') client.send({ kind: 'list-skins' });
+          if (msg.assetKind === 'lot') client.send({ kind: 'list-my-lots' });
           break;
         }
         case 'loan-event': {
@@ -2033,6 +2057,19 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   cancelSponsor(sponsorId) {
     get().client?.send({ kind: 'cancel-sponsor', sponsorId });
+  },
+
+  sendCash(toTag, amount) {
+    get().client?.send({ kind: 'ewallet-send-cash', toTeamTag: toTag, amount });
+  },
+  sendSkin(toTag, skinInstanceId) {
+    get().client?.send({ kind: 'ewallet-send-skin', toTeamTag: toTag, skinInstanceId });
+  },
+  sendPlayer(toTag, playerId) {
+    get().client?.send({ kind: 'ewallet-send-player', toTeamTag: toTag, playerId });
+  },
+  sendLot(toTag, lotId) {
+    get().client?.send({ kind: 'ewallet-send-lot', toTeamTag: toTag, lotId });
   },
 
   refreshAiBets() {

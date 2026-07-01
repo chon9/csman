@@ -76,6 +76,7 @@ function lotToMapPin(db: DB, row: ReturnType<DB['loadLot']> & object): LotMapPin
   const owner = db.loadTeam(row.owner_team_id);
   if (!owner) return null;
   return {
+    id: row.id,
     x: row.x,
     y: row.y,
     ownerTeamId: owner.id,

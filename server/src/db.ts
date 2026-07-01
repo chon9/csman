@@ -736,6 +736,7 @@ export function openDb(path: string) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const getTeam = db.prepare(`SELECT * FROM teams WHERE id = ?`);
+  const getTeamByTag = db.prepare(`SELECT * FROM teams WHERE tag = ? COLLATE NOCASE LIMIT 1`);
   const updateTeamPlayers = db.prepare(`UPDATE teams SET player_ids = ? WHERE id = ?`);
   const updateTeamMoneyDay = db.prepare(`UPDATE teams SET money = ?, day = ? WHERE id = ?`);
   const updateTeamTactics = db.prepare(`UPDATE teams SET tactics_json = ? WHERE id = ?`);
@@ -1628,6 +1629,10 @@ export function openDb(path: string) {
 
   function loadTeam(teamId: string): TeamRow | null {
     const row = getTeam.get(teamId) as Record<string, unknown> | undefined;
+    return row ? rowToTeam(row) : null;
+  }
+  function loadTeamByTag(tag: string): TeamRow | null {
+    const row = getTeamByTag.get(tag) as Record<string, unknown> | undefined;
     return row ? rowToTeam(row) : null;
   }
 
@@ -2939,6 +2944,7 @@ export function openDb(path: string) {
     removeBoost,
     createTeam,
     loadTeam,
+    loadTeamByTag,
     setTeamPlayers,
     setTeamMoneyDay,
     setTeamTactics,

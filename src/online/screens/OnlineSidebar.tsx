@@ -29,6 +29,7 @@ const PRIMARY: NavItem[] = [
   { id: 'mini-games', label: 'Mini Games', icon: '🎮' },
   { id: 'ai-bets', label: 'AI Betting', icon: '🎰' },
   { id: 'real-estate', label: 'Real Estate', icon: '🏘' },
+  { id: 'ewallet', label: 'E-Wallet', icon: '💳' },
   { id: 'streaming', label: 'Streaming', icon: '📺' },
   { id: 'scout', label: 'Scout', icon: '🔬' },
   { id: 'history', label: 'History', icon: '📜' },

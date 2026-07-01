@@ -1,31 +1,22 @@
 import { useEffect, useState } from 'react';
-import { useGame } from '../../store/gameStore';
 import { getSoundSettings, setSoundSettings, unlockAudio } from '../../sound/soundManager';
 
 type Panel = 'main' | 'settings' | 'about';
 
+/** Note: `onNewCareer` / `onLoadSelected` kept in the signature for
+ *  parent compat but the buttons are removed — this game is online-only
+ *  as of v0.5. Single-player screens still exist in the codebase but no
+ *  entry point on the main menu. */
 export default function MainMenu({
-  onNewCareer,
-  onLoadSelected,
+  onNewCareer: _onNewCareer,
+  onLoadSelected: _onLoadSelected,
   onOnline,
 }: {
   onNewCareer: () => void;
   onLoadSelected: () => void;
   onOnline: () => void;
 }) {
-  const loadGame = useGame((s) => s.loadGame);
-  const hasSave = useGame((s) => s.hasSave);
   const [panel, setPanel] = useState<Panel>('main');
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const save = hasSave();
-
-  function tryLoad() {
-    if (!loadGame()) {
-      setLoadError('Save could not be loaded.');
-      return;
-    }
-    setLoadError(null);
-  }
 
   return (
     <div className="menu-screen">
@@ -47,20 +38,6 @@ export default function MainMenu({
               </span>
               <span className="menu-btn-sub">Duel real managers · cross-team transfers · tournaments · gambling mini-games</span>
             </button>
-            {save && (
-              <button className="menu-btn menu-btn-primary" onClick={tryLoad}>
-                <span className="menu-btn-label">Continue Career</span>
-                <span className="menu-btn-sub">Pick up where you left off (single player)</span>
-              </button>
-            )}
-            <button className="menu-btn" onClick={onNewCareer}>
-              <span className="menu-btn-label">New Career</span>
-              <span className="menu-btn-sub">Single-player — pick a team and start a fresh save</span>
-            </button>
-            <button className="menu-btn" disabled={!save} onClick={onLoadSelected}>
-              <span className="menu-btn-label">Load / Manage Save</span>
-              <span className="menu-btn-sub">{save ? 'Inspect or delete the current save' : 'No save yet'}</span>
-            </button>
             <button className="menu-btn" onClick={() => setPanel('settings')}>
               <span className="menu-btn-label">Settings</span>
               <span className="menu-btn-sub">Sound, volume</span>
@@ -69,7 +46,6 @@ export default function MainMenu({
               <span className="menu-btn-label">About</span>
               <span className="menu-btn-sub">Credits &amp; version</span>
             </button>
-            {loadError && <div className="menu-err">{loadError}</div>}
           </div>
         )}
 
@@ -77,7 +53,7 @@ export default function MainMenu({
         {panel === 'about' && <AboutPanel onBack={() => setPanel('main')} />}
       </div>
       <div className="menu-footer">
-        <span>v0.3 · Alex Chon</span>
+        <span>v0.5 · Alex Chon</span>
         <span>Built for the CS scene.</span>
       </div>
     </div>

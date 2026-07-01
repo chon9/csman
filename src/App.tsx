@@ -21,6 +21,7 @@ import OnlineScoutScreen from './online/screens/OnlineScoutScreen';
 import OnlineStreamScreen from './online/screens/OnlineStreamScreen';
 import AiBettingScreen from './online/screens/AiBettingScreen';
 import RealEstateScreen from './online/screens/RealEstateScreen';
+import EWalletScreen from './online/screens/EWalletScreen';
 import OnlineSidebar from './online/screens/OnlineSidebar';
 import ChatWidget from './online/screens/ChatWidget';
 import DevReportModal from './online/screens/DevReportModal';
@@ -150,6 +151,7 @@ export default function App() {
     else if (onlineScreen === 'streaming') body = <OnlineStreamScreen />;
     else if (onlineScreen === 'ai-bets') body = <AiBettingScreen />;
     else if (onlineScreen === 'real-estate') body = <RealEstateScreen />;
+    else if (onlineScreen === 'ewallet') body = <EWalletScreen />;
     else body = <OnlineHomeScreen />;
     return (
       <div className="online-layout">

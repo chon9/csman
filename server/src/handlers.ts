@@ -3965,6 +3965,186 @@ export function handle(
       return { kind: 'sponsors', offers: buildSponsorsWire(db, conn.teamId), paid: [] };
     }
 
+    // ---------- E-Wallet: peer-to-peer transfers ----------
+    //
+    // Four asset kinds — cash, skin, player, real-estate lot. All look
+    // up the recipient by team tag (case-insensitive) and refuse if the
+    // recipient is the sender themselves or doesn't exist. Successful
+    // transfers push an 'ewallet-received' notification to the recipient
+    // so their client can toast + refresh state.
+
+    case 'ewallet-send-cash': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const sender = db.loadTeam(conn.teamId);
+      if (!sender) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const recipient = db.loadTeamByTag(msg.toTeamTag.trim());
+      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No team with tag "${msg.toTeamTag}".` };
+      if (recipient.id === sender.id) return { kind: 'error', code: 'self-transfer', message: `You can't send to your own team.` };
+      const amount = Math.floor(msg.amount);
+      if (amount < 1000) return { kind: 'error', code: 'bad-amount', message: `Minimum transfer is $1,000.` };
+      if (sender.money < amount) return { kind: 'error', code: 'insufficient-funds', message: `You only have $${sender.money.toLocaleString()} on hand.` };
+      sender.money -= amount;
+      recipient.money += amount;
+      db.setTeamMoneyDay(sender.id, sender.money, sender.day);
+      db.setTeamMoneyDay(recipient.id, recipient.money, recipient.day);
+      log(`ewallet: ${sender.tag} → ${recipient.tag} $${amount}`);
+      notifyTeam(recipient.id, {
+        kind: 'ewallet-received',
+        assetKind: 'cash',
+        fromTeamTag: sender.tag,
+        description: `$${amount.toLocaleString()} in cash`,
+        newMoney: recipient.money,
+      });
+      notifyTeam(recipient.id, { kind: 'team-money-updated', teamId: recipient.id, money: recipient.money });
+      return {
+        kind: 'ewallet-sent',
+        assetKind: 'cash',
+        toTeamTag: recipient.tag,
+        description: `$${amount.toLocaleString()} in cash`,
+        newMoney: sender.money,
+      };
+    }
+
+    case 'ewallet-send-skin': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const sender = db.loadTeam(conn.teamId);
+      if (!sender) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const recipient = db.loadTeamByTag(msg.toTeamTag.trim());
+      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No team with tag "${msg.toTeamTag}".` };
+      if (recipient.id === sender.id) return { kind: 'error', code: 'self-transfer', message: `You can't send to your own team.` };
+      const skin = db.loadSkin(sender.id, msg.skinInstanceId) as { skinName?: string } | null;
+      if (!skin) return { kind: 'error', code: 'no-skin', message: `Skin not in your inventory.` };
+      // Block if the skin is currently listed on the peer market.
+      if (db.hasOpenListingForSkin(msg.skinInstanceId)) {
+        return { kind: 'error', code: 'listed', message: `Skin is listed on the market — unlist first.` };
+      }
+      db.transferSkin(msg.skinInstanceId, recipient.id);
+      const desc = skin.skinName ?? 'a skin';
+      log(`ewallet: ${sender.tag} → ${recipient.tag} skin ${msg.skinInstanceId}`);
+      notifyTeam(recipient.id, {
+        kind: 'ewallet-received',
+        assetKind: 'skin',
+        fromTeamTag: sender.tag,
+        description: desc,
+        newMoney: recipient.money,
+      });
+      return {
+        kind: 'ewallet-sent',
+        assetKind: 'skin',
+        toTeamTag: recipient.tag,
+        description: desc,
+        newMoney: sender.money,
+      };
+    }
+
+    case 'ewallet-send-player': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const sender = db.loadTeam(conn.teamId);
+      if (!sender) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const recipient = db.loadTeamByTag(msg.toTeamTag.trim());
+      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No team with tag "${msg.toTeamTag}".` };
+      if (recipient.id === sender.id) return { kind: 'error', code: 'self-transfer', message: `You can't send to your own team.` };
+      const player = db.loadPlayer(msg.playerId);
+      if (!player || player.teamId !== sender.id) {
+        return { kind: 'error', code: 'not-your-player', message: `Player not on your roster.` };
+      }
+      // Same loan checks as release — can't send a loaned-in player.
+      const openLoan = db.loadOpenLoanForPlayer(player.id);
+      if (openLoan && openLoan.status === 'active' && openLoan.toTeamId === sender.id) {
+        return { kind: 'error', code: 'loaned-in', message: `${player.nickname} is on loan from another team — return them via Loans first.` };
+      }
+      if (sender.playerIds.length <= 5) {
+        return { kind: 'error', code: 'min-roster', message: `Need at least 5 players to keep duels running — sign someone before sending.` };
+      }
+      // Move the player.
+      sender.playerIds = sender.playerIds.filter((id) => id !== player.id);
+      recipient.playerIds = [...recipient.playerIds, player.id];
+      player.teamId = recipient.id;
+      db.setTeamPlayers(sender.id, sender.playerIds);
+      db.setTeamPlayers(recipient.id, recipient.playerIds);
+      db.persistPlayer(player);
+      log(`ewallet: ${sender.tag} → ${recipient.tag} player ${player.nickname}`);
+      const desc = `${player.nickname} (${player.role}, CA ${player.currentAbility})`;
+      notifyTeam(recipient.id, {
+        kind: 'ewallet-received',
+        assetKind: 'player',
+        fromTeamTag: sender.tag,
+        description: desc,
+        newMoney: recipient.money,
+      });
+      return {
+        kind: 'ewallet-sent',
+        assetKind: 'player',
+        toTeamTag: recipient.tag,
+        description: desc,
+        newMoney: sender.money,
+      };
+    }
+
+    case 'ewallet-send-lot': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const sender = db.loadTeam(conn.teamId);
+      if (!sender) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const recipient = db.loadTeamByTag(msg.toTeamTag.trim());
+      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No team with tag "${msg.toTeamTag}".` };
+      if (recipient.id === sender.id) return { kind: 'error', code: 'self-transfer', message: `You can't send to your own team.` };
+      const lot = db.loadLot(msg.lotId);
+      if (!lot || lot.owner_team_id !== sender.id) {
+        return { kind: 'error', code: 'not-your-lot', message: `Lot not owned by your team.` };
+      }
+      // Residents on this lot must move with the lot per user spec. Each
+      // resident is a player on the SENDER's roster — transfer them too.
+      const residents = db.loadLotResidents(lot.id);
+      // Roster capacity check: sender must still have ≥5 after the move.
+      if (sender.playerIds.length - residents.length < 5) {
+        return {
+          kind: 'error', code: 'min-roster',
+          message: `Sending this lot would drop your roster below 5 (${residents.length} resident${residents.length === 1 ? '' : 's'} move with the lot). Evict residents first if you only want to send the property.`,
+        };
+      }
+      // Move players first — mirrors the send-player flow.
+      const movedPlayerNicks: string[] = [];
+      for (const r of residents) {
+        const p = db.loadPlayer(r.player_id);
+        if (!p || p.teamId !== sender.id) continue;
+        const openLoan = db.loadOpenLoanForPlayer(p.id);
+        if (openLoan && openLoan.status === 'active' && openLoan.toTeamId === sender.id) {
+          return { kind: 'error', code: 'resident-loaned', message: `Resident ${p.nickname} is on loan — return them first.` };
+        }
+        sender.playerIds = sender.playerIds.filter((id) => id !== p.id);
+        if (!recipient.playerIds.includes(p.id)) recipient.playerIds = [...recipient.playerIds, p.id];
+        p.teamId = recipient.id;
+        db.persistPlayer(p);
+        movedPlayerNicks.push(p.nickname);
+      }
+      if (residents.length > 0) {
+        db.setTeamPlayers(sender.id, sender.playerIds);
+        db.setTeamPlayers(recipient.id, recipient.playerIds);
+      }
+      // Transfer the lot itself (owner change + vault/cars/luxury tag along
+      // implicitly via lot_id FK).
+      db.raw.prepare(`UPDATE lots SET owner_team_id = ? WHERE id = ?`).run(recipient.id, lot.id);
+      const residentSuffix = movedPlayerNicks.length > 0
+        ? ` (with ${movedPlayerNicks.length} resident${movedPlayerNicks.length === 1 ? '' : 's'}: ${movedPlayerNicks.join(', ')})`
+        : '';
+      const desc = `lot at (${lot.x},${lot.y})${residentSuffix}`;
+      log(`ewallet: ${sender.tag} → ${recipient.tag} lot (${lot.x},${lot.y}) + ${movedPlayerNicks.length} residents`);
+      notifyTeam(recipient.id, {
+        kind: 'ewallet-received',
+        assetKind: 'lot',
+        fromTeamTag: sender.tag,
+        description: desc,
+        newMoney: recipient.money,
+      });
+      return {
+        kind: 'ewallet-sent',
+        assetKind: 'lot',
+        toTeamTag: recipient.tag,
+        description: desc,
+        newMoney: sender.money,
+      };
+    }
+
     case 'register-tournament': {
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
       const reg = registerForTournament(db, msg.tournamentId, conn.teamId);
