@@ -11,6 +11,8 @@ import {
   SKIN_MARKET_COMMISSION,
   SKIN_MARKET_MAX_PRICE,
   SKIN_MARKET_MIN_PRICE,
+  SKIN_NAMETAG_COST,
+  SKIN_NAMETAG_MAX_LEN,
   TRADE_UP_INPUT_COUNT,
   type SkinInstanceWire,
   type SkinStripEntry,
@@ -47,6 +49,7 @@ export default function OnlineCasesScreen() {
   const openCase = useOnline((s) => s.openCase);
   const openFreeCase = useOnline((s) => s.openFreeCase);
   const sellSkin = useOnline((s) => s.sellSkin);
+  const renameSkin = useOnline((s) => s.renameSkin);
   const dismissCaseOpening = useOnline((s) => s.dismissCaseOpening);
   const refreshSkinMarket = useOnline((s) => s.refreshSkinMarket);
   const listSkinForSale = useOnline((s) => s.listSkinForSale);
@@ -221,7 +224,14 @@ export default function OnlineCasesScreen() {
                 return (
                   <tr key={s.id} style={{ boxShadow: `inset 4px 0 0 ${color}` }}>
                     <td style={{ paddingLeft: 12 }}><strong>{s.weapon}</strong></td>
-                    <td>{s.name}</td>
+                    <td>
+                      {s.name}
+                      {s.nametag && (
+                        <div style={{ fontSize: 11, color: '#d9b344', fontStyle: 'italic', marginTop: 2 }}>
+                          🏷 "{s.nametag}"
+                        </div>
+                      )}
+                    </td>
                     <td><RarityBadge rarity={s.rarity} /></td>
                     <td className="muted">{s.wear}</td>
                     <td className="num" style={{ color: typeof s.float === 'number' && s.float < 0.05 ? '#ffd700' : undefined }}>{fmtFloat(s.float)}</td>
@@ -248,7 +258,26 @@ export default function OnlineCasesScreen() {
                       )}
                     </td>
                     <td>
-                      <button className="btn btn-tiny" onClick={() => sellSkin(s.id)} disabled={listedHere} title={listedHere ? 'Unlist before selling back' : 'Quick-sell for market value'}>Sell back</button>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button
+                          className="btn btn-tiny"
+                          onClick={() => {
+                            const suggestion = s.nametag ?? '';
+                            const input = window.prompt(
+                              `Give this skin a nickname (max ${SKIN_NAMETAG_MAX_LEN} chars). Costs $${SKIN_NAMETAG_COST.toLocaleString()}.\nCurrent: ${suggestion || '(none)'}`,
+                              suggestion,
+                            );
+                            if (input == null) return;
+                            const trimmed = input.trim();
+                            if (trimmed.length === 0) return;
+                            if (trimmed === s.nametag) return;
+                            if (!window.confirm(`Set nickname to "${trimmed}" for $${SKIN_NAMETAG_COST.toLocaleString()}?`)) return;
+                            renameSkin(s.id, trimmed);
+                          }}
+                          title={`Give this skin a custom nickname — $${SKIN_NAMETAG_COST.toLocaleString()}`}
+                        >🏷 {s.nametag ? 'Rename' : 'Name'}</button>
+                        <button className="btn btn-tiny" onClick={() => sellSkin(s.id)} disabled={listedHere} title={listedHere ? 'Unlist before selling back' : 'Quick-sell for market value'}>Sell back</button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -378,7 +407,12 @@ function SkinMarketPanel({
                 const net = Math.round(l.askingPrice * (1 - SKIN_MARKET_COMMISSION));
                 return (
                   <tr key={l.id} style={{ boxShadow: `inset 4px 0 0 ${color}` }}>
-                    <td style={{ paddingLeft: 12 }}><strong>{l.skin.weapon}</strong> <span className="muted">{l.skin.name}</span></td>
+                    <td style={{ paddingLeft: 12 }}>
+                      <strong>{l.skin.weapon}</strong> <span className="muted">{l.skin.name}</span>
+                      {l.skin.nametag && (
+                        <div style={{ fontSize: 11, color: '#d9b344', fontStyle: 'italic', marginTop: 2 }}>🏷 "{l.skin.nametag}"</div>
+                      )}
+                    </td>
                     <td><RarityBadge rarity={l.skin.rarity} /></td>
                     <td className="muted">{l.skin.wear}</td>
                     <td className="num">{fmtFloat(l.skin.float)}</td>
@@ -420,7 +454,12 @@ function SkinMarketPanel({
                 return (
                   <tr key={l.id} style={{ boxShadow: `inset 4px 0 0 ${color}` }}>
                     <td className="muted">{l.sellerTeamTag}</td>
-                    <td style={{ paddingLeft: 4 }}><strong>{l.skin.weapon}</strong> <span className="muted">{l.skin.name}</span></td>
+                    <td style={{ paddingLeft: 4 }}>
+                      <strong>{l.skin.weapon}</strong> <span className="muted">{l.skin.name}</span>
+                      {l.skin.nametag && (
+                        <div style={{ fontSize: 11, color: '#d9b344', fontStyle: 'italic', marginTop: 2 }}>🏷 "{l.skin.nametag}"</div>
+                      )}
+                    </td>
                     <td><RarityBadge rarity={l.skin.rarity} /></td>
                     <td className="muted">{l.skin.wear}</td>
                     <td className="num" style={{ color: typeof l.skin.float === 'number' && l.skin.float < 0.05 ? '#ffd700' : undefined }}>{fmtFloat(l.skin.float)}</td>

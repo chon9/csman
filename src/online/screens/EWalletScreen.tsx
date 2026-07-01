@@ -290,6 +290,9 @@ function SkinsTab({ skins, recipient, valid, onSend }: { skins: import('../proto
                 border: `1px solid ${rarityColor}55`,
               }}>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>{label}</div>
+                {s.nametag && (
+                  <div style={{ fontSize: 11, color: '#d9b344', fontStyle: 'italic' }}>🏷 "{s.nametag}"</div>
+                )}
                 <div className="muted small" style={{ fontSize: 11 }}>
                   {s.serial ? `#${String(s.serial).padStart(4, '0')} · ` : ''}{s.wear} · float {floatStr}
                 </div>

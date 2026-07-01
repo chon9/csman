@@ -50,6 +50,8 @@ import {
   SKIN_MARKET_COMMISSION,
   SKIN_MARKET_MAX_PRICE,
   SKIN_MARKET_MIN_PRICE,
+  SKIN_NAMETAG_COST,
+  SKIN_NAMETAG_MAX_LEN,
   STREAM_CONTRACT_COST,
   STREAM_FATIGUE_COST,
   STREAM_MAX_FATIGUE,
@@ -2723,6 +2725,44 @@ export function handle(
       db.setTeamMoneyDay(team.id, team.money, team.day);
       log(`skin sold: ${team.tag} +$${payout.toLocaleString()} (${skin.weapon} ${skin.name})`);
       return { kind: 'skin-sold', skinId: msg.skinId, payout, newMoney: team.money };
+    }
+
+    case 'rename-skin': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const skin = db.loadSkin(conn.teamId, msg.skinInstanceId) as SkinInstance | null;
+      if (!skin) return { kind: 'error', code: 'no-skin', message: 'Skin not in your inventory.' };
+      // Sanitise: printable ASCII only, no angle brackets / quotes (avoid
+      // any HTML surprises even though React escapes on render). Collapse
+      // internal whitespace runs so nobody hides content with padding.
+      const clean = (msg.nametag ?? '')
+        .replace(/[^\x20-\x7E]/g, '')
+        .replace(/[<>"]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, SKIN_NAMETAG_MAX_LEN);
+      if (clean.length === 0) {
+        return { kind: 'error', code: 'bad-nametag', message: 'Nametag can\'t be empty.' };
+      }
+      if (skin.nametag === clean) {
+        return { kind: 'error', code: 'same-nametag', message: 'This is already the current nametag.' };
+      }
+      if (team.money < SKIN_NAMETAG_COST) {
+        return { kind: 'error', code: 'insufficient-funds', message: `Need $${SKIN_NAMETAG_COST.toLocaleString()} — you only have $${team.money.toLocaleString()}.` };
+      }
+      skin.nametag = clean;
+      db.updateSkin(msg.skinInstanceId, JSON.stringify(skin));
+      team.money -= SKIN_NAMETAG_COST;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      log(`skin renamed: ${team.tag} "${clean}" on ${skin.weapon} ${skin.name} (−$${SKIN_NAMETAG_COST.toLocaleString()})`);
+      return {
+        kind: 'skin-renamed',
+        skinInstanceId: msg.skinInstanceId,
+        nametag: clean,
+        cost: SKIN_NAMETAG_COST,
+        newMoney: team.money,
+      };
     }
 
     case 'list-skin-market': {

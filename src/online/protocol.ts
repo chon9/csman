@@ -1104,7 +1104,16 @@ export interface SkinInstanceWire {
   serial?: number;
   /** Owner history snapshot (capped at last 10 entries). */
   history?: { teamId: string; teamTag: string; at: number }[];
+  /** Owner-applied nickname. Displayed alongside the skin name in
+   *  quotes. Empty/missing = no tag. */
+  nametag?: string;
 }
+
+/** Cost in $ to (re-)name a skin. Applied per rename — changing the
+ *  tag later costs the same amount again. */
+export const SKIN_NAMETAG_COST = 10_000;
+/** Max nametag length. Matches real CS2. */
+export const SKIN_NAMETAG_MAX_LEN = 20;
 
 // ============ Skin market (peer-to-peer trading) ============
 
@@ -1786,6 +1795,7 @@ export type ClientMessage =
   | { kind: 'open-free-case' }
   | { kind: 'list-skins' }
   | { kind: 'sell-skin'; skinId: string }
+  | { kind: 'rename-skin'; skinInstanceId: string; nametag: string }
   // ----- Peer skin market -----
   | { kind: 'list-skin-market' }
   | { kind: 'list-skin'; skinInstanceId: string; askingPrice: number }
@@ -1927,6 +1937,7 @@ export type ServerMessage =
   | { kind: 'case-opened'; instance: SkinInstanceWire; caseId: string; cost: number; newMoney: number; freeCase?: boolean; strip: SkinStripEntry[]; winnerIndex: number }
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
   | { kind: 'skin-sold'; skinId: string; payout: number; newMoney: number }
+  | { kind: 'skin-renamed'; skinInstanceId: string; nametag: string; cost: number; newMoney: number }
   | { kind: 'skin-market'; listings: SkinListingWire[] }
   | { kind: 'skin-listed'; listing: SkinListingWire }
   | { kind: 'skin-unlisted'; listingId: string }
@@ -1973,7 +1984,7 @@ export interface DailyRacePayoutWire {
   paidAt: number;
 }
 
-export const PROTOCOL_VERSION = 49;
+export const PROTOCOL_VERSION = 50;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

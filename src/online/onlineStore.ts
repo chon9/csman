@@ -339,6 +339,7 @@ interface OnlineState {
   openFreeCase: () => void;
   listSkins: () => void;
   sellSkin: (skinId: string) => void;
+  renameSkin: (skinInstanceId: string, nametag: string) => void;
   dismissCaseOpening: () => void;
   // Peer skin market
   refreshSkinMarket: () => void;
@@ -1353,6 +1354,17 @@ export const useOnline = create<OnlineState>((set, get) => ({
           pushToast('success', `Skin sold: +$${msg.payout.toLocaleString()}.`);
           break;
         }
+        case 'skin-renamed': {
+          const t = get().team;
+          set({
+            team: t ? { ...t, money: msg.newMoney } : t,
+            skins: get().skins.map((s) =>
+              s.id === msg.skinInstanceId ? { ...s, nametag: msg.nametag } : s,
+            ),
+          });
+          pushToast('success', `🏷 Renamed to "${msg.nametag}" (−$${msg.cost.toLocaleString()}).`);
+          break;
+        }
         case 'skin-market': {
           set({ skinMarketListings: msg.listings });
           break;
@@ -1736,6 +1748,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   sellSkin(skinId) {
     get().client?.send({ kind: 'sell-skin', skinId });
+  },
+  renameSkin(skinInstanceId, nametag) {
+    get().client?.send({ kind: 'rename-skin', skinInstanceId, nametag });
   },
   dismissCaseOpening() {
     set({ caseOpening: null });

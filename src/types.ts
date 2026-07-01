@@ -1136,6 +1136,9 @@ export interface SkinInstance {
    *  owned this exact instance. Updated on every successful trade. Capped
    *  at the last 10 owners to keep JSON small. */
   history?: { teamId: string; teamTag: string; at: number }[];
+  /** Owner-applied nickname (e.g. "BOOM HEADSHOT"). Paid feature —
+   *  costs SKIN_NAMETAG_COST per rename. Persists across trades. */
+  nametag?: string;
 }
 
 // ============ Hall of Fame (retired players) ============
