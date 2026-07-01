@@ -338,6 +338,8 @@ interface OnlineState {
   buyBoostPack: () => void;
   applyBoost: (cardId: string, playerId: string) => void;
   discardBoost: (cardId: string) => void;
+  sellBoost: (cardId: string) => void;
+  quickSellBoostsByRarity: (rarity: import('./protocol').BoostRarity) => void;
   dismissBoostReveal: () => void;
   // Admin actions (no-op for non-admins; server still validates).
   adminListUsers: () => void;
@@ -1352,6 +1354,17 @@ export const useOnline = create<OnlineState>((set, get) => ({
           set({ boosts: get().boosts.filter((c) => c.id !== msg.cardId) });
           break;
         }
+        case 'boosts-sold': {
+          const t = get().team;
+          const soldSet = new Set(msg.cardIds);
+          set({
+            boosts: get().boosts.filter((c) => !soldSet.has(c.id)),
+            team: t ? { ...t, money: msg.newMoney } : t,
+          });
+          const plural = msg.cardIds.length === 1 ? 'card' : `${msg.cardIds.length} cards`;
+          pushToast('success', `Sold ${plural} for $${msg.totalCash.toLocaleString()}.`);
+          break;
+        }
         case 'boost-expired': {
           const cur = { ...get().activeBoosts };
           const name = cur[msg.playerId]?.name;
@@ -1675,6 +1688,12 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   discardBoost(cardId) {
     get().client?.send({ kind: 'discard-boost', cardId });
+  },
+  sellBoost(cardId) {
+    get().client?.send({ kind: 'sell-boost', cardId });
+  },
+  quickSellBoostsByRarity(rarity) {
+    get().client?.send({ kind: 'quick-sell-boosts-by-rarity', rarity });
   },
   dismissBoostReveal() {
     set({ boostReveal: null });

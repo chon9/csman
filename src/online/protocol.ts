@@ -174,6 +174,17 @@ export const BOOST_RARITY_META: Record<BoostRarity, { label: string; color: stri
 /** Cost in $ to open one pack. One card per pack. */
 export const BOOST_PACK_COST = 5_000;
 
+/** Sell-back value per card by rarity. Common lands ~20% of pack cost;
+ *  rare ~80%; epic + legendary comfortably pay back the pack. Tuned so
+ *  opening packs to farm cash is a losing proposition on average, but
+ *  clearing out clutter never feels punishing. */
+export const BOOST_SELL_VALUE: Record<BoostRarity, number> = {
+  common: 1_000,
+  rare: 4_000,
+  epic: 12_000,
+  legendary: 40_000,
+};
+
 export interface BoostCardTemplate {
   id: string;
   name: string;
@@ -1703,6 +1714,8 @@ export type ClientMessage =
   | { kind: 'buy-boost-pack' }
   | { kind: 'apply-boost'; cardId: string; playerId: string }
   | { kind: 'discard-boost'; cardId: string }
+  | { kind: 'sell-boost'; cardId: string }
+  | { kind: 'quick-sell-boosts-by-rarity'; rarity: BoostRarity }
   // ----- Admin (gated server-side by CSM_ADMIN_NICK env var) -----
   | { kind: 'admin-list-users' }
   | { kind: 'admin-reset-pin'; nickname: string; newPin: string }
@@ -1834,6 +1847,7 @@ export type ServerMessage =
   | { kind: 'boost-pack-opened'; card: BoostCard; cost: number; newMoney: number }
   | { kind: 'boost-applied'; cardId: string; playerId: string; active: ActiveBoostWire }
   | { kind: 'boost-discarded'; cardId: string }
+  | { kind: 'boosts-sold'; cardIds: string[]; totalCash: number; newMoney: number }
   | { kind: 'boost-expired'; playerId: string }
   // ----- Admin -----
   | { kind: 'admin-users'; rows: AdminUserRow[] }
@@ -1851,7 +1865,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 44;
+export const PROTOCOL_VERSION = 45;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

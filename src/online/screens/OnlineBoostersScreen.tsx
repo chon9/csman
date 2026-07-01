@@ -9,6 +9,7 @@ import {
   BOOST_PACK_COST,
   BOOST_PACK_ODDS,
   BOOST_RARITY_META,
+  BOOST_SELL_VALUE,
   type BoostCard,
   type BoostRarity,
 } from '../protocol';
@@ -34,6 +35,8 @@ export default function OnlineBoostersScreen(): React.ReactElement | null {
   const buyBoostPack = useOnline((s) => s.buyBoostPack);
   const applyBoost = useOnline((s) => s.applyBoost);
   const discardBoost = useOnline((s) => s.discardBoost);
+  const sellBoost = useOnline((s) => s.sellBoost);
+  const quickSellBoostsByRarity = useOnline((s) => s.quickSellBoostsByRarity);
   const dismissBoostReveal = useOnline((s) => s.dismissBoostReveal);
   const go = useOnline((s) => s.go);
 
@@ -127,7 +130,7 @@ export default function OnlineBoostersScreen(): React.ReactElement | null {
         )}
       </div>
 
-      {/* ===== Inventory ===== */}
+      {/* ===== Inventory (grouped by rarity, per-rarity quick sell) ===== */}
       <div className="panel" style={{ padding: 14 }}>
         <div className="panel-title">
           Card inventory <span className="muted small">{boosts.length} card{boosts.length === 1 ? '' : 's'}</span>
@@ -135,8 +138,59 @@ export default function OnlineBoostersScreen(): React.ReactElement | null {
         {boosts.length === 0 ? (
           <div className="muted small">No unapplied cards. Pull a pack above.</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10, marginTop: 8 }}>
-            {boosts.map((c) => <CardTile key={c.id} card={c} onApply={() => setPickCardId(c.id)} onDiscard={() => discardBoost(c.id)} />)}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+            {RARITY_ORDER.map((rarity) => {
+              const group = boosts.filter((c) => c.rarity === rarity);
+              if (group.length === 0) return null;
+              const meta = BOOST_RARITY_META[rarity];
+              const per = BOOST_SELL_VALUE[rarity];
+              const total = per * group.length;
+              return (
+                <div key={rarity}>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                    padding: '6px 10px', marginBottom: 8, borderRadius: 6,
+                    background: `${meta.color}15`,
+                    borderLeft: `3px solid ${meta.color}`,
+                  }}>
+                    <strong style={{ color: meta.color, textTransform: 'uppercase', letterSpacing: 1, fontSize: 12 }}>
+                      {meta.label}
+                    </strong>
+                    <span className="muted small">{group.length} card{group.length === 1 ? '' : 's'} · ${per.toLocaleString()} each</span>
+                    <button
+                      className="btn btn-tiny"
+                      onClick={() => {
+                        if (window.confirm(`Quick-sell ALL ${group.length} ${meta.label} card${group.length === 1 ? '' : 's'} for $${total.toLocaleString()}?`)) {
+                          quickSellBoostsByRarity(rarity);
+                        }
+                      }}
+                      style={{
+                        marginLeft: 'auto', fontWeight: 700,
+                        background: `${meta.color}30`, border: `1px solid ${meta.color}80`, color: meta.color,
+                      }}
+                      title={`Sell every ${meta.label} card in one click`}
+                    >
+                      💰 Quick Sell All · ${total.toLocaleString()}
+                    </button>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
+                    {group.map((c) => (
+                      <CardTile
+                        key={c.id}
+                        card={c}
+                        onApply={() => setPickCardId(c.id)}
+                        onSell={() => {
+                          if (window.confirm(`Sell "${c.name}" for $${BOOST_SELL_VALUE[c.rarity].toLocaleString()}?`)) {
+                            sellBoost(c.id);
+                          }
+                        }}
+                        onDiscard={() => discardBoost(c.id)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -259,8 +313,9 @@ export default function OnlineBoostersScreen(): React.ReactElement | null {
   );
 }
 
-function CardTile({ card, onApply, onDiscard }: { card: BoostCard; onApply: () => void; onDiscard: () => void }): React.ReactElement {
+function CardTile({ card, onApply, onSell, onDiscard }: { card: BoostCard; onApply: () => void; onSell: () => void; onDiscard: () => void }): React.ReactElement {
   const meta = BOOST_RARITY_META[card.rarity];
+  const price = BOOST_SELL_VALUE[card.rarity];
   return (
     <div
       style={{
@@ -281,6 +336,12 @@ function CardTile({ card, onApply, onDiscard }: { card: BoostCard; onApply: () =
       <div className="muted small" style={{ fontSize: 10, opacity: 0.75 }}>{attrTargetSummary(card.attrTargets)}</div>
       <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
         <button className="btn btn-tiny btn-accent" style={{ flex: 1 }} onClick={onApply}>Apply</button>
+        <button
+          className="btn btn-tiny"
+          onClick={onSell}
+          title={`Sell for $${price.toLocaleString()}`}
+          style={{ fontWeight: 700 }}
+        >💰 ${(price / 1000).toFixed(0)}k</button>
         <button className="btn btn-tiny" onClick={onDiscard} title="Throw away (no refund)">🗑</button>
       </div>
     </div>

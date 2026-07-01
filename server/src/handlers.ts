@@ -323,7 +323,7 @@ import { openCase as rollCaseOpen, tradeUpContract as rollTradeUp } from '../../
 import { RNG } from '../../src/engine/rng.ts';
 import { roleSynergyMultiplier } from '../../src/engine/matchEngine.ts';
 import type { ActiveBoostWire, BoostAttrKey, BoostCard, BoostRarity, CaseSummary, SkinInstanceWire } from '../../src/online/protocol.ts';
-import { BOOST_CARD_LIBRARY, BOOST_PACK_COST, BOOST_PACK_ODDS } from '../../src/online/protocol.ts';
+import { BOOST_CARD_LIBRARY, BOOST_PACK_COST, BOOST_PACK_ODDS, BOOST_SELL_VALUE } from '../../src/online/protocol.ts';
 import type { PlayerAttributes } from '../../src/types.ts';
 import type { SkinInstance } from '../../src/types.ts';
 import { cacheLiveReplay, getLiveReplay } from './liveState.ts';
@@ -2899,6 +2899,44 @@ export function handle(
         return { kind: 'error', code: 'no-card', message: 'Card not in inventory.' };
       }
       return { kind: 'boost-discarded', cardId: msg.cardId };
+    }
+
+    case 'sell-boost': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const card = db.loadBoost(conn.teamId, msg.cardId) as BoostCard | null;
+      if (!card) return { kind: 'error', code: 'no-card', message: 'Card not in inventory.' };
+      const price = BOOST_SELL_VALUE[card.rarity] ?? 0;
+      if (!db.removeBoost(conn.teamId, msg.cardId)) {
+        return { kind: 'error', code: 'no-card', message: 'Card not in inventory.' };
+      }
+      team.money += price;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      log(`boost sold: ${team.tag} → ${card.name} (${card.rarity}) for $${price}`);
+      return { kind: 'boosts-sold', cardIds: [msg.cardId], totalCash: price, newMoney: team.money };
+    }
+
+    case 'quick-sell-boosts-by-rarity': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const rarity = msg.rarity;
+      const per = BOOST_SELL_VALUE[rarity] ?? 0;
+      const all = db.loadBoosts(conn.teamId) as BoostCard[];
+      const matches = all.filter((c) => c.rarity === rarity);
+      if (matches.length === 0) {
+        return { kind: 'error', code: 'no-cards', message: `No ${rarity} cards in inventory.` };
+      }
+      const soldIds: string[] = [];
+      for (const c of matches) {
+        if (db.removeBoost(conn.teamId, c.id)) soldIds.push(c.id);
+      }
+      const totalCash = per * soldIds.length;
+      team.money += totalCash;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      log(`boost quick-sell: ${team.tag} → ${soldIds.length}× ${rarity} for $${totalCash}`);
+      return { kind: 'boosts-sold', cardIds: soldIds, totalCash, newMoney: team.money };
     }
 
     // ---------- Phase 3: match history ----------
