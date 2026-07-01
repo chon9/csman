@@ -1761,7 +1761,16 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
 
   refreshState() {
-    get().client?.send({ kind: 'refresh-state' });
+    // Full home-screen refresh: core team/player state + the side
+    // panels that don't ride on refresh-state (sponsors, daily quests,
+    // loan inbox). Each is a small server call so bundling here keeps
+    // the ↻ button truly "reload everything on the home screen".
+    const c = get().client;
+    if (!c) return;
+    c.send({ kind: 'refresh-state' });
+    c.send({ kind: 'list-sponsors' });
+    c.send({ kind: 'list-quests' });
+    c.send({ kind: 'list-loan-offers' });
   },
 
   clearError() {
