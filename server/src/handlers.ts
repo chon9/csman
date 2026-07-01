@@ -1199,6 +1199,17 @@ export function handle(
       if (!team.playerIds.includes(msg.playerId)) {
         return { kind: 'error', code: 'not-your-player', message: 'You can only list your own players.' };
       }
+      // Block listing a loaned-in player — they belong to another team;
+      // you can't sell someone else's asset. Mirrors the release +
+      // E-Wallet send-player guards.
+      const loanIn = db.loadOpenLoanForPlayer(msg.playerId);
+      if (loanIn && loanIn.status === 'active' && loanIn.toTeamId === team.id) {
+        const lender = db.loadTeam(loanIn.fromTeamId);
+        return {
+          kind: 'error', code: 'loaned-in',
+          message: `This player is on loan from ${lender?.tag ?? 'another team'} — you can't list a loanee on the transfer market. Return them via the Loans panel first.`,
+        };
+      }
       // Need at least 5 players left after the listing fires (won't lose
       // them until someone buys, but the seller shouldn't be able to even
       // offer the player if their squad is at the floor).
