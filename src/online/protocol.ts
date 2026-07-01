@@ -1755,6 +1755,8 @@ export type ClientMessage =
   | { kind: 'fetch-ai-bet-replay'; cardId: string }
   | { kind: 'fetch-ai-bet-team'; cardId: string; side: 'A' | 'B' }
   | { kind: 'list-my-ai-bet-history' }
+  // ----- Daily race (points + money leaderboards, UTC-daily rollover) -----
+  | { kind: 'list-daily-race' }
   // ----- Virtual real estate -----
   | { kind: 'list-lot-map'; x0: number; y0: number; x1: number; y1: number }
   | { kind: 'list-lot-auctions' }
@@ -1900,6 +1902,9 @@ export type ServerMessage =
   | { kind: 'sponsor-claimed'; sponsorId: string; amount: number; newMoney: number }
   | { kind: 'ewallet-sent'; assetKind: 'cash' | 'skin' | 'player' | 'lot'; toTeamTag: string; description: string; newMoney: number }
   | { kind: 'ewallet-received'; assetKind: 'cash' | 'skin' | 'player' | 'lot'; fromTeamTag: string; description: string; newMoney: number }
+  | { kind: 'daily-race-state'; dateUtc: string; rolloverUtcMs: number; pointsBoard: DailyRaceEntryWire[]; moneyBoard: DailyRaceEntryWire[]; myRank: { points: number | null; money: number | null }; recentPayouts: DailyRacePayoutWire[] }
+  | { kind: 'daily-race-payout'; raceKind: 'points' | 'money'; rank: number; amount: number; valueDelta: number; dateUtc: string; newMoney: number }
+  | { kind: 'daily-race-rolled'; dateUtc: string }
   | { kind: 'player-scouted'; player: Player; cost: number; rarity: ScoutRarity; newMoney: number }
   // ----- Daily bonus + cases -----
   | { kind: 'daily-bonus-claimed'; amount: number; newMoney: number; nextClaimUtc: string }
@@ -1950,7 +1955,25 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 48;
+export interface DailyRaceEntryWire {
+  teamId: string;
+  tag: string;
+  name: string;
+  logoId: string | null;
+  primaryColor: string | null;
+  delta: number;
+}
+
+export interface DailyRacePayoutWire {
+  dateUtc: string;
+  raceKind: 'points' | 'money';
+  rank: number;
+  amount: number;
+  valueDelta: number;
+  paidAt: number;
+}
+
+export const PROTOCOL_VERSION = 49;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

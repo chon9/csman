@@ -47,6 +47,32 @@ export function generateWalletId(): string {
   return `CSM-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
 }
 
+/** Current UTC date as `YYYY-MM-DD`. Used to key the daily race
+ *  leaderboard and rollover ticker. */
+export function utcDateKey(d: Date = new Date()): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** One row on either the Points Race or Money Race leaderboard. */
+export interface DailyRaceEntry {
+  team_id: string;
+  tag: string;
+  name: string;
+  logo_id: string | null;
+  primary_color: string | null;
+  delta: number;
+}
+
+/** Historical payout record — one row per team per race per day. */
+export interface DailyRacePayoutRow {
+  date_utc: string;
+  race_kind: string;
+  rank: number;
+  amount: number;
+  value_delta: number;
+  paid_at: number;
+}
+
 /** Profile fields editable on the home customisation modal. */
 export interface TeamProfileFields {
   bio?: string;
@@ -368,6 +394,36 @@ export function openDb(path: string) {
     );
     CREATE INDEX IF NOT EXISTS idx_team_comments_team ON team_comments(team_id, posted_at DESC);
     CREATE INDEX IF NOT EXISTS idx_team_comments_ip_time ON team_comments(ip, posted_at DESC);
+
+    -- Daily race leaderboard state. One row per (team, UTC date). The
+    -- Points Race compares (current_team.mmr − mmr_at_start); the Money
+    -- Race sums gross_earned (positive money deltas only; spending
+    -- doesn't hurt your rank). Rollover ticker snapshots start values
+    -- for the new day and pays out yesterday's top 3 on each board.
+    CREATE TABLE IF NOT EXISTS daily_race (
+      team_id TEXT NOT NULL,
+      date_utc TEXT NOT NULL,
+      mmr_at_start INTEGER NOT NULL,
+      gross_earned INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (team_id, date_utc),
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_daily_race_date ON daily_race(date_utc);
+
+    -- Historical payout log — one row per (date, race_kind, rank).
+    -- Insertion is the authoritative signal that a day has been rolled;
+    -- the rollover check queries this table to stay idempotent.
+    CREATE TABLE IF NOT EXISTS daily_race_payouts (
+      date_utc TEXT NOT NULL,
+      race_kind TEXT NOT NULL,
+      rank INTEGER NOT NULL,
+      team_id TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      value_delta INTEGER NOT NULL,
+      paid_at INTEGER NOT NULL,
+      PRIMARY KEY (date_utc, race_kind, rank)
+    );
+    CREATE INDEX IF NOT EXISTS idx_daily_race_payouts_team ON daily_race_payouts(team_id, paid_at DESC);
   `);
 
   // ----- Lightweight schema migrations -----
@@ -767,6 +823,52 @@ export function openDb(path: string) {
   const listTeamsMissingWallet = db.prepare(`SELECT id FROM teams WHERE wallet_id = ''`);
   const updateTeamPlayers = db.prepare(`UPDATE teams SET player_ids = ? WHERE id = ?`);
   const updateTeamMoneyDay = db.prepare(`UPDATE teams SET money = ?, day = ? WHERE id = ?`);
+  const getTeamMoney = db.prepare(`SELECT money FROM teams WHERE id = ?`);
+  // Daily race
+  const insertDailyRaceSnapshot = db.prepare(
+    `INSERT OR IGNORE INTO daily_race (team_id, date_utc, mmr_at_start, gross_earned)
+     VALUES (?, ?, ?, 0)`,
+  );
+  const incrementDailyRaceGross = db.prepare(
+    `UPDATE daily_race SET gross_earned = gross_earned + ? WHERE team_id = ? AND date_utc = ?`,
+  );
+  const selectDailyRaceRow = db.prepare(
+    `SELECT team_id, mmr_at_start, gross_earned FROM daily_race WHERE team_id = ? AND date_utc = ?`,
+  );
+  // Points board — current MMR minus start-of-day MMR, positive only.
+  const selectPointsBoard = db.prepare(
+    `SELECT t.id AS team_id, t.tag, t.name, t.logo_id, t.primary_color,
+            (t.mmr - r.mmr_at_start) AS delta
+     FROM daily_race r
+     JOIN teams t ON t.id = r.team_id
+     WHERE r.date_utc = ?
+     ORDER BY delta DESC, t.tag ASC
+     LIMIT ?`,
+  );
+  // Money board — cumulative positive money deltas seen today.
+  const selectMoneyBoard = db.prepare(
+    `SELECT t.id AS team_id, t.tag, t.name, t.logo_id, t.primary_color,
+            r.gross_earned AS delta
+     FROM daily_race r
+     JOIN teams t ON t.id = r.team_id
+     WHERE r.date_utc = ?
+     ORDER BY delta DESC, t.tag ASC
+     LIMIT ?`,
+  );
+  const countPayoutsForDate = db.prepare(
+    `SELECT COUNT(*) AS n FROM daily_race_payouts WHERE date_utc = ?`,
+  );
+  const insertPayoutRow = db.prepare(
+    `INSERT INTO daily_race_payouts (date_utc, race_kind, rank, team_id, amount, value_delta, paid_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const selectRecentPayoutsForTeam = db.prepare(
+    `SELECT date_utc, race_kind, rank, amount, value_delta, paid_at
+     FROM daily_race_payouts WHERE team_id = ?
+     ORDER BY paid_at DESC LIMIT ?`,
+  );
+  const listAllTeamIds = db.prepare(`SELECT id, mmr FROM teams`);
+  const getTeamMmr = db.prepare(`SELECT mmr FROM teams WHERE id = ?`);
   const updateTeamTactics = db.prepare(`UPDATE teams SET tactics_json = ? WHERE id = ?`);
   const updatePlayerJson = db.prepare(`UPDATE players SET json = ?, team_id = ? WHERE id = ?`);
   // Admin-only: targeted field edits on the teams row.
@@ -1721,7 +1823,90 @@ export function openDb(path: string) {
   }
 
   function setTeamMoneyDay(teamId: string, money: number, day: number): void {
+    // Track POSITIVE money deltas into the daily Money Race counter.
+    // Spending doesn't reduce the counter (that would create a perverse
+    // incentive to hoard). Cheap — one indexed lookup + conditional UPDATE.
+    const prev = getTeamMoney.get(teamId) as { money: number } | undefined;
+    if (prev) {
+      const delta = money - prev.money;
+      if (delta > 0) {
+        const today = utcDateKey();
+        // Snapshot row must exist for the increment to land — no-op UPSERT
+        // seeds it with 0 mmr_at_start if missing (fresh team hasn't been
+        // through a rollover yet; boot backfill covers most cases).
+        ensureDailyRaceSnapshot(teamId, today);
+        incrementDailyRaceGross.run(delta, teamId, today);
+      }
+    }
     updateTeamMoneyDay.run(money, day, teamId);
+  }
+
+  // ================================================================
+  // Daily race helpers
+  // ================================================================
+
+  /** Insert a start-of-day snapshot for one team. Idempotent — OR
+   *  IGNORE so calling this multiple times per day is safe. Called
+   *  by both the boot backfill and the money-tracking hook. */
+  function ensureDailyRaceSnapshot(teamId: string, dateUtc: string): void {
+    const t = getTeamMmr.get(teamId) as { mmr: number } | undefined;
+    insertDailyRaceSnapshot.run(teamId, dateUtc, t?.mmr ?? 1000);
+  }
+
+  /** Snapshot start-of-day for EVERY team. Used at server boot and
+   *  after each daily rollover so a new day's leaderboard has a
+   *  clean baseline. */
+  function snapshotAllTeamsForDate(dateUtc: string): void {
+    const rows = listAllTeamIds.all() as Array<{ id: string; mmr: number | null }>;
+    const tx = db.transaction(() => {
+      for (const r of rows) {
+        insertDailyRaceSnapshot.run(r.id, dateUtc, r.mmr ?? 1000);
+      }
+    });
+    tx();
+  }
+
+  /** Load current leaderboards for a given UTC date. Both boards are
+   *  capped at `limit` entries (top-N) and only include positive
+   *  deltas — a team that hasn't moved doesn't show up. */
+  function loadDailyRaceBoards(dateUtc: string, limit: number): {
+    pointsBoard: DailyRaceEntry[]; moneyBoard: DailyRaceEntry[];
+  } {
+    const rawPoints = selectPointsBoard.all(dateUtc, limit) as DailyRaceEntry[];
+    const rawMoney = selectMoneyBoard.all(dateUtc, limit) as DailyRaceEntry[];
+    return {
+      pointsBoard: rawPoints.filter((r) => r.delta > 0),
+      moneyBoard: rawMoney.filter((r) => r.delta > 0),
+    };
+  }
+
+  /** Check whether the given UTC date has already been rolled over
+   *  (i.e. yesterday's payouts have been recorded). Used by the
+   *  rollover ticker to stay idempotent across restarts. */
+  function dailyRaceRolled(dateUtc: string): boolean {
+    const row = countPayoutsForDate.get(dateUtc) as { n: number };
+    return row.n > 0;
+  }
+
+  /** Insert one payout row. Called by the rollover logic; never by
+   *  handlers. Fails silently on duplicate (PK collision) so a
+   *  crash-mid-rollover replay is safe. */
+  function recordDailyRacePayout(args: {
+    dateUtc: string; raceKind: 'points' | 'money';
+    rank: number; teamId: string; amount: number; valueDelta: number;
+  }): void {
+    try {
+      insertPayoutRow.run(
+        args.dateUtc, args.raceKind, args.rank, args.teamId,
+        args.amount, args.valueDelta, Date.now(),
+      );
+    } catch {
+      // PK collision — already recorded in a prior rollover attempt.
+    }
+  }
+
+  function loadRecentRacePayoutsForTeam(teamId: string, limit: number): DailyRacePayoutRow[] {
+    return selectRecentPayoutsForTeam.all(teamId, limit) as DailyRacePayoutRow[];
   }
 
   function persistPlayer(player: Player): void {
@@ -3031,6 +3216,12 @@ export function openDb(path: string) {
     loadTeamByWalletId,
     assignTeamWalletId,
     backfillWalletIds,
+    ensureDailyRaceSnapshot,
+    snapshotAllTeamsForDate,
+    loadDailyRaceBoards,
+    dailyRaceRolled,
+    recordDailyRacePayout,
+    loadRecentRacePayoutsForTeam,
     setTeamPlayers,
     setTeamMoneyDay,
     setTeamTactics,

@@ -23,6 +23,7 @@ const PRIMARY: NavItem[] = [
   { id: 'tactics', label: 'Tactics', icon: '🎯' },
   { id: 'challenges', label: 'PvP Lobby', icon: '⚔' },
   { id: 'tournaments', label: 'Tournaments', icon: '🏆' },
+  { id: 'daily-race', label: 'Daily Race', icon: '🏁' },
   { id: 'market', label: 'Market', icon: '💱' },
   { id: 'cases', label: 'Cases', icon: '📦' },
   { id: 'boosters', label: 'Boosters', icon: '🎴' },

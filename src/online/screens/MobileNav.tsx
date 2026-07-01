@@ -30,6 +30,7 @@ const PRIMARY: NavItem[] = [
 const DRAWER: NavItem[] = [
   { id: 'tactics', label: 'Tactics', icon: '🎯' },
   { id: 'tournaments', label: 'Tournaments', icon: '🏆' },
+  { id: 'daily-race', label: 'Daily Race', icon: '🏁' },
   { id: 'cases', label: 'Cases', icon: '📦' },
   { id: 'boosters', label: 'Boosters', icon: '🎴' },
   { id: 'massage', label: 'Massage', icon: '💆' },

@@ -18,6 +18,7 @@ import { backfillLegacyContracts, backfillPlayerTraits, backfillRealNameAndHoF, 
 import { startBustTicker as startCrashBustTicker } from './crashSessions.ts';
 import { cleanupStaleCards, ensureCards, settleDueCards } from './aiBetting.ts';
 import { closeDueAuctions as closeDueLotAuctions } from './realEstate.ts';
+import { initDailyRaceOnBoot, startDailyRaceTicker } from './dailyRace.ts';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../src/online/protocol.ts';
 
 const PORT = Number(process.env.CSM_PORT ?? 8787);
@@ -195,6 +196,16 @@ setInterval(() => {
     console.error('[csm:ai-bet] tick error', err);
   }
 }, 2_000).unref();
+
+// Daily race — snapshot today at boot, catch up on any missed rollovers,
+// then check every 5 minutes for the UTC-midnight boundary.
+const raceDeps = {
+  notifyTeam,
+  broadcastAll,
+  log: (line: string) => console.log(`[csm:race] ${line}`),
+};
+initDailyRaceOnBoot(db, raceDeps);
+startDailyRaceTicker(db, raceDeps);
 
 function bindTeamSocket(ws: WebSocket, teamId: string): void {
   let set = socketsByTeam.get(teamId);

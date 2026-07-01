@@ -377,6 +377,9 @@ import {
   runReadyTournaments,
 } from './tournaments.ts';
 import { loadMyBetHistory as loadMyAiBetHistory, loadTeamProfileForCard as loadAiBetTeam, loadVisibleWire as loadAiBetCards, placeBet as placeAiBet } from './aiBetting.ts';
+import { utcDateKey } from './db.ts';
+import { DAILY_RACE_BOARD_LIMIT } from './dailyRace.ts';
+import type { DailyRaceEntryWire, DailyRacePayoutWire } from '../../src/online/protocol.ts';
 import {
   assignResident as reAssignResident,
   buyCar as reBuyCar,
@@ -763,6 +766,50 @@ function buildState(db: DB, teamId: string): ServerMessage | null {
     duelsRefillsUsed: duelStats.refillsUsed,
     moraleGamePlaysUsed: db.getMoraleGamePlays(teamId, team.day),
     nextTickUtcMs: nextAutoTickUtcMs(),
+  };
+}
+
+/** Build the daily-race payload for one team: both boards, own ranks,
+ *  time until UTC-midnight rollover, and the team's recent payout log. */
+function buildDailyRaceState(db: DB, teamId: string): ServerMessage {
+  const today = utcDateKey();
+  // Full lists (unbounded) so we can find the team's own rank even if
+  // it's past position 20. The client only renders up to LIMIT.
+  const full = db.loadDailyRaceBoards(today, 10_000);
+  const clampedPoints = full.pointsBoard.slice(0, DAILY_RACE_BOARD_LIMIT);
+  const clampedMoney = full.moneyBoard.slice(0, DAILY_RACE_BOARD_LIMIT);
+  const mapEntry = (r: typeof full.pointsBoard[number]): DailyRaceEntryWire => ({
+    teamId: r.team_id, tag: r.tag, name: r.name,
+    logoId: r.logo_id ?? null, primaryColor: r.primary_color ?? null, delta: r.delta,
+  });
+  const findRank = (rows: typeof full.pointsBoard): number | null => {
+    const i = rows.findIndex((r) => r.team_id === teamId);
+    return i === -1 ? null : i + 1;
+  };
+  const payouts: DailyRacePayoutWire[] = db.loadRecentRacePayoutsForTeam(teamId, 10).map((r) => ({
+    dateUtc: r.date_utc,
+    raceKind: r.race_kind as 'points' | 'money',
+    rank: r.rank,
+    amount: r.amount,
+    valueDelta: r.value_delta,
+    paidAt: r.paid_at,
+  }));
+  // UTC midnight of the next day = rollover boundary.
+  const now = new Date();
+  const nextMidnight = Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0, 0,
+  );
+  return {
+    kind: 'daily-race-state',
+    dateUtc: today,
+    rolloverUtcMs: nextMidnight,
+    pointsBoard: clampedPoints.map(mapEntry),
+    moneyBoard: clampedMoney.map(mapEntry),
+    myRank: {
+      points: findRank(full.pointsBoard),
+      money: findRank(full.moneyBoard),
+    },
+    recentPayouts: payouts,
   };
 }
 
@@ -3158,6 +3205,13 @@ export function handle(
     case 'list-my-ai-bet-history': {
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
       return { kind: 'ai-bet-my-history', entries: loadMyAiBetHistory(db, conn.teamId, 10) };
+    }
+
+    // ---------- Daily race ----------
+
+    case 'list-daily-race': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      return buildDailyRaceState(db, conn.teamId);
     }
 
     // ---------- Virtual real estate ----------

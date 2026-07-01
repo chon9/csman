@@ -58,11 +58,13 @@ import type {
   LotDetailWire,
   LotLeaderboardEntry,
   LotMapPin,
+  DailyRaceEntryWire,
+  DailyRacePayoutWire,
 } from './protocol';
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets' | 'real-estate' | 'ewallet';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets' | 'real-estate' | 'ewallet' | 'daily-race';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -289,6 +291,19 @@ interface OnlineState {
   /** Top 10 richest lots server-wide (refreshes on the real-estate screen). */
   lotLeaderboard: LotLeaderboardEntry[];
 
+  // ----- Daily race -----
+  /** Last snapshot of the two leaderboards. Null until refreshDailyRace
+   *  is called for the first time. Refreshes on screen open + on the
+   *  `daily-race-rolled` broadcast (fired when a new UTC day starts). */
+  dailyRace: {
+    dateUtc: string;
+    rolloverUtcMs: number;
+    pointsBoard: DailyRaceEntryWire[];
+    moneyBoard: DailyRaceEntryWire[];
+    myRank: { points: number | null; money: number | null };
+    recentPayouts: DailyRacePayoutWire[];
+  } | null;
+
   // ----- UI -----
   screen: OnlineScreen;
   errorBanner: string | null;
@@ -465,6 +480,8 @@ interface OnlineState {
   evictLotResident: (lotId: string, playerId: string) => void;
   fetchLotLeaderboard: () => void;
   collectLotInterest: (lotId: string) => void;
+  // Daily race
+  refreshDailyRace: () => void;
 }
 
 let nextToastId = 1;
@@ -562,6 +579,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   myLots: [],
   viewingLot: null,
   lotLeaderboard: [],
+  dailyRace: null,
   screen: 'connect',
   errorBanner: null,
   toasts: [],
@@ -1483,6 +1501,31 @@ export const useOnline = create<OnlineState>((set, get) => ({
           set({ aiBetMyHistory: msg.entries });
           break;
         }
+        case 'daily-race-state': {
+          set({
+            dailyRace: {
+              dateUtc: msg.dateUtc,
+              rolloverUtcMs: msg.rolloverUtcMs,
+              pointsBoard: msg.pointsBoard,
+              moneyBoard: msg.moneyBoard,
+              myRank: msg.myRank,
+              recentPayouts: msg.recentPayouts,
+            },
+          });
+          break;
+        }
+        case 'daily-race-payout': {
+          const kindLabel = msg.raceKind === 'points' ? 'Points Race' : 'Money Race';
+          const rankLabel = msg.rank === 1 ? '🥇 1st' : msg.rank === 2 ? '🥈 2nd' : '🥉 3rd';
+          pushToast('success', `${rankLabel} in ${kindLabel} — $${msg.amount.toLocaleString()} awarded.`);
+          break;
+        }
+        case 'daily-race-rolled': {
+          // New UTC day started — refresh the leaderboard if we currently
+          // have one cached, so the screen shows today's clean board.
+          if (get().dailyRace) get().client?.send({ kind: 'list-daily-race' });
+          break;
+        }
         case 'ai-bet-replay-starting': {
           // Server pushed the full match frames for a card we bet on.
           // Route into the locked replay viewer so every bettor on this
@@ -2158,5 +2201,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   collectLotInterest(lotId) {
     get().client?.send({ kind: 'collect-lot-interest', lotId });
+  },
+
+  refreshDailyRace() {
+    get().client?.send({ kind: 'list-daily-race' });
   },
 }));
