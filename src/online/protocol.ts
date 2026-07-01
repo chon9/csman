@@ -1250,14 +1250,25 @@ export interface CoachListing {
   hiredAt?: number;
 }
 
+export type SponsorStatus = 'pending' | 'active' | 'ready' | 'claimed' | 'declined';
+
+/** Objective-based sponsorship. Each sponsor demands a specific number
+ *  of wins to unlock the (one-shot) reward. Progress is computed as
+ *  team's current career wins minus wins_at_start snapshotted at
+ *  acceptance. Cancellable at any time. */
 export interface SponsorOffer {
   id: string;
   teamId: string;
   sponsorName: string;
-  monthlyAmount: number;
-  status: 'pending' | 'active' | 'declined';
+  /** One-shot reward paid on Claim. */
+  rewardAmount: number;
+  /** Total wins required after acceptance to unlock the reward. */
+  winsRequired: number;
+  /** Wins credited so far under this sponsorship (server-computed). */
+  winsProgress: number;
+  status: SponsorStatus;
   offeredAt: number;
-  lastPaidAt?: number;
+  activatedAt?: number;
 }
 
 export type LoanStatus = 'pending' | 'active' | 'returned' | 'declined';
@@ -1638,6 +1649,8 @@ export type ClientMessage =
   | { kind: 'fire-coach' }
   | { kind: 'list-sponsors' }
   | { kind: 'respond-sponsor'; sponsorId: string; accept: boolean }
+  | { kind: 'claim-sponsor'; sponsorId: string }
+  | { kind: 'cancel-sponsor'; sponsorId: string }
   // ----- Mint: scout a fresh wonderkid (rarity rolled server-side) -----
   | { kind: 'mint-free-agent' }
   // ----- Daily login bonus -----
@@ -1815,6 +1828,7 @@ export type ServerMessage =
   | { kind: 'coach-pool'; openCoaches: CoachListing[]; myCoach: CoachListing | null }
   | { kind: 'coach-hired'; coach: CoachListing }
   | { kind: 'sponsors'; offers: SponsorOffer[]; paid: { sponsorId: string; amount: number }[] }
+  | { kind: 'sponsor-claimed'; sponsorId: string; amount: number; newMoney: number }
   | { kind: 'player-scouted'; player: Player; cost: number; rarity: ScoutRarity; newMoney: number }
   // ----- Daily bonus + cases -----
   | { kind: 'daily-bonus-claimed'; amount: number; newMoney: number; nextClaimUtc: string }
@@ -1865,7 +1879,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 45;
+export const PROTOCOL_VERSION = 46;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

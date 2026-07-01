@@ -261,10 +261,13 @@ export function openDb(path: string) {
       id TEXT PRIMARY KEY,
       team_id TEXT NOT NULL,
       sponsor_name TEXT NOT NULL,
-      monthly_amount INTEGER NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'active' | 'declined'
+      monthly_amount INTEGER NOT NULL,           -- historical column name; now the one-shot reward
+      status TEXT NOT NULL DEFAULT 'pending',    -- 'pending' | 'active' | 'ready' | 'claimed' | 'declined'
       offered_at INTEGER NOT NULL,
-      last_paid_at INTEGER,
+      last_paid_at INTEGER,                      -- unused in objective model; kept for legacy rows
+      wins_required INTEGER NOT NULL DEFAULT 0,  -- 0 = legacy row (marked declined on boot)
+      wins_at_start INTEGER NOT NULL DEFAULT 0,  -- career-wins snapshot at activation
+      activated_at INTEGER,
       FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_sponsors_team ON sponsors(team_id, status);
@@ -409,6 +412,12 @@ export function openDb(path: string) {
   // creation time — see helper). Cap of 30 days accrual enforced at
   // collection time to prevent forever-storing.
   tryAddColumn('lots', 'last_interest_at', 'INTEGER', '0');
+  // Objective-based sponsors — replaces monthly auto-payouts.
+  //   wins_required = 0 for legacy rows (backfill-marked declined on boot)
+  //   activated_at = 0 = never activated
+  tryAddColumn('sponsors', 'wins_required', 'INTEGER', '0');
+  tryAddColumn('sponsors', 'wins_at_start', 'INTEGER', '0');
+  tryAddColumn('sponsors', 'activated_at', 'INTEGER', '0');
   // Competitive MMR ladder. mmr seeds at the protocol's STARTING_MMR
   // value (1000 = Silver Elite Master). peak_mmr is the highest mmr the
   // team has ever held (trophy stat that survives any future reset).
@@ -2370,50 +2379,82 @@ export function openDb(path: string) {
   function hireCoach(id: string, teamId: string | null) { setCoachHired.run(teamId, teamId ? Date.now() : null, id); }
   function countOpenCoaches() { return (countCoaches.get() as { n: number }).n; }
 
-  // -------- Sponsors --------
+  // -------- Sponsors (objective-based) --------
 
   interface SponsorRow {
     id: string;
     team_id: string;
     sponsor_name: string;
-    monthly_amount: number;
+    monthly_amount: number; // legacy column name; holds the one-shot reward
     status: string;
     offered_at: number;
     last_paid_at: number | null;
+    wins_required: number;
+    wins_at_start: number;
+    activated_at: number;
   }
 
   const insertSponsor = db.prepare(
-    `INSERT INTO sponsors (id, team_id, sponsor_name, monthly_amount, status, offered_at, last_paid_at)
-     VALUES (?, ?, ?, ?, 'pending', ?, NULL)`,
+    `INSERT INTO sponsors (id, team_id, sponsor_name, monthly_amount, status, offered_at, last_paid_at, wins_required, wins_at_start, activated_at)
+     VALUES (?, ?, ?, ?, 'pending', ?, NULL, ?, 0, 0)`,
   );
   const findSponsor = db.prepare(`SELECT * FROM sponsors WHERE id = ?`);
-  const sponsorsForTeam = db.prepare(`SELECT * FROM sponsors WHERE team_id = ? AND status != 'declined' ORDER BY offered_at DESC`);
+  const sponsorsForTeam = db.prepare(`SELECT * FROM sponsors WHERE team_id = ? AND status != 'declined' AND status != 'claimed' ORDER BY offered_at DESC`);
   const updateSponsorStatus = db.prepare(`UPDATE sponsors SET status = ? WHERE id = ?`);
-  const markSponsorPaid = db.prepare(`UPDATE sponsors SET last_paid_at = ? WHERE id = ?`);
-  const dueSponsors = db.prepare(
-    `SELECT * FROM sponsors WHERE team_id = ? AND status = 'active' AND (last_paid_at IS NULL OR last_paid_at <= ?)`,
-  );
+  const activateSponsor = db.prepare(`UPDATE sponsors SET status = 'active', activated_at = ?, wins_at_start = ? WHERE id = ?`);
+  const claimSponsor = db.prepare(`UPDATE sponsors SET status = 'claimed' WHERE id = ?`);
 
-  function rowToSponsor(r: SponsorRow) {
+  type SponsorStatus = 'pending' | 'active' | 'ready' | 'claimed' | 'declined';
+  interface SponsorOfferRow {
+    id: string;
+    teamId: string;
+    sponsorName: string;
+    /** One-shot reward (dollars) paid on claim. */
+    rewardAmount: number;
+    /** Total wins required under this sponsorship to unlock the reward. */
+    winsRequired: number;
+    winsAtStart: number;
+    status: SponsorStatus;
+    offeredAt: number;
+    activatedAt?: number;
+  }
+  function rowToSponsor(r: SponsorRow): SponsorOfferRow {
     return {
       id: r.id,
       teamId: r.team_id,
       sponsorName: r.sponsor_name,
-      monthlyAmount: r.monthly_amount,
-      status: r.status as 'pending' | 'active' | 'declined',
+      rewardAmount: r.monthly_amount,
+      winsRequired: r.wins_required,
+      winsAtStart: r.wins_at_start,
+      status: r.status as SponsorStatus,
       offeredAt: r.offered_at,
-      lastPaidAt: r.last_paid_at ?? undefined,
+      activatedAt: r.activated_at > 0 ? r.activated_at : undefined,
     };
   }
 
-  function createSponsorOffer(args: { id: string; teamId: string; sponsorName: string; monthlyAmount: number }): void {
-    insertSponsor.run(args.id, args.teamId, args.sponsorName, args.monthlyAmount, Date.now());
+  function createSponsorOffer(args: { id: string; teamId: string; sponsorName: string; rewardAmount: number; winsRequired: number }): void {
+    insertSponsor.run(args.id, args.teamId, args.sponsorName, args.rewardAmount, Date.now(), args.winsRequired);
   }
   function loadSponsor(id: string) { const r = findSponsor.get(id) as SponsorRow | undefined; return r ? rowToSponsor(r) : null; }
   function loadSponsorsForTeam(teamId: string) { return (sponsorsForTeam.all(teamId) as SponsorRow[]).map(rowToSponsor); }
-  function setSponsorStatus(id: string, status: 'pending' | 'active' | 'declined') { updateSponsorStatus.run(status, id); }
-  function recordSponsorPaid(id: string) { markSponsorPaid.run(Date.now(), id); }
-  function loadDueSponsors(teamId: string, cutoff: number) { return (dueSponsors.all(teamId, cutoff) as SponsorRow[]).map(rowToSponsor); }
+  function setSponsorStatus(id: string, status: SponsorStatus) { updateSponsorStatus.run(status, id); }
+  function markSponsorActive(id: string, winsAtStart: number): void {
+    activateSponsor.run(Date.now(), winsAtStart, id);
+  }
+  function markSponsorClaimed(id: string): void { claimSponsor.run(id); }
+
+  /** One-shot canary-gated cleanup: any sponsor row created BEFORE the
+   *  objective model (wins_required = 0 AND status is still 'pending' or
+   *  'active') gets set to 'declined'. Old monthly rows are meaningless
+   *  in the new economy — safer to sunset them than to grant free cash. */
+  function backfillLegacySponsors(): { updated: number } {
+    if (getMeta('sponsors_objective_migrated') === '1') return { updated: 0 };
+    const r = db.prepare(
+      `UPDATE sponsors SET status = 'declined' WHERE wins_required = 0 AND (status = 'pending' OR status = 'active')`,
+    ).run();
+    setMeta('sponsors_objective_migrated', '1');
+    return { updated: r.changes };
+  }
 
   // -------- Player loans --------
 
@@ -2984,8 +3025,9 @@ export function openDb(path: string) {
     loadSponsor,
     loadSponsorsForTeam,
     setSponsorStatus,
-    recordSponsorPaid,
-    loadDueSponsors,
+    markSponsorActive,
+    markSponsorClaimed,
+    backfillLegacySponsors,
   };
 }
 

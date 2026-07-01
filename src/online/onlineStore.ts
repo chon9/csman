@@ -429,6 +429,8 @@ interface OnlineState {
   fireCoach: () => void;
   listSponsors: () => void;
   respondSponsor: (sponsorId: string, accept: boolean) => void;
+  claimSponsor: (sponsorId: string) => void;
+  cancelSponsor: (sponsorId: string) => void;
   // AI vs AI betting market
   refreshAiBets: () => void;
   refreshAiBetHistory: () => void;
@@ -979,14 +981,28 @@ export const useOnline = create<OnlineState>((set, get) => ({
           break;
         }
         case 'sponsors': {
+          const prev = get().sponsors;
           set({ sponsors: msg.offers });
-          for (const p of msg.paid) {
-            pushToast('success', `💰 Sponsor payout: +$${p.amount.toLocaleString()}.`);
+          // "Objective just went ready" — noticed by comparing prev vs new
+          // status per sponsor id; toast once so the user knows to Claim.
+          for (const s of msg.offers) {
+            const before = prev.find((p) => p.id === s.id);
+            if (s.status === 'ready' && (!before || before.status !== 'ready')) {
+              pushToast('success', `✅ ${s.sponsorName} objective complete — $${s.rewardAmount.toLocaleString()} ready to claim.`);
+            }
           }
-          if (msg.paid.length > 0) client.send({ kind: 'refresh-state' });
-          // Pending offer hint.
           const pending = msg.offers.find((s) => s.status === 'pending');
-          if (pending) pushToast('info', `📨 New sponsor offer: ${pending.sponsorName} at $${pending.monthlyAmount.toLocaleString()}/mo.`);
+          if (pending && !prev.some((p) => p.id === pending.id)) {
+            pushToast('info', `📨 New sponsor offer: ${pending.sponsorName} — $${pending.rewardAmount.toLocaleString()} for ${pending.winsRequired} wins.`);
+          }
+          break;
+        }
+        case 'sponsor-claimed': {
+          const t = get().team;
+          if (t) set({ team: { ...t, money: msg.newMoney } });
+          // Drop the sponsor from the list — it's claimed and done.
+          set({ sponsors: get().sponsors.filter((s) => s.id !== msg.sponsorId) });
+          pushToast('success', `💼 Sponsor reward collected — +$${msg.amount.toLocaleString()}.`);
           break;
         }
         case 'loan-event': {
@@ -2011,6 +2027,12 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   respondSponsor(sponsorId, accept) {
     get().client?.send({ kind: 'respond-sponsor', sponsorId, accept });
+  },
+  claimSponsor(sponsorId) {
+    get().client?.send({ kind: 'claim-sponsor', sponsorId });
+  },
+  cancelSponsor(sponsorId) {
+    get().client?.send({ kind: 'cancel-sponsor', sponsorId });
   },
 
   refreshAiBets() {

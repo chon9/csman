@@ -6,9 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { RNG, hashSeed } from '../../src/engine/rng.ts';
 import {
   RETIREMENT_AGE_THRESHOLD,
-  SPONSOR_PAYMENT_INTERVAL_MS,
   type HoFEntry,
-  type SponsorOffer,
 } from '../../src/online/protocol.ts';
 import type { Player } from '../../src/types.ts';
 import { SPONSOR_POOL } from '../../src/data/sponsors.ts';
@@ -127,72 +125,60 @@ export function processRetirements(
   return { retired };
 }
 
+/** How many wins a sponsor demands to unlock the reward. Higher-value
+ *  deals ask for more wins. Floor at 3, cap at 50 so premium brands
+ *  don't become uncompletable slogs. */
+function winsRequiredFor(amount: number): number {
+  return Math.max(3, Math.min(50, Math.round(amount / 5000)));
+}
+
 /**
- * Roll a new sponsor offer for a team if they don't have a pending one
- * already and they have a respectable resume (≥3 career wins).
+ * Roll a new sponsor OFFER (objective-based) for a team if they don't
+ * have a pending one already and they have a respectable resume
+ * (≥3 career wins).
  *
- * Picks from the real-brand SPONSOR_POOL (Red Bull, BMW, HyperX, …)
- * filtered by the team's tier (minRank check inverted — career wins
- * map to a synthetic rank). Monthly amount is the brand's baseMonthly
- * scaled down for the online economy (online matches are smaller
- * stakes than SP careers) plus a small variance.
+ * Sponsors now pay a ONE-SHOT reward when the team hits a wins target
+ * that scales with the reward. Bigger deals demand more wins.
  */
-export function maybeOfferSponsor(db: DB, teamId: string, careerWins: number): SponsorOffer | null {
+export function maybeOfferSponsor(db: DB, teamId: string, careerWins: number): { id: string } | null {
   if (careerWins < 3) return null;
   const existing = db.loadSponsorsForTeam(teamId);
-  if (existing.some((s) => s.status === 'pending')) return null;
-  // Only one fresh offer every few days — guard with offered_at.
-  const recent = existing.find((s) => Date.now() - s.offeredAt < 3 * 24 * 3600 * 1000);
-  if (recent) return null;
+  // Any pending / active / ready sponsor blocks fresh offers (one at a time).
+  if (existing.length > 0) return null;
   const rng = new RNG(hashSeed(`sponsor-${teamId}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`));
   if (!rng.chance(0.6)) return null;
 
-  // Map careerWins → a synthetic "rank" the way the SP world ranking works
-  // (lower = better). 100+ wins ≈ top 1, 50 wins ≈ top 8, 3 wins ≈ rank ~32.
+  // Map careerWins → synthetic rank (lower = better).
   const syntheticRank = Math.max(1, 35 - Math.floor(careerWins * 0.7));
   const eligible = SPONSOR_POOL.filter((s) => syntheticRank <= s.minRank);
   if (eligible.length === 0) return null;
-  // Bias toward the highest tier this team qualifies for so a top-15 team
-  // sees premium brands more often than the minor ones.
   const tierPriority: Record<string, number> = { title: 4, premium: 3, standard: 2, minor: 1 };
   const sorted = [...eligible].sort((a, b) => (tierPriority[b.tier] ?? 0) - (tierPriority[a.tier] ?? 0));
   const topCohort = sorted.slice(0, Math.max(3, Math.ceil(sorted.length * 0.35)));
   const pickedDef = rng.pick(topCohort);
 
-  // Scale baseMonthly down for the online economy — SP careers run for
-  // years and pay ~$100k+/mo; online is per-tick. Use 4-8% of the SP base
-  // plus jitter so even the title sponsors hit ~$10-30k/mo, manageable.
-  const scaledBase = Math.round(pickedDef.baseMonthly * (0.04 + rng.next() * 0.04));
+  // One-shot reward is scaled up from the old "monthly" figure since it's
+  // paid only once (was 4-8% × baseMonthly per month → now 20-45% × base
+  // paid once). Range roughly $15k for minor sponsors to $200k for title
+  // brands. Rounded to $500 for tidy numbers.
+  const scaledBase = Math.round(pickedDef.baseMonthly * (0.20 + rng.next() * 0.25));
   const jitter = Math.round(scaledBase * (0.85 + rng.next() * 0.3));
-  const amount = Math.max(1500, Math.round(jitter / 100) * 100);
+  const reward = Math.max(15_000, Math.round(jitter / 500) * 500);
 
   const id = `sponsor-${randomBytes(4).toString('hex')}`;
   db.createSponsorOffer({
     id,
     teamId,
     sponsorName: pickedDef.name,
-    monthlyAmount: amount,
+    rewardAmount: reward,
+    winsRequired: winsRequiredFor(reward),
   });
   return db.loadSponsor(id);
 }
 
-/**
- * Pay out any active sponsor whose 30 days have lapsed. Returns the
- * payouts so the caller can push a notification + roll the team's money.
- */
-export function processSponsorPayouts(
-  db: DB,
-  teamId: string,
-): { sponsorId: string; sponsorName: string; amount: number }[] {
-  const cutoff = Date.now() - SPONSOR_PAYMENT_INTERVAL_MS;
-  const due = db.loadDueSponsors(teamId, cutoff);
-  const payouts: { sponsorId: string; sponsorName: string; amount: number }[] = [];
-  for (const s of due) {
-    payouts.push({ sponsorId: s.id, sponsorName: s.sponsorName, amount: s.monthlyAmount });
-    db.recordSponsorPaid(s.id);
-  }
-  return payouts;
-}
+// (processSponsorPayouts intentionally removed — objective model has no
+// recurring payouts; the user claims the reward once the objective is
+// met, or cancels the sponsorship.)
 
 /** Stub for HoFEntry type imports — keeps the bundler happy when the type
  *  is only used via the protocol. */

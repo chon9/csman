@@ -92,6 +92,38 @@ import type { MatchResult, Player, Region, Team } from '../../src/types.ts';
  * returned, and push a `loan-event` to both parties. Idempotent + cheap
  * (single index lookup); safe to call on every refresh-state.
  */
+/** Convert stored sponsor rows into wire objects — computes live
+ *  winsProgress (career wins now − snapshot at activation) and promotes
+ *  active sponsors to 'ready' once the objective is met. */
+function buildSponsorsWire(db: DB, teamId: string): import('../../src/online/protocol.ts').SponsorOffer[] {
+  const rows = db.loadSponsorsForTeam(teamId);
+  const wins = db.loadTeamCareerRecord(teamId).wins;
+  return rows.map((r) => {
+    let winsProgress = 0;
+    let status = r.status;
+    if (r.status === 'active' || r.status === 'ready') {
+      winsProgress = Math.max(0, wins - r.winsAtStart);
+      if (winsProgress >= r.winsRequired && r.status === 'active') {
+        // Promote in-DB so the client-shown status matches what claim
+        // will accept. Cheap idempotent write.
+        db.setSponsorStatus(r.id, 'ready');
+        status = 'ready';
+      }
+    }
+    return {
+      id: r.id,
+      teamId: r.teamId,
+      sponsorName: r.sponsorName,
+      rewardAmount: r.rewardAmount,
+      winsRequired: r.winsRequired,
+      winsProgress,
+      status,
+      offeredAt: r.offeredAt,
+      activatedAt: r.activatedAt,
+    };
+  });
+}
+
 function processDueLoans(db: DB, notifyTeam: NotifyTeam, log: (s: string) => void): void {
   const due = db.loadDueLoans(Date.now());
   for (const loan of due) {
@@ -330,7 +362,7 @@ import { cacheLiveReplay, getLiveReplay } from './liveState.ts';
 import { closeSession as closeCrashSession, getSession as getCrashSession, multiplierAt as crashMultiplierAt, openSession as openCrashSession } from './crashSessions.ts';
 import { closeSession as closeMinesSession, getSession as getMinesSession, openSession as openMinesSession } from './minesSessions.ts';
 import { applyAutoTicks, nextAutoTickUtcMs } from './autoTick.ts';
-import { ensureCoachPool, maybeOfferSponsor, processRetirements, processSponsorPayouts } from './serverTick.ts';
+import { ensureCoachPool, maybeOfferSponsor, processRetirements } from './serverTick.ts';
 import { bumpQuestProgress, ensureTodayQuests, tickLoginStreak, utcToday } from './dailyQuests.ts';
 import { QUEST_ALL_DONE_BONUS, questStreakMultiplier } from '../../src/online/protocol.ts';
 import { PLACEMENT_MATCHES, eloDelta } from '../../src/online/protocol.ts';
@@ -847,23 +879,9 @@ export function handle(
       // refresh-state every 8s, which keeps loans flowing on time.
       processDueLoans(db, notifyTeam, log);
 
-      // Sponsor payouts: any active sponsor whose 30 days have elapsed
-      // auto-credits. Quiet — broadcasts a sponsors message to the team
-      // so a toast can fire.
-      const payouts = processSponsorPayouts(db, conn.teamId);
-      if (payouts.length > 0) {
-        const t = db.loadTeam(conn.teamId);
-        if (t) {
-          const total = payouts.reduce((s, p) => s + p.amount, 0);
-          t.money += total;
-          db.setTeamMoneyDay(t.id, t.money, t.day);
-          notifyTeam(conn.teamId, {
-            kind: 'sponsors',
-            offers: db.loadSponsorsForTeam(conn.teamId),
-            paid: payouts.map((p) => ({ sponsorId: p.sponsorId, amount: p.amount })),
-          });
-        }
-      }
+      // Sponsors: no auto-payouts in the objective model. Offering runs
+      // periodically as before; the client manually claims when the win
+      // objective is met (see 'claim-sponsor' handler).
 
       // Periodically offer a fresh sponsor when the team has a track record.
       const season = db.currentSeason();
@@ -872,7 +890,7 @@ export function handle(
       if (newOffer) {
         notifyTeam(conn.teamId, {
           kind: 'sponsors',
-          offers: db.loadSponsorsForTeam(conn.teamId),
+          offers: buildSponsorsWire(db, conn.teamId),
           paid: [],
         });
       }
@@ -3876,7 +3894,7 @@ export function handle(
 
     case 'list-sponsors': {
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
-      return { kind: 'sponsors', offers: db.loadSponsorsForTeam(conn.teamId), paid: [] };
+      return { kind: 'sponsors', offers: buildSponsorsWire(db, conn.teamId), paid: [] };
     }
 
     case 'respond-sponsor': {
@@ -3885,19 +3903,66 @@ export function handle(
       if (!sponsor || sponsor.teamId !== conn.teamId) {
         return { kind: 'error', code: 'no-sponsor', message: 'Sponsor not found.' };
       }
-      db.setSponsorStatus(sponsor.id, msg.accept ? 'active' : 'declined');
-      if (msg.accept) db.recordSponsorPaid(sponsor.id); // first payout on acceptance, next due in 30d
-      const team = db.loadTeam(conn.teamId);
-      if (msg.accept && team) {
-        team.money += sponsor.monthlyAmount;
-        db.setTeamMoneyDay(team.id, team.money, team.day);
-        tryUnlock(db, notifyTeam, team.id, 'first_sponsor', ACHIEVEMENT_LABELS.first_sponsor);
+      if (sponsor.status !== 'pending') {
+        return { kind: 'error', code: 'bad-state', message: `Sponsor is ${sponsor.status}, not pending.` };
+      }
+      if (msg.accept) {
+        // Snapshot the team's career wins so we can compute progress
+        // toward the objective from acceptance forward.
+        const wins = db.loadTeamCareerRecord(conn.teamId).wins;
+        db.markSponsorActive(sponsor.id, wins);
+        tryUnlock(db, notifyTeam, conn.teamId, 'first_sponsor', ACHIEVEMENT_LABELS.first_sponsor);
+        log(`sponsor accepted: ${db.loadTeam(conn.teamId)?.tag} + ${sponsor.sponsorName} (need ${sponsor.winsRequired} wins for $${sponsor.rewardAmount})`);
+      } else {
+        db.setSponsorStatus(sponsor.id, 'declined');
       }
       return {
         kind: 'sponsors',
-        offers: db.loadSponsorsForTeam(conn.teamId),
-        paid: msg.accept ? [{ sponsorId: sponsor.id, amount: sponsor.monthlyAmount }] : [],
+        offers: buildSponsorsWire(db, conn.teamId),
+        paid: [],
       };
+    }
+
+    case 'claim-sponsor': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const sponsor = db.loadSponsor(msg.sponsorId);
+      if (!sponsor || sponsor.teamId !== conn.teamId) {
+        return { kind: 'error', code: 'no-sponsor', message: 'Sponsor not found.' };
+      }
+      if (sponsor.status !== 'active' && sponsor.status !== 'ready') {
+        return { kind: 'error', code: 'bad-state', message: `Sponsor is ${sponsor.status} — nothing to claim.` };
+      }
+      const wins = db.loadTeamCareerRecord(conn.teamId).wins;
+      const progress = Math.max(0, wins - sponsor.winsAtStart);
+      if (progress < sponsor.winsRequired) {
+        return { kind: 'error', code: 'objective-unmet', message: `Need ${sponsor.winsRequired - progress} more win${sponsor.winsRequired - progress === 1 ? '' : 's'} to claim ${sponsor.sponsorName}.` };
+      }
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      team.money += sponsor.rewardAmount;
+      db.setTeamMoneyDay(team.id, team.money, team.day);
+      db.markSponsorClaimed(sponsor.id);
+      log(`sponsor claimed: ${team.tag} ← ${sponsor.sponsorName} $${sponsor.rewardAmount}`);
+      const newsItem = db.publishNews(
+        'other',
+        `💼 ${team.tag} completes ${sponsor.sponsorName} sponsorship objective — $${sponsor.rewardAmount.toLocaleString()} paid.`,
+      );
+      broadcast({ kind: 'news-item', item: newsItem as NewsItem });
+      return { kind: 'sponsor-claimed', sponsorId: sponsor.id, amount: sponsor.rewardAmount, newMoney: team.money };
+    }
+
+    case 'cancel-sponsor': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const sponsor = db.loadSponsor(msg.sponsorId);
+      if (!sponsor || sponsor.teamId !== conn.teamId) {
+        return { kind: 'error', code: 'no-sponsor', message: 'Sponsor not found.' };
+      }
+      if (sponsor.status === 'claimed' || sponsor.status === 'declined') {
+        return { kind: 'error', code: 'bad-state', message: 'Sponsor already closed.' };
+      }
+      db.setSponsorStatus(sponsor.id, 'declined');
+      log(`sponsor cancelled: ${db.loadTeam(conn.teamId)?.tag} × ${sponsor.sponsorName}`);
+      return { kind: 'sponsors', offers: buildSponsorsWire(db, conn.teamId), paid: [] };
     }
 
     case 'register-tournament': {

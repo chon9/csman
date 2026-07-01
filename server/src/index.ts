@@ -62,6 +62,15 @@ if (hofBackfill.updated > 0) {
   console.log(`[csm] recomputed career W/L on ${hofBackfill.updated} HoF rows`);
 }
 
+// One-shot: retire any sponsor row created before the objective model.
+// Legacy monthly-payout rows can't be migrated cleanly (no wins_required
+// stored). Mark them 'declined' so they vanish from the UI; users will
+// receive fresh objective-based offers naturally.
+const sponsorMigration = db.backfillLegacySponsors();
+if (sponsorMigration.updated > 0) {
+  console.log(`[csm] retired ${sponsorMigration.updated} legacy sponsor rows (objective model migration)`);
+}
+
 // Shared http.Server: serves /team/:id HTML profiles + upgrades to WebSocket
 // on the same port. Reverse-proxy (Caddy) friendliness — one URL, one cert.
 const httpServer = createServer((req, res) => {
