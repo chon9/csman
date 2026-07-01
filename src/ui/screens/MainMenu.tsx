@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getSoundSettings, setSoundSettings, unlockAudio } from '../../sound/soundManager';
+import { getSoundSettings, setSoundSettings, startBackgroundMusic, toggleMusicMuted, unlockAudio } from '../../sound/soundManager';
 
 type Panel = 'main' | 'settings' | 'about';
 
@@ -30,7 +30,16 @@ export default function MainMenu({
 
         {panel === 'main' && (
           <div className="menu-buttons">
-            <button className="menu-btn menu-btn-online" onClick={onOnline}>
+            <button
+              className="menu-btn menu-btn-online"
+              onClick={() => {
+                // Any click on the menu is a user gesture — browsers
+                // require one before autoplay, so kick off BGM here.
+                unlockAudio();
+                startBackgroundMusic();
+                onOnline();
+              }}
+            >
               <span className="menu-btn-online-pulse" aria-hidden />
               <span className="menu-btn-label">
                 Play Online
@@ -67,8 +76,10 @@ function SettingsPanel({ onBack }: { onBack: () => void }) {
   return (
     <div className="menu-panel">
       <div className="menu-panel-title">Settings</div>
+
+      {/* ===== SFX (round wins, bomb, ambient) ===== */}
       <label className="menu-field">
-        <span className="menu-field-label">Audio</span>
+        <span className="menu-field-label">Sound effects</span>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <button
             className={`menu-toggle ${sound.muted ? 'off' : 'on'}`}
@@ -100,9 +111,44 @@ function SettingsPanel({ onBack }: { onBack: () => void }) {
           </span>
         </div>
       </label>
+
+      {/* ===== Background music (looping BGM) ===== */}
+      <label className="menu-field" style={{ marginTop: 12 }}>
+        <span className="menu-field-label">Background music</span>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button
+            className={`menu-toggle ${sound.musicMuted ? 'off' : 'on'}`}
+            onClick={() => {
+              unlockAudio();
+              toggleMusicMuted();
+              setSound(getSoundSettings());
+            }}
+          >
+            {sound.musicMuted ? 'Muted' : 'On'}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={sound.musicVolume}
+            disabled={sound.musicMuted}
+            onChange={(e) => {
+              unlockAudio();
+              setSoundSettings({ musicVolume: Number(e.target.value), musicMuted: false });
+              setSound(getSoundSettings());
+            }}
+            style={{ flex: 1 }}
+          />
+          <span className="muted small" style={{ minWidth: 36, textAlign: 'right' }}>
+            {Math.round(sound.musicVolume * 100)}%
+          </span>
+        </div>
+      </label>
+
       <p className="menu-panel-note">
-        In-game sound includes round wins, bomb plants, defuses, and atmosphere cues.
-        Toggle from the sidebar at any time as well.
+        Effects fire on round wins, bomb plants, defuses, and atmosphere cues. Music loops in the background.
+        Toggle either from the sidebar at any time.
       </p>
       <button className="menu-btn-back" onClick={onBack}>← Back</button>
     </div>

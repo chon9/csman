@@ -21,12 +21,13 @@ export type SoundEvent =
 
 interface SoundSettings {
   muted: boolean;
-  volume: number;       // 0-1 master
-  musicVolume: number;  // 0-1 (reserved for BGM, not yet wired)
+  volume: number;       // 0-1 master (SFX)
+  musicVolume: number;  // 0-1 BGM volume
+  musicMuted: boolean;  // separate mute for BGM so users can silence music without killing SFX
 }
 
 const SETTINGS_KEY = 'cs2manager-sound-settings';
-const DEFAULT_SETTINGS: SoundSettings = { muted: false, volume: 0.5, musicVolume: 0.3 };
+const DEFAULT_SETTINGS: SoundSettings = { muted: false, volume: 0.5, musicVolume: 0.25, musicMuted: false };
 
 let ctx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
@@ -77,6 +78,67 @@ export function setSoundSettings(patch: Partial<SoundSettings>): void {
   settings = { ...settings, ...patch };
   saveSettings();
   if (masterGain) masterGain.gain.value = settings.muted ? 0 : settings.volume;
+  // Music channel obeys the same mute + its own volume slider.
+  if (musicEl) musicEl.volume = settings.musicMuted ? 0 : settings.musicVolume;
+}
+
+// ---------------------------------------------------------------------
+// Background music channel — HTMLAudioElement so we can stream + loop
+// without pre-decoding the whole track. Separate mute + volume so the
+// user can silence music without killing round-tick SFX.
+// ---------------------------------------------------------------------
+
+let musicEl: HTMLAudioElement | null = null;
+let musicStarted = false;
+
+/** Path served from public/. Drop `bgmusic.mp3` (or .ogg) in there and
+ *  it'll auto-loop on first user gesture. */
+const BG_MUSIC_URL_CANDIDATES = ['/bgmusic.mp3', '/bgmusic.ogg'];
+
+/** Start the background music if it isn't already playing. Called on
+ *  first user gesture (menu click, etc.) because browsers block auto-
+ *  play without one. Idempotent — safe to call repeatedly. */
+export function startBackgroundMusic(): void {
+  if (typeof window === 'undefined') return;
+  if (musicStarted && musicEl) {
+    if (musicEl.paused && !settings.musicMuted) void musicEl.play().catch(() => {});
+    return;
+  }
+  musicStarted = true;
+  const el = new Audio();
+  el.loop = true;
+  el.volume = settings.musicMuted ? 0 : settings.musicVolume;
+  el.preload = 'auto';
+  // Try the .mp3 first; fall back to .ogg if the mp3 404s.
+  el.src = BG_MUSIC_URL_CANDIDATES[0];
+  el.addEventListener('error', () => {
+    if (el.src.endsWith('.mp3')) {
+      el.src = BG_MUSIC_URL_CANDIDATES[1];
+    }
+    // else: file just isn't there — silent degrade.
+  });
+  musicEl = el;
+  if (!settings.musicMuted) {
+    void el.play().catch(() => { /* autoplay may still be blocked; second gesture recovers */ });
+  }
+}
+
+/** Pause the background music without unloading the element. Resume by
+ *  calling startBackgroundMusic() again. */
+export function stopBackgroundMusic(): void {
+  if (musicEl) musicEl.pause();
+}
+
+/** Toggle music mute — pauses/resumes the element AND writes the setting
+ *  so it persists across reloads. Returns the new muted state. */
+export function toggleMusicMuted(): boolean {
+  const next = !settings.musicMuted;
+  setSoundSettings({ musicMuted: next });
+  if (musicEl) {
+    if (next) musicEl.pause();
+    else void musicEl.play().catch(() => {});
+  }
+  return next;
 }
 
 function ensureCtx(): AudioContext | null {

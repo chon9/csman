@@ -6912,3 +6912,174 @@ input[type='range'] {
     font-size: 16px !important;
   }
 }
+
+/* ===== Mobile bottom-app-bar nav + drawer =====
+ * On narrow screens (≤ 900px) we hide the fixed left sidebar and show
+ * a compact bottom bar with 5 primary destinations + a "More" button
+ * that opens a bottom-sheet drawer with the rest. Layout collapses to
+ * a single column with padding-bottom to clear the fixed bar. */
+@media (max-width: 900px) {
+  .online-layout {
+    grid-template-columns: 1fr !important;
+  }
+  .osb {
+    /* Sidebar is completely hidden on mobile — mobile nav takes over. */
+    display: none !important;
+  }
+  .online-layout-body {
+    /* Leave room for the fixed bottom bar (~66px + safe-area). */
+    padding-bottom: calc(66px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+.mobile-nav {
+  display: none;
+}
+@media (max-width: 900px) {
+  .mobile-nav {
+    display: flex;
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 60;
+    background: rgba(20, 24, 31, 0.96);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid rgba(255,255,255,0.08);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    justify-content: space-around;
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.35);
+  }
+}
+.mobile-nav-btn {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: #a3adc0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 4px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  border-radius: 6px;
+  transition: color 120ms, background 120ms;
+}
+.mobile-nav-btn:hover { color: #e4e7ee; }
+.mobile-nav-btn-active {
+  color: var(--accent);
+  background: rgba(222, 155, 53, 0.10);
+}
+.mobile-nav-icon { font-size: 20px; line-height: 1; }
+.mobile-nav-label {
+  font-size: 10px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mobile-nav-badge {
+  position: absolute;
+  top: 2px;
+  right: 8px;
+  background: #e25555;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 999px;
+}
+
+/* Bottom sheet drawer for "More" */
+.mobile-drawer-backdrop {
+  display: none;
+}
+@media (max-width: 900px) {
+  .mobile-drawer-backdrop.open {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    z-index: 70;
+    animation: fadein 180ms ease-out;
+  }
+}
+.mobile-drawer {
+  display: none;
+}
+@media (max-width: 900px) {
+  .mobile-drawer.open {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 71;
+    max-height: 82vh;
+    background: #14181f;
+    border-top: 1px solid rgba(255,255,255,0.10);
+    border-radius: 16px 16px 0 0;
+    padding: 14px 14px calc(20px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -10px 24px rgba(0,0,0,0.55);
+    animation: slideup 220ms cubic-bezier(0.2, 0.8, 0.3, 1);
+    overflow-y: auto;
+  }
+}
+.mobile-drawer-handle {
+  width: 40px;
+  height: 4px;
+  background: rgba(255,255,255,0.20);
+  border-radius: 999px;
+  margin: 0 auto 10px;
+}
+.mobile-drawer-title {
+  font-size: 11px;
+  color: #8b93a3;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  margin: 12px 4px 8px;
+  font-weight: 700;
+}
+.mobile-drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+.mobile-drawer-item {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  padding: 12px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: #d4d8e1;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+}
+.mobile-drawer-item:hover { background: rgba(255,255,255,0.07); }
+.mobile-drawer-item-active {
+  background: rgba(222, 155, 53, 0.14);
+  border-color: rgba(222, 155, 53, 0.45);
+  color: var(--accent);
+}
+.mobile-drawer-item .mobile-nav-icon { font-size: 22px; }
+.mobile-drawer-row {
+  display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap;
+}
+.mobile-drawer-row button {
+  flex: 1; min-width: 120px;
+}
+
+@keyframes fadein {
+  from { opacity: 0; } to { opacity: 1; }
+}
+@keyframes slideup {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}

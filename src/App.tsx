@@ -22,6 +22,7 @@ import OnlineStreamScreen from './online/screens/OnlineStreamScreen';
 import AiBettingScreen from './online/screens/AiBettingScreen';
 import RealEstateScreen from './online/screens/RealEstateScreen';
 import EWalletScreen from './online/screens/EWalletScreen';
+import MobileNav from './online/screens/MobileNav';
 import OnlineSidebar from './online/screens/OnlineSidebar';
 import ChatWidget from './online/screens/ChatWidget';
 import DevReportModal from './online/screens/DevReportModal';
@@ -159,6 +160,8 @@ export default function App() {
         <div className="online-layout-body">
           {body}
         </div>
+        {/* Mobile-only bottom app bar + drawer. CSS hides on desktop. */}
+        <MobileNav />
         {/* OnlineHomeScreen renders these locally — these cover the other screens. */}
         {onlineScreen !== 'home' && <ChatWidget />}
         {onlineScreen !== 'home' && <DevReportModal />}

@@ -7,6 +7,7 @@ import { useOnline } from '../onlineStore';
 import type { OnlineScreen } from '../onlineStore';
 import { publicOrigin } from '../serverUrl';
 import { formatGameAge } from '../dateHelpers';
+import { getSoundSettings, toggleMusicMuted, startBackgroundMusic } from '../../sound/soundManager';
 import RankBadge from './RankBadge';
 
 interface NavItem {
@@ -162,6 +163,16 @@ export default function OnlineSidebar(): React.ReactElement {
           title="Download a portable .csm.json snapshot"
           disabled={!team}
         >⬇ Export team</button>
+        <button
+          className="osb-footer-btn"
+          onClick={() => {
+            // Ensure the music channel is booted (first-click gesture) then toggle.
+            startBackgroundMusic();
+            toggleMusicMuted();
+            setTickClock(Date.now()); // force re-render so the label updates
+          }}
+          title="Toggle background music"
+        >{getSoundSettings().musicMuted ? '🔇 Music' : '🎵 Music'}</button>
         <button className="osb-footer-btn osb-footer-disconnect" onClick={disconnect}>
           ⏻ Disconnect
         </button>
