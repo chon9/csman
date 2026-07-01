@@ -10,6 +10,9 @@ import {
   APARTMENT_TIER_META,
   APARTMENT_TIER_ORDER,
   CAR_CATALOG,
+  LOT_VAULT_INTEREST_MAX_DAYS,
+  LOT_VAULT_INTEREST_MIN_CLAIM,
+  LOT_VAULT_INTEREST_PER_DAY,
   LUXURY_CATALOG,
   PLACEMENT_MATCHES,
   findCar,
@@ -278,10 +281,12 @@ function VaultTab({ lot, isOwner }: { lot: LotDetailWire; isOwner: boolean }): R
   const team = useOnline((s) => s.team);
   const deposit = useOnline((s) => s.lotVaultDeposit);
   const withdraw = useOnline((s) => s.lotVaultWithdraw);
+  const collectInterest = useOnline((s) => s.collectLotInterest);
   const meta = APARTMENT_TIER_META[lot.apartmentTier];
   const [amount, setAmount] = useState<number>(10_000);
   const capLabel = meta.vaultCap === -1 ? 'Unlimited' : `$${meta.vaultCap.toLocaleString()}`;
   const headroom = meta.vaultCap === -1 ? Infinity : Math.max(0, meta.vaultCap - lot.vaultBalance);
+  const canClaim = lot.pendingInterest >= LOT_VAULT_INTEREST_MIN_CLAIM && (meta.vaultCap === -1 || headroom > 0);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -296,6 +301,42 @@ function VaultTab({ lot, isOwner }: { lot: LotDetailWire; isOwner: boolean }): R
           ${lot.vaultBalance.toLocaleString()}
         </div>
         <div className="muted small">cap {capLabel}</div>
+      </div>
+
+      {/* ===== Daily interest banner ===== */}
+      <div style={{
+        padding: 12, borderRadius: 8,
+        background: canClaim
+          ? 'linear-gradient(135deg, rgba(242,196,67,0.20), rgba(242,196,67,0.05))'
+          : 'rgba(255,255,255,0.03)',
+        border: `1px solid ${canClaim ? 'rgba(242,196,67,0.55)' : 'rgba(255,255,255,0.08)'}`,
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <div style={{ fontSize: 28 }}>💰</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="muted small" style={{ fontSize: 10, letterSpacing: 1.2, textTransform: 'uppercase' }}>Daily interest</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: canClaim ? '#f2c443' : '#8b93a3' }}>
+            +${lot.pendingInterest.toLocaleString()}
+          </div>
+          <div className="muted small" style={{ fontSize: 10 }}>
+            {lot.interestDaysAccrued} of {LOT_VAULT_INTEREST_MAX_DAYS} days accrued · rate {(LOT_VAULT_INTEREST_PER_DAY * 100).toFixed(1)}% / day
+          </div>
+        </div>
+        {isOwner && (
+          <button
+            className="btn btn-accent"
+            disabled={!canClaim}
+            onClick={() => collectInterest(lot.id)}
+            title={
+              lot.pendingInterest < LOT_VAULT_INTEREST_MIN_CLAIM ? `Min claim $${LOT_VAULT_INTEREST_MIN_CLAIM.toLocaleString()} — deposit more or wait.` :
+              headroom === 0 ? 'Vault at cap — withdraw or upgrade first.' :
+              `Collect $${lot.pendingInterest.toLocaleString()} into the vault`
+            }
+            style={{ fontWeight: 700, padding: '10px 16px', background: canClaim ? '#f2c443' : undefined, color: canClaim ? '#0a0d12' : undefined, border: 'none' }}
+          >
+            🎁 Collect
+          </button>
+        )}
       </div>
 
       {isOwner && (

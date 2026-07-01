@@ -19,6 +19,9 @@ import {
   LOT_AUCTION_DURATION_MS,
   LOT_BID_INCREMENT,
   LOT_MIN_OPENING_BID,
+  LOT_VAULT_INTEREST_MAX_DAYS,
+  LOT_VAULT_INTEREST_MIN_CLAIM,
+  LOT_VAULT_INTEREST_PER_DAY,
   LUXURY_CATALOG,
   MAP_SIZE,
   findCar,
@@ -26,6 +29,7 @@ import {
   type ApartmentTier,
   type LotAuctionWire,
   type LotDetailWire,
+  type LotLeaderboardEntry,
   type LotMapPin,
 } from '../../src/online/protocol.ts';
 import type { DB } from './db.ts';
@@ -83,6 +87,21 @@ function lotToMapPin(db: DB, row: ReturnType<DB['loadLot']> & object): LotMapPin
   };
 }
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Pending vault interest for a lot — floor((now - lastInterestAt) / 24h)
+ *  days, capped by LOT_VAULT_INTEREST_MAX_DAYS, times current balance
+ *  times daily rate. Returns 0 for empty vaults. */
+function computePendingInterest(row: { vault_balance: number; last_interest_at: number; created_at: number }): { amount: number; days: number } {
+  if (row.vault_balance <= 0) return { amount: 0, days: 0 };
+  const anchor = row.last_interest_at > 0 ? row.last_interest_at : row.created_at;
+  const rawDays = Math.floor((Date.now() - anchor) / MS_PER_DAY);
+  const days = Math.max(0, Math.min(LOT_VAULT_INTEREST_MAX_DAYS, rawDays));
+  if (days <= 0) return { amount: 0, days: 0 };
+  const amount = Math.floor(row.vault_balance * LOT_VAULT_INTEREST_PER_DAY * days);
+  return { amount, days };
+}
+
 export function loadLotDetailWire(db: DB, lotId: string): LotDetailWire | null {
   const row = db.loadLot(lotId);
   if (!row) return null;
@@ -93,6 +112,7 @@ export function loadLotDetailWire(db: DB, lotId: string): LotDetailWire | null {
   const residents = db.loadLotResidents(lotId).map((r) => ({ playerId: r.player_id, movedInAt: r.moved_in_at }));
   // Bid history from the auction that won this lot (if any).
   const bids = row.won_auction_id ? db.loadLotBids(row.won_auction_id) : [];
+  const pending = computePendingInterest(row);
   return {
     id: row.id,
     x: row.x,
@@ -107,12 +127,77 @@ export function loadLotDetailWire(db: DB, lotId: string): LotDetailWire | null {
     ownerPlacementPlayed: owner.placementMatchesPlayed,
     apartmentTier: row.apartment_tier as ApartmentTier,
     vaultBalance: row.vault_balance,
+    pendingInterest: pending.amount,
+    interestDaysAccrued: pending.days,
+    lastInterestAt: row.last_interest_at > 0 ? row.last_interest_at : row.created_at,
     cars,
     luxuries,
     residents,
     createdAt: row.created_at,
     bidHistory: bids.map((b) => ({ bidderTag: b.bidder_tag, amount: b.amount, placedAt: b.placed_at })),
   };
+}
+
+/** Owner-only: collect the pending interest into the vault balance
+ *  (subject to the vault cap for the current tier). Resets the interest
+ *  clock so the next accrual starts from now. */
+export function collectVaultInterest(db: DB, teamId: string, lotId: string): OwnerActionResult {
+  const own = ensureOwner(db, lotId, teamId);
+  if (!own.ok) return own;
+  const pending = computePendingInterest(own.lot);
+  if (pending.amount < LOT_VAULT_INTEREST_MIN_CLAIM) {
+    return { ok: false, code: 'no-interest', message: `Interest not ready yet — accrues at ${(LOT_VAULT_INTEREST_PER_DAY * 100).toFixed(1)}%/day on the current balance.` };
+  }
+  const cap = APARTMENT_TIER_META[own.lot.apartment_tier as ApartmentTier].vaultCap;
+  const room = cap === -1 ? pending.amount : Math.max(0, cap - own.lot.vault_balance);
+  const credit = Math.min(pending.amount, room);
+  if (credit <= 0) {
+    return { ok: false, code: 'vault-cap', message: `Vault is at its cap ($${cap.toLocaleString()}) — withdraw or upgrade before collecting.` };
+  }
+  db.setLotVault(lotId, own.lot.vault_balance + credit);
+  db.setLotInterestAt(lotId, Date.now());
+  return { ok: true, newMoney: own.team.money };
+}
+
+/** Top-N richest lots by total flex — vault + garage catalog value + luxury
+ *  catalog value. Cars/luxuries are valued at full catalog price (not the
+ *  60% resale), so upgrading actually shows on the board. */
+export function loadLeaderboard(db: DB, limit = 10): LotLeaderboardEntry[] {
+  const scored = db.loadAllLots().map((row) => {
+    const cars = db.loadLotCars(row.id);
+    const luxuries = db.loadLotLuxuries(row.id);
+    const carsValue = cars.reduce((s, c) => s + (findCar(c.car_id)?.price ?? 0), 0);
+    const luxuriesValue = luxuries.reduce((s, l) => s + (findLuxury(l.item_id)?.price ?? 0), 0);
+    const residentCount = db.countLotResidentsFor(row.id);
+    return { row, carsValue, luxuriesValue, carCount: cars.length, luxuryCount: luxuries.length, residentCount };
+  });
+  scored.sort((a, b) => (b.row.vault_balance + b.carsValue + b.luxuriesValue) - (a.row.vault_balance + a.carsValue + a.luxuriesValue));
+  const out: LotLeaderboardEntry[] = [];
+  for (let i = 0; i < Math.min(limit, scored.length); i++) {
+    const s = scored[i]!;
+    const owner = db.loadTeam(s.row.owner_team_id);
+    if (!owner) continue;
+    out.push({
+      rank: i + 1,
+      lotId: s.row.id,
+      x: s.row.x,
+      y: s.row.y,
+      ownerTeamId: owner.id,
+      ownerTag: owner.tag,
+      ownerName: owner.name,
+      ownerLogoId: owner.logoId || '',
+      ownerColor: owner.primaryColor || '#de9b35',
+      apartmentTier: s.row.apartment_tier as ApartmentTier,
+      vaultBalance: s.row.vault_balance,
+      carsValue: s.carsValue,
+      luxuriesValue: s.luxuriesValue,
+      totalWorth: s.row.vault_balance + s.carsValue + s.luxuriesValue,
+      carCount: s.carCount,
+      luxuryCount: s.luxuryCount,
+      residentCount: s.residentCount,
+    });
+  }
+  return out;
 }
 
 /** Build the auctions list. forTeamId is the requesting team — drives the

@@ -56,6 +56,7 @@ import type {
   ApartmentTier,
   LotAuctionWire,
   LotDetailWire,
+  LotLeaderboardEntry,
   LotMapPin,
 } from './protocol';
 import type { ConnectionStatus, OnlineClient } from './wsClient';
@@ -285,6 +286,8 @@ interface OnlineState {
   myLots: LotMapPin[];
   /** Currently-open lot detail modal (or null). */
   viewingLot: LotDetailWire | null;
+  /** Top 10 richest lots server-wide (refreshes on the real-estate screen). */
+  lotLeaderboard: LotLeaderboardEntry[];
 
   // ----- UI -----
   screen: OnlineScreen;
@@ -451,6 +454,8 @@ interface OnlineState {
   lotVaultWithdraw: (lotId: string, amount: number) => void;
   assignLotResident: (lotId: string, playerId: string) => void;
   evictLotResident: (lotId: string, playerId: string) => void;
+  fetchLotLeaderboard: () => void;
+  collectLotInterest: (lotId: string) => void;
 }
 
 let nextToastId = 1;
@@ -547,6 +552,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   lotAuctions: [],
   myLots: [],
   viewingLot: null,
+  lotLeaderboard: [],
   screen: 'connect',
   errorBanner: null,
   toasts: [],
@@ -1516,6 +1522,10 @@ export const useOnline = create<OnlineState>((set, get) => ({
           client.send({ kind: 'list-my-lots' });
           break;
         }
+        case 'lot-leaderboard': {
+          set({ lotLeaderboard: msg.entries });
+          break;
+        }
         case 'team-deleted-by-admin': {
           pushToast('warn', 'Your team was removed by an admin.');
           set({ team: null, players: {}, screen: 'create-team' });
@@ -2055,5 +2065,11 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   evictLotResident(lotId, playerId) {
     get().client?.send({ kind: 'lot-evict-resident', lotId, playerId });
+  },
+  fetchLotLeaderboard() {
+    get().client?.send({ kind: 'list-lot-leaderboard' });
+  },
+  collectLotInterest(lotId) {
+    get().client?.send({ kind: 'collect-lot-interest', lotId });
   },
 }));

@@ -712,6 +712,14 @@ export const APARTMENT_TIER_META: Record<ApartmentTier, ApartmentTierMeta> = {
 
 export const APARTMENT_TIER_ORDER: ApartmentTier[] = ['studio', 'loft', 'penthouse', 'mansion', 'compound'];
 
+/** Vault interest rate per day (fraction of current balance). 0.005 = 0.5%. */
+export const LOT_VAULT_INTEREST_PER_DAY = 0.005;
+/** Cap on how many days of unclaimed interest can accrue at once — keeps
+ *  the vault "checked in on daily" rather than a hoard-forever tap. */
+export const LOT_VAULT_INTEREST_MAX_DAYS = 30;
+/** Minimum interest amount required to enable the Collect button. */
+export const LOT_VAULT_INTEREST_MIN_CLAIM = 100;
+
 /** Residents earn this much extra morale per day while housed (capped via existing player morale ceiling). */
 export const RESIDENT_DAILY_MORALE = 1;
 
@@ -846,6 +854,13 @@ export interface LotDetailWire {
   ownerPlacementPlayed: number;
   apartmentTier: ApartmentTier;
   vaultBalance: number;
+  /** Pending vault interest ready to collect (capped by
+   *  LOT_VAULT_INTEREST_MAX_DAYS × current balance × daily rate). */
+  pendingInterest: number;
+  /** How many days of interest are queued up (capped). */
+  interestDaysAccrued: number;
+  /** UTC ms of the last interest collection — client renders the countdown. */
+  lastInterestAt: number;
   cars: LotCarWire[];
   luxuries: LotLuxuryWire[];
   residents: LotResidentWire[];
@@ -853,6 +868,29 @@ export interface LotDetailWire {
   /** Bids placed historically on the auction that won this lot — small log
    *  for the "purchase history" footer. Up to 20 entries. */
   bidHistory: { bidderTag: string; amount: number; placedAt: number }[];
+}
+
+/** One row of the Top 10 richest lots leaderboard — sums vault balance
+ *  + garage + luxury showcase into a single net-worth figure so the
+ *  ranking reflects total flex, not just cash. */
+export interface LotLeaderboardEntry {
+  rank: number;
+  lotId: string;
+  x: number;
+  y: number;
+  ownerTeamId: string;
+  ownerTag: string;
+  ownerName: string;
+  ownerLogoId: string;
+  ownerColor: string;
+  apartmentTier: ApartmentTier;
+  vaultBalance: number;
+  carsValue: number;
+  luxuriesValue: number;
+  totalWorth: number;
+  carCount: number;
+  luxuryCount: number;
+  residentCount: number;
 }
 
 /** Quest difficulty drives both the target threshold and the cash payout. */
@@ -1639,6 +1677,8 @@ export type ClientMessage =
   | { kind: 'lot-vault-withdraw'; lotId: string; amount: number }
   | { kind: 'lot-assign-resident'; lotId: string; playerId: string }
   | { kind: 'lot-evict-resident'; lotId: string; playerId: string }
+  | { kind: 'list-lot-leaderboard' }
+  | { kind: 'collect-lot-interest'; lotId: string }
   // ----- MMR rank leaderboard -----
   | { kind: 'list-ranked-leaderboard' }
   // ----- Contract renewal: extend a starter's duels-remaining -----
@@ -1751,6 +1791,7 @@ export type ServerMessage =
   | { kind: 'lot-auction-lost'; x: number; y: number; refund: number; newMoney: number }
   | { kind: 'lot-auction-update'; auction: LotAuctionWire }
   | { kind: 'lot-updated'; lot: LotDetailWire; newMoney: number }
+  | { kind: 'lot-leaderboard'; entries: LotLeaderboardEntry[] }
   | { kind: 'ranked-leaderboard'; rows: RankedLeaderRow[] }
   | { kind: 'loan-offers'; incoming: LoanOffer[]; outgoing: LoanOffer[] }
   | { kind: 'loan-event'; loan: LoanOffer }
@@ -1810,7 +1851,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 43;
+export const PROTOCOL_VERSION = 44;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

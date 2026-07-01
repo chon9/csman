@@ -404,6 +404,11 @@ export function openDb(path: string) {
   // All-done bonus paid out for which UTC date — claim-all-done-bonus is
   // gated to once per day per team.
   tryAddColumn('teams', 'all_done_bonus_date', 'TEXT', "''");
+  // Real-estate vault interest tracking. UTC ms of the last-collected
+  // interest tick per lot. 0 = never collected (accrual starts at
+  // creation time — see helper). Cap of 30 days accrual enforced at
+  // collection time to prevent forever-storing.
+  tryAddColumn('lots', 'last_interest_at', 'INTEGER', '0');
   // Competitive MMR ladder. mmr seeds at the protocol's STARTING_MMR
   // value (1000 = Silver Elite Master). peak_mmr is the highest mmr the
   // team has ever held (trophy stat that survives any future reset).
@@ -512,6 +517,7 @@ export function openDb(path: string) {
       vault_balance INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       won_auction_id TEXT,
+      last_interest_at INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY (owner_team_id) REFERENCES teams(id) ON DELETE CASCADE,
       UNIQUE (x, y)
     );
@@ -1132,6 +1138,7 @@ export function openDb(path: string) {
     vault_balance: number;
     created_at: number;
     won_auction_id: string | null;
+    last_interest_at: number;
   }
   interface LotAuctionRow {
     id: string;
@@ -1159,8 +1166,8 @@ export function openDb(path: string) {
 
   // ----- Lot CRUD -----
   const insertLot = db.prepare(
-    `INSERT INTO lots (id, x, y, owner_team_id, apartment_tier, vault_balance, created_at, won_auction_id)
-     VALUES (?, ?, ?, ?, 'studio', 0, ?, ?)`,
+    `INSERT INTO lots (id, x, y, owner_team_id, apartment_tier, vault_balance, created_at, won_auction_id, last_interest_at)
+     VALUES (?, ?, ?, ?, 'studio', 0, ?, ?, ?)`,
   );
   const findLotById = db.prepare(`SELECT * FROM lots WHERE id = ?`);
   const findLotByCoord = db.prepare(`SELECT * FROM lots WHERE x = ? AND y = ?`);
@@ -1168,9 +1175,13 @@ export function openDb(path: string) {
   const lotsForOwner = db.prepare(`SELECT * FROM lots WHERE owner_team_id = ?`);
   const updateLotTierStmt = db.prepare(`UPDATE lots SET apartment_tier = ? WHERE id = ?`);
   const updateLotVaultStmt = db.prepare(`UPDATE lots SET vault_balance = ? WHERE id = ?`);
+  const updateLotInterestAtStmt = db.prepare(`UPDATE lots SET last_interest_at = ? WHERE id = ?`);
+  const allLotsStmt = db.prepare(`SELECT * FROM lots`);
 
   function createLot(args: { id: string; x: number; y: number; ownerTeamId: string; wonAuctionId: string | null }): void {
-    insertLot.run(args.id, args.x, args.y, args.ownerTeamId, Date.now(), args.wonAuctionId);
+    // Interest clock starts at creation so a fresh lot doesn't insta-owe
+    // 30 days of back-interest the first time the owner clicks Collect.
+    insertLot.run(args.id, args.x, args.y, args.ownerTeamId, Date.now(), args.wonAuctionId, Date.now());
   }
   function loadLot(id: string): LotRow | null { return (findLotById.get(id) as LotRow | undefined) ?? null; }
   function loadLotByCoord(x: number, y: number): LotRow | null { return (findLotByCoord.get(x, y) as LotRow | undefined) ?? null; }
@@ -1178,8 +1189,10 @@ export function openDb(path: string) {
     return lotsInBox.all(x0, x1, y0, y1) as LotRow[];
   }
   function loadLotsForOwner(teamId: string): LotRow[] { return lotsForOwner.all(teamId) as LotRow[]; }
+  function loadAllLots(): LotRow[] { return allLotsStmt.all() as LotRow[]; }
   function setLotApartmentTier(lotId: string, tier: string): void { updateLotTierStmt.run(tier, lotId); }
   function setLotVault(lotId: string, balance: number): void { updateLotVaultStmt.run(balance, lotId); }
+  function setLotInterestAt(lotId: string, atMs: number): void { updateLotInterestAtStmt.run(atMs, lotId); }
 
   // ----- Lot auctions -----
   const insertLotAuction = db.prepare(
@@ -2824,6 +2837,8 @@ export function openDb(path: string) {
     loadLotsForOwner,
     setLotApartmentTier,
     setLotVault,
+    setLotInterestAt,
+    loadAllLots,
     // Real estate — auctions
     createLotAuction,
     loadAuction,

@@ -349,9 +349,11 @@ import {
   assignResident as reAssignResident,
   buyCar as reBuyCar,
   buyLuxury as reBuyLuxury,
+  collectVaultInterest as reCollectInterest,
   depositVault as reDepositVault,
   evictResident as reEvictResident,
   loadAllAuctionsWire as reLoadAuctions,
+  loadLeaderboard as reLoadLeaderboard,
   loadLotDetailWire as reLoadLotDetail,
   loadMapPins as reLoadMapPins,
   loadMyLots as reLoadMyLots,
@@ -3207,6 +3209,19 @@ export function handle(
     case 'lot-evict-resident': {
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
       const res = reEvictResident(db, conn.teamId, msg.lotId, msg.playerId);
+      if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
+      const lot = reLoadLotDetail(db, msg.lotId)!;
+      return { kind: 'lot-updated', lot, newMoney: res.newMoney };
+    }
+
+    case 'list-lot-leaderboard': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      return { kind: 'lot-leaderboard', entries: reLoadLeaderboard(db, 10) };
+    }
+
+    case 'collect-lot-interest': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const res = reCollectInterest(db, conn.teamId, msg.lotId);
       if (!res.ok) return { kind: 'error', code: res.code, message: res.message };
       const lot = reLoadLotDetail(db, msg.lotId)!;
       return { kind: 'lot-updated', lot, newMoney: res.newMoney };
