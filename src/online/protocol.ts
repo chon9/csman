@@ -41,6 +41,11 @@ export interface OnlineTeam {
   peakMmr?: number;
   /** PvP duels played — drives placement-match status. */
   placementMatchesPlayed?: number;
+  /** BTC-style opaque handle used as the E-Wallet recipient (format
+   *  `CSM-XXXX-XXXX-XXXX`). Shown to the owner in E-Wallet so they can
+   *  copy + share it with senders. Optional on the wire for backwards
+   *  compat with pre-v48 clients but always populated by v48+ servers. */
+  walletId?: string;
 }
 
 // ============ Phase 8: achievements + loans ============
@@ -1711,10 +1716,10 @@ export type ClientMessage =
   | { kind: 'claim-sponsor'; sponsorId: string }
   | { kind: 'cancel-sponsor'; sponsorId: string }
   // ----- E-Wallet peer transfers -----
-  | { kind: 'ewallet-send-cash'; toTeamTag: string; amount: number }
-  | { kind: 'ewallet-send-skin'; toTeamTag: string; skinInstanceId: string }
-  | { kind: 'ewallet-send-player'; toTeamTag: string; playerId: string }
-  | { kind: 'ewallet-send-lot'; toTeamTag: string; lotId: string }
+  | { kind: 'ewallet-send-cash'; toWalletId: string; amount: number }
+  | { kind: 'ewallet-send-skin'; toWalletId: string; skinInstanceId: string }
+  | { kind: 'ewallet-send-player'; toWalletId: string; playerId: string }
+  | { kind: 'ewallet-send-lot'; toWalletId: string; lotId: string }
   // ----- Mint: scout a fresh wonderkid (rarity rolled server-side) -----
   | { kind: 'mint-free-agent' }
   // ----- Daily login bonus -----
@@ -1945,7 +1950,7 @@ export const STARTING_MONEY = 100_000;
 /** Number of newgen players auto-spawned on first roster bootstrap. */
 export const INITIAL_ROSTER_SIZE = 5;
 /** Wire-protocol version — bump when message shapes change in a breaking way. */
-export const PROTOCOL_VERSION = 47;
+export const PROTOCOL_VERSION = 48;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

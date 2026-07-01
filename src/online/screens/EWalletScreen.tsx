@@ -1,8 +1,9 @@
-// E-Wallet — peer-to-peer transfers to other teams by tag. Four tabs:
+// E-Wallet — peer-to-peer transfers to other teams by Wallet ID
+// (BTC-style handle, CSM-XXXX-XXXX-XXXX). Four tabs:
 //   💰 Cash · 🎨 Skins · 👤 Players · 🏘 Real Estate
 // Every transfer is free (no fee). Real-estate transfers move any
 // residents on the lot to the recipient's roster automatically.
-// Recipient looked up by team tag (case-insensitive) server-side.
+// Recipient looked up by Wallet ID server-side.
 
 import { useEffect, useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
@@ -20,6 +21,29 @@ const RARITY_COLOR: Record<string, string> = {
   'rare-special': '#ffd700',
 };
 
+// Wallet ID canonical shape: `CSM-XXXX-XXXX-XXXX` (12 uppercase hex chars
+// grouped in 4s). Accept lowercase + missing hyphens on input and normalise.
+const WALLET_ID_RE = /^CSM-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$/;
+
+/** Take arbitrary user input and coerce toward the canonical shape:
+ *  - uppercase
+ *  - strip whitespace
+ *  - strip any character that isn't [A-Z0-9]
+ *  - re-inject hyphens after the CSM prefix and every 4 hex chars.
+ *  Returns a partially-typed string that the input can display live. */
+function formatWalletIdInput(raw: string): string {
+  const upper = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // Strip an accidental leading CSM to normalise on the pure hex tail
+  // (we'll re-prefix below).
+  const hex = upper.startsWith('CSM') ? upper.slice(3) : upper;
+  // Only hex chars allowed in the tail.
+  const cleanHex = hex.replace(/[^0-9A-F]/g, '').slice(0, 12);
+  if (cleanHex.length === 0) return '';
+  const groups: string[] = [];
+  for (let i = 0; i < cleanHex.length; i += 4) groups.push(cleanHex.slice(i, i + 4));
+  return `CSM-${groups.join('-')}`;
+}
+
 export default function EWalletScreen(): React.ReactElement | null {
   const team = useOnline((s) => s.team);
   const playersMap = useOnline((s) => s.players);
@@ -34,7 +58,8 @@ export default function EWalletScreen(): React.ReactElement | null {
   const go = useOnline((s) => s.go);
 
   const [tab, setTab] = useState<Tab>('cash');
-  const [toTag, setToTag] = useState('');
+  const [toWallet, setToWallet] = useState('');
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => { listSkins(); fetchMyLots(); }, [listSkins, fetchMyLots]);
 
@@ -44,9 +69,26 @@ export default function EWalletScreen(): React.ReactElement | null {
   }, [team, playersMap]);
 
   if (!team) return null;
-  const cleanTag = toTag.trim().toUpperCase();
-  const validTag = cleanTag.length > 0 && cleanTag !== team.tag.toUpperCase();
-  const tagError = cleanTag === team.tag.toUpperCase() ? "Can't send to your own team." : null;
+
+  const myWalletId = team.walletId ?? '';
+  const isValid = WALLET_ID_RE.test(toWallet);
+  const isSelf = isValid && toWallet === myWalletId;
+  const valid = isValid && !isSelf;
+  const walletError = isSelf
+    ? "Can't send to your own wallet."
+    : (toWallet.length > 0 && !isValid ? 'Wallet ID must look like CSM-XXXX-XXXX-XXXX.' : null);
+
+  async function copyMyWalletId(): Promise<void> {
+    if (!myWalletId) return;
+    try {
+      await navigator.clipboard.writeText(myWalletId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Fallback: select-and-highlight isn't worth adding a hidden textarea
+      // for; browsers without clipboard API just show the ID for manual copy.
+    }
+  }
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -69,22 +111,64 @@ export default function EWalletScreen(): React.ReactElement | null {
         </div>
       </div>
 
-      {/* Recipient input */}
+      {/* Your Wallet ID — the number you share with senders. */}
+      <div className="panel" style={{
+        padding: 16,
+        background: 'linear-gradient(135deg, rgba(222,155,53,0.14), rgba(80,120,220,0.08))',
+        border: '1px solid rgba(222,155,53,0.35)',
+      }}>
+        <div className="muted small" style={{ fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 6 }}>
+          🔑 Your Wallet ID
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <code style={{
+            fontSize: 20, fontWeight: 800, letterSpacing: 2,
+            padding: '8px 14px', borderRadius: 8,
+            background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.12)',
+            fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+            userSelect: 'all',
+          }}>{myWalletId || '— assigning… reconnect —'}</code>
+          <button
+            className="btn btn-accent"
+            disabled={!myWalletId}
+            onClick={copyMyWalletId}
+            style={{ padding: '8px 14px', fontWeight: 700 }}
+          >{copied ? '✓ Copied' : '📋 Copy'}</button>
+        </div>
+        <div className="muted small" style={{ marginTop: 8, fontSize: 11 }}>
+          Share this ID (not your team tag) with anyone who wants to send you cash, skins, players or real estate.
+        </div>
+      </div>
+
+      {/* Recipient Wallet ID input */}
       <div className="panel" style={{ padding: 14, display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <div className="muted small" style={{ fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4 }}>Recipient team tag</div>
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <div className="muted small" style={{ fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4 }}>
+            Recipient Wallet ID
+          </div>
           <input
             type="text"
             className="input"
-            placeholder="e.g. TSF"
-            value={toTag}
-            onChange={(e) => setToTag(e.target.value)}
-            maxLength={6}
-            style={{ width: '100%', textTransform: 'uppercase', fontWeight: 700, letterSpacing: 1 }}
+            placeholder="CSM-XXXX-XXXX-XXXX"
+            value={toWallet}
+            onChange={(e) => setToWallet(formatWalletIdInput(e.target.value))}
+            maxLength={19}
+            spellCheck={false}
+            autoCapitalize="characters"
+            autoCorrect="off"
+            style={{
+              width: '100%',
+              textTransform: 'uppercase',
+              fontWeight: 700,
+              letterSpacing: 2,
+              fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+            }}
           />
-          {tagError && <div style={{ color: '#e25555', fontSize: 11, marginTop: 4 }}>{tagError}</div>}
-          {!tagError && cleanTag.length > 0 && (
-            <div className="muted small" style={{ fontSize: 11, marginTop: 4 }}>Server validates on send — invalid tags show an error toast.</div>
+          {walletError && <div style={{ color: '#e25555', fontSize: 11, marginTop: 4 }}>{walletError}</div>}
+          {!walletError && valid && (
+            <div className="muted small" style={{ fontSize: 11, marginTop: 4, color: '#7ecb7e' }}>
+              ✓ Format looks good — server confirms on send.
+            </div>
           )}
         </div>
       </div>
@@ -103,16 +187,16 @@ export default function EWalletScreen(): React.ReactElement | null {
 
       {/* Tab content */}
       {tab === 'cash' && (
-        <CashTab team={team} recipient={cleanTag} valid={validTag} onSend={(amt) => sendCash(cleanTag, amt)} />
+        <CashTab team={team} recipient={toWallet} valid={valid} onSend={(amt) => sendCash(toWallet, amt)} />
       )}
       {tab === 'skins' && (
-        <SkinsTab skins={skins} recipient={cleanTag} valid={validTag} onSend={(id) => sendSkin(cleanTag, id)} />
+        <SkinsTab skins={skins} recipient={toWallet} valid={valid} onSend={(id) => sendSkin(toWallet, id)} />
       )}
       {tab === 'players' && (
-        <PlayersTab roster={roster} recipient={cleanTag} valid={validTag} onSend={(id) => sendPlayer(cleanTag, id)} rosterSize={team.playerIds.length} />
+        <PlayersTab roster={roster} recipient={toWallet} valid={valid} onSend={(id) => sendPlayer(toWallet, id)} rosterSize={team.playerIds.length} />
       )}
       {tab === 'lots' && (
-        <LotsTab myLots={myLots} recipient={cleanTag} valid={validTag} onSend={(id) => sendLot(cleanTag, id)} />
+        <LotsTab myLots={myLots} recipient={toWallet} valid={valid} onSend={(id) => sendLot(toWallet, id)} />
       )}
 
       <ToastStack />
@@ -127,11 +211,18 @@ function tabLabel(t: Tab): string {
     : '🏘 Real Estate';
 }
 
+// Recipient wallet id shown in the confirmation prompt — trimmed for
+// readability (last 4 hex chars are enough for a human to visually
+// verify they copied the right handle).
+function shortWallet(w: string): string {
+  return w ? w.slice(-4) : '???';
+}
+
 // ---------------------------------------------------------------------
 // Cash tab
 // ---------------------------------------------------------------------
 
-function CashTab({ team, recipient, valid, onSend }: { team: { money: number; tag: string }; recipient: string; valid: boolean; onSend: (amt: number) => void }): React.ReactElement {
+function CashTab({ team, recipient, valid, onSend }: { team: { money: number; walletId?: string }; recipient: string; valid: boolean; onSend: (amt: number) => void }): React.ReactElement {
   const [amount, setAmount] = useState<number>(10_000);
   const cantAfford = amount > team.money;
   const tooLow = amount < 1000;
@@ -166,11 +257,11 @@ function CashTab({ team, recipient, valid, onSend }: { team: { money: number; ta
         className="btn btn-accent"
         disabled={disabled}
         onClick={() => {
-          if (window.confirm(`Send $${amount.toLocaleString()} to ${recipient}? This can't be reversed.`)) onSend(amount);
+          if (window.confirm(`Send $${amount.toLocaleString()} to wallet ${recipient}? This can't be reversed.`)) onSend(amount);
         }}
         style={{ marginTop: 14, padding: '10px 18px', fontWeight: 800 }}
       >
-        📤 Send ${amount.toLocaleString()} → {recipient || '???'}
+        📤 Send ${amount.toLocaleString()} → …{shortWallet(recipient)}
       </button>
     </div>
   );
@@ -206,10 +297,10 @@ function SkinsTab({ skins, recipient, valid, onSend }: { skins: import('../proto
                   className="btn btn-tiny btn-accent"
                   disabled={!valid}
                   onClick={() => {
-                    if (window.confirm(`Send "${label}" to ${recipient}? Can't be reversed.`)) onSend(s.id);
+                    if (window.confirm(`Send "${label}" to wallet ${recipient}? Can't be reversed.`)) onSend(s.id);
                   }}
                   style={{ marginTop: 6, width: '100%' }}
-                >📤 Send → {recipient || '???'}</button>
+                >📤 Send → …{shortWallet(recipient)}</button>
               </div>
             );
           })}
@@ -254,10 +345,10 @@ function PlayersTab({ roster, recipient, valid, onSend, rosterSize }: { roster: 
               className="btn btn-tiny btn-accent"
               disabled={!valid || !canSendOne}
               onClick={() => {
-                if (window.confirm(`Send ${p.nickname} to ${recipient}? Player instantly joins their roster. Can't be reversed.`)) onSend(p.id);
+                if (window.confirm(`Send ${p.nickname} to wallet ${recipient}? Player instantly joins their roster. Can't be reversed.`)) onSend(p.id);
               }}
               style={{ marginTop: 6, width: '100%' }}
-            >📤 Send → {recipient || '???'}</button>
+            >📤 Send → …{shortWallet(recipient)}</button>
           </div>
         ))}
       </div>
@@ -308,10 +399,10 @@ function LotsTab({ myLots, recipient, valid, onSend }: { myLots: import('../prot
                   className="btn btn-tiny btn-accent"
                   disabled={!valid}
                   onClick={() => {
-                    if (window.confirm(`Send lot (${l.x},${l.y}) — including ALL cars, luxury items, vault balance, and any residents — to ${recipient}? Can't be reversed.`)) onSend(l.id);
+                    if (window.confirm(`Send lot (${l.x},${l.y}) — including ALL cars, luxury items, vault balance, and any residents — to wallet ${recipient}? Can't be reversed.`)) onSend(l.id);
                   }}
                   style={{ marginTop: 6, width: '100%' }}
-                >📤 Send lot → {recipient || '???'}</button>
+                >📤 Send lot → …{shortWallet(recipient)}</button>
               </div>
             );
           })}

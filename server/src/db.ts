@@ -33,6 +33,18 @@ export interface TeamRow {
   mmr: number;
   peakMmr: number;
   placementMatchesPlayed: number;
+  /** Opaque BTC-style handle used as the E-Wallet recipient. Format:
+   *  `CSM-XXXX-XXXX-XXXX`. Empty string only for teams created before
+   *  the wallet-id migration ran; the boot backfill fills those in. */
+  walletId: string;
+}
+
+/** Generate a fresh Wallet ID. 12 hex chars grouped in 4s with a `CSM-`
+ *  prefix; uppercased. Collisions are handled by the caller (UNIQUE
+ *  index retry loop). */
+export function generateWalletId(): string {
+  const raw = randomBytes(6).toString('hex').toUpperCase();
+  return `CSM-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`;
 }
 
 /** Profile fields editable on the home customisation modal. */
@@ -88,8 +100,11 @@ export function openDb(path: string) {
       created_at INTEGER NOT NULL,
       player_ids TEXT NOT NULL DEFAULT '[]',
       tactics_json TEXT NOT NULL DEFAULT '{}',
+      wallet_id TEXT NOT NULL DEFAULT '',
       FOREIGN KEY (owner_nick) REFERENCES owners(nickname)
     );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_wallet_id
+      ON teams(wallet_id) WHERE wallet_id != '';
 
     -- Single-row table tracking the current weekly season + a rolling
     -- standings counter per team. Season rolls over every 7 real days.
@@ -407,6 +422,9 @@ export function openDb(path: string) {
   // All-done bonus paid out for which UTC date — claim-all-done-bonus is
   // gated to once per day per team.
   tryAddColumn('teams', 'all_done_bonus_date', 'TEXT', "''");
+  // Per-team E-Wallet address (like a BTC-style handle). Populated at
+  // create-team time; existing rows get one via boot-time backfill.
+  tryAddColumn('teams', 'wallet_id', 'TEXT', "''");
   // Real-estate vault interest tracking. UTC ms of the last-collected
   // interest tick per lot. 0 = never collected (accrual starts at
   // creation time — see helper). Cap of 30 days accrual enforced at
@@ -732,11 +750,14 @@ export function openDb(path: string) {
   // -------- Teams --------
 
   const insertTeam = db.prepare(
-    `INSERT INTO teams (id, name, tag, region, owner_nick, money, day, created_at, player_ids, tactics_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO teams (id, name, tag, region, owner_nick, money, day, created_at, player_ids, tactics_json, wallet_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const getTeam = db.prepare(`SELECT * FROM teams WHERE id = ?`);
   const getTeamByTag = db.prepare(`SELECT * FROM teams WHERE tag = ? COLLATE NOCASE LIMIT 1`);
+  const getTeamByWalletId = db.prepare(`SELECT * FROM teams WHERE wallet_id = ? COLLATE NOCASE LIMIT 1`);
+  const setTeamWalletId = db.prepare(`UPDATE teams SET wallet_id = ? WHERE id = ?`);
+  const listTeamsMissingWallet = db.prepare(`SELECT id FROM teams WHERE wallet_id = ''`);
   const updateTeamPlayers = db.prepare(`UPDATE teams SET player_ids = ? WHERE id = ?`);
   const updateTeamMoneyDay = db.prepare(`UPDATE teams SET money = ?, day = ? WHERE id = ?`);
   const updateTeamTactics = db.prepare(`UPDATE teams SET tactics_json = ? WHERE id = ?`);
@@ -1537,22 +1558,41 @@ export function openDb(path: string) {
       mmr: (row.mmr as number | null) ?? 1000,
       peakMmr: (row.peak_mmr as number | null) ?? 1000,
       placementMatchesPlayed: (row.placement_matches_played as number | null) ?? 0,
+      walletId: (row.wallet_id as string | null) ?? '',
     };
   }
 
   function createTeam(team: TeamRow): void {
-    insertTeam.run(
-      team.id,
-      team.name,
-      team.tag,
-      team.region,
-      team.ownerNick,
-      team.money,
-      team.day,
-      team.createdAt,
-      JSON.stringify(team.playerIds),
-      JSON.stringify(team.tactics ?? {}),
-    );
+    // Allocate a wallet id if the caller didn't provide one; retry on
+    // the (extremely rare) UNIQUE collision. Give up after 8 tries to
+    // avoid unbounded loops on a corrupted RNG.
+    let wid = team.walletId?.trim() || generateWalletId();
+    let attempt = 0;
+    while (attempt < 8) {
+      try {
+        insertTeam.run(
+          team.id,
+          team.name,
+          team.tag,
+          team.region,
+          team.ownerNick,
+          team.money,
+          team.day,
+          team.createdAt,
+          JSON.stringify(team.playerIds),
+          JSON.stringify(team.tactics ?? {}),
+          wid,
+        );
+        team.walletId = wid;
+        break;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes('wallet_id') && !msg.includes('UNIQUE')) throw err;
+        wid = generateWalletId();
+        attempt++;
+        if (attempt >= 8) throw new Error('failed to allocate a unique wallet id');
+      }
+    }
     setOwnerTeam.run(team.id, team.ownerNick);
   }
 
@@ -1634,6 +1674,39 @@ export function openDb(path: string) {
   function loadTeamByTag(tag: string): TeamRow | null {
     const row = getTeamByTag.get(tag) as Record<string, unknown> | undefined;
     return row ? rowToTeam(row) : null;
+  }
+  /** Lookup by Wallet ID — the E-Wallet's canonical recipient handle
+   *  (BTC-style opaque address). Case-insensitive, hyphens optional. */
+  function loadTeamByWalletId(walletId: string): TeamRow | null {
+    const normalized = walletId.trim().toUpperCase().replace(/\s+/g, '');
+    const row = getTeamByWalletId.get(normalized) as Record<string, unknown> | undefined;
+    return row ? rowToTeam(row) : null;
+  }
+  function assignTeamWalletId(teamId: string, walletId: string): void {
+    setTeamWalletId.run(walletId, teamId);
+  }
+
+  /** Boot-time backfill: any team without a wallet_id gets one
+   *  generated. Collision-safe — retries on the UNIQUE constraint.
+   *  Wallet ID format: `CSM-XXXX-XXXX-XXXX` (12 hex chars, grouped
+   *  in 4s). Idempotent; on subsequent boots this becomes a no-op. */
+  function backfillWalletIds(): { assigned: number } {
+    const rows = listTeamsMissingWallet.all() as Array<{ id: string }>;
+    let assigned = 0;
+    for (const r of rows) {
+      let attempt = 0;
+      while (attempt < 5) {
+        const wid = generateWalletId();
+        try {
+          setTeamWalletId.run(wid, r.id);
+          assigned++;
+          break;
+        } catch {
+          attempt++;
+        }
+      }
+    }
+    return { assigned };
   }
 
   function setTeamPlayers(teamId: string, playerIds: string[]): void {
@@ -2948,6 +3021,9 @@ export function openDb(path: string) {
     createTeam,
     loadTeam,
     loadTeamByTag,
+    loadTeamByWalletId,
+    assignTeamWalletId,
+    backfillWalletIds,
     setTeamPlayers,
     setTeamMoneyDay,
     setTeamTactics,

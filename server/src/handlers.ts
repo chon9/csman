@@ -734,6 +734,7 @@ function teamRowToOnline(row: TeamRow): OnlineTeam {
     mmr: row.mmr,
     peakMmr: row.peakMmr,
     placementMatchesPlayed: row.placementMatchesPlayed,
+    walletId: row.walletId,
   };
 }
 
@@ -831,6 +832,8 @@ export function handle(
         twitchUrl: '',
         twitterUrl: '',
         youtubeUrl: '',
+        // walletId left blank — createTeam allocates one.
+        walletId: '',
       };
       db.createTeam(team);
       conn.teamId = team.id;
@@ -3625,6 +3628,7 @@ export function handle(
         twitchUrl: '',
         twitterUrl: '',
         youtubeUrl: '',
+        walletId: '',
       };
       db.createTeam(newTeam);
       conn.teamId = newTeam.id;
@@ -3980,17 +3984,18 @@ export function handle(
     // ---------- E-Wallet: peer-to-peer transfers ----------
     //
     // Four asset kinds — cash, skin, player, real-estate lot. All look
-    // up the recipient by team tag (case-insensitive) and refuse if the
-    // recipient is the sender themselves or doesn't exist. Successful
-    // transfers push an 'ewallet-received' notification to the recipient
-    // so their client can toast + refresh state.
+    // up the recipient by Wallet ID (BTC-style opaque handle, format
+    // `CSM-XXXX-XXXX-XXXX`). Refuse if the recipient is the sender
+    // themselves or doesn't exist. Successful transfers push an
+    // 'ewallet-received' notification to the recipient so their client
+    // can toast + refresh state.
 
     case 'ewallet-send-cash': {
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
       const sender = db.loadTeam(conn.teamId);
       if (!sender) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
-      const recipient = db.loadTeamByTag(msg.toTeamTag.trim());
-      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No team with tag "${msg.toTeamTag}".` };
+      const recipient = db.loadTeamByWalletId(msg.toWalletId ?? '');
+      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No wallet with ID "${msg.toWalletId}". Double-check the recipient copied their full Wallet ID.` };
       if (recipient.id === sender.id) return { kind: 'error', code: 'self-transfer', message: `You can't send to your own team.` };
       const amount = Math.floor(msg.amount);
       if (amount < 1000) return { kind: 'error', code: 'bad-amount', message: `Minimum transfer is $1,000.` };
@@ -4021,8 +4026,8 @@ export function handle(
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
       const sender = db.loadTeam(conn.teamId);
       if (!sender) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
-      const recipient = db.loadTeamByTag(msg.toTeamTag.trim());
-      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No team with tag "${msg.toTeamTag}".` };
+      const recipient = db.loadTeamByWalletId(msg.toWalletId ?? '');
+      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No wallet with ID "${msg.toWalletId}". Double-check the recipient copied their full Wallet ID.` };
       if (recipient.id === sender.id) return { kind: 'error', code: 'self-transfer', message: `You can't send to your own team.` };
       const skin = db.loadSkin(sender.id, msg.skinInstanceId) as { skinName?: string } | null;
       if (!skin) return { kind: 'error', code: 'no-skin', message: `Skin not in your inventory.` };
@@ -4053,8 +4058,8 @@ export function handle(
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
       const sender = db.loadTeam(conn.teamId);
       if (!sender) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
-      const recipient = db.loadTeamByTag(msg.toTeamTag.trim());
-      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No team with tag "${msg.toTeamTag}".` };
+      const recipient = db.loadTeamByWalletId(msg.toWalletId ?? '');
+      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No wallet with ID "${msg.toWalletId}". Double-check the recipient copied their full Wallet ID.` };
       if (recipient.id === sender.id) return { kind: 'error', code: 'self-transfer', message: `You can't send to your own team.` };
       const player = db.loadPlayer(msg.playerId);
       if (!player || player.teamId !== sender.id) {
@@ -4097,8 +4102,8 @@ export function handle(
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
       const sender = db.loadTeam(conn.teamId);
       if (!sender) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
-      const recipient = db.loadTeamByTag(msg.toTeamTag.trim());
-      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No team with tag "${msg.toTeamTag}".` };
+      const recipient = db.loadTeamByWalletId(msg.toWalletId ?? '');
+      if (!recipient) return { kind: 'error', code: 'no-recipient', message: `No wallet with ID "${msg.toWalletId}". Double-check the recipient copied their full Wallet ID.` };
       if (recipient.id === sender.id) return { kind: 'error', code: 'self-transfer', message: `You can't send to your own team.` };
       const lot = db.loadLot(msg.lotId);
       if (!lot || lot.owner_team_id !== sender.id) {

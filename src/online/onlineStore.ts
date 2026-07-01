@@ -432,10 +432,10 @@ interface OnlineState {
   claimSponsor: (sponsorId: string) => void;
   cancelSponsor: (sponsorId: string) => void;
   // E-Wallet
-  sendCash: (toTag: string, amount: number) => void;
-  sendSkin: (toTag: string, skinInstanceId: string) => void;
-  sendPlayer: (toTag: string, playerId: string) => void;
-  sendLot: (toTag: string, lotId: string) => void;
+  sendCash: (toWalletId: string, amount: number) => void;
+  sendSkin: (toWalletId: string, skinInstanceId: string) => void;
+  sendPlayer: (toWalletId: string, playerId: string) => void;
+  sendLot: (toWalletId: string, lotId: string) => void;
   // AI vs AI betting market
   refreshAiBets: () => void;
   refreshAiBetHistory: () => void;
@@ -2068,17 +2068,17 @@ export const useOnline = create<OnlineState>((set, get) => ({
     get().client?.send({ kind: 'cancel-sponsor', sponsorId });
   },
 
-  sendCash(toTag, amount) {
-    get().client?.send({ kind: 'ewallet-send-cash', toTeamTag: toTag, amount });
+  sendCash(toWalletId, amount) {
+    get().client?.send({ kind: 'ewallet-send-cash', toWalletId, amount });
   },
-  sendSkin(toTag, skinInstanceId) {
-    get().client?.send({ kind: 'ewallet-send-skin', toTeamTag: toTag, skinInstanceId });
+  sendSkin(toWalletId, skinInstanceId) {
+    get().client?.send({ kind: 'ewallet-send-skin', toWalletId, skinInstanceId });
   },
-  sendPlayer(toTag, playerId) {
-    get().client?.send({ kind: 'ewallet-send-player', toTeamTag: toTag, playerId });
+  sendPlayer(toWalletId, playerId) {
+    get().client?.send({ kind: 'ewallet-send-player', toWalletId, playerId });
   },
-  sendLot(toTag, lotId) {
-    get().client?.send({ kind: 'ewallet-send-lot', toTeamTag: toTag, lotId });
+  sendLot(toWalletId, lotId) {
+    get().client?.send({ kind: 'ewallet-send-lot', toWalletId, lotId });
   },
 
   refreshAiBets() {

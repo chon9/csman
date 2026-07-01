@@ -71,6 +71,15 @@ if (sponsorMigration.updated > 0) {
   console.log(`[csm] retired ${sponsorMigration.updated} legacy sponsor rows (objective model migration)`);
 }
 
+// One-shot: assign a Wallet ID to any team missing one. Wallet IDs are
+// the canonical E-Wallet recipient handle (BTC-style opaque address).
+// New teams get one at create-time; this backfill covers pre-migration
+// teams. Idempotent — subsequent boots no-op when nothing is missing.
+const walletBackfill = db.backfillWalletIds();
+if (walletBackfill.assigned > 0) {
+  console.log(`[csm] assigned wallet IDs to ${walletBackfill.assigned} legacy teams`);
+}
+
 // One-shot: flag every HLTV real-name player with isRealName=true,
 // un-retire any that got mistakenly retired, and purge them from the
 // Hall of Fame (they're evergreen now — never age, never retire).
