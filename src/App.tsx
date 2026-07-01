@@ -23,6 +23,7 @@ import AiBettingScreen from './online/screens/AiBettingScreen';
 import RealEstateScreen from './online/screens/RealEstateScreen';
 import EWalletScreen from './online/screens/EWalletScreen';
 import MobileNav from './online/screens/MobileNav';
+import FabDock from './online/screens/FabDock';
 import OnlineSidebar from './online/screens/OnlineSidebar';
 import ChatWidget from './online/screens/ChatWidget';
 import DevReportModal from './online/screens/DevReportModal';
@@ -166,6 +167,7 @@ export default function App() {
         {onlineScreen !== 'home' && <ChatWidget />}
         {onlineScreen !== 'home' && <DevReportModal />}
         {onlineScreen !== 'home' && <LiveFeedWidget />}
+        {onlineScreen !== 'home' && <FabDock />}
         {/* Team-profile modal lives at the shell level so any clickable
             team tag on any screen can open it. */}
         <TeamProfileModal />

@@ -28,6 +28,7 @@ import DailyQuestsPanel from './DailyQuestsPanel';
 import ChatWidget from './ChatWidget';
 import DevReportModal from './DevReportModal';
 import LiveFeedWidget from './LiveFeedWidget';
+import FabDock from './FabDock';
 import GoalEditorModal from './GoalEditorModal';
 import NewsTicker from './NewsTicker';
 import AchievementsPanel from './AchievementsPanel';
@@ -416,6 +417,7 @@ export default function OnlineHomeScreen() {
       <DevReportModal />
       <ChatWidget />
       <LiveFeedWidget />
+      <FabDock />
       <ToastStack />
     </div>
   );
