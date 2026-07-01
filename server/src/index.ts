@@ -14,7 +14,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { openDb } from './db.ts';
 import { handle, newConnSession, type ConnSession } from './handlers.ts';
 import { handleHttp } from './httpRoutes.ts';
-import { backfillLegacyContracts, backfillPlayerTraits, sanitizePlayerAges, seedRealNamePool } from './freeAgents.ts';
+import { backfillLegacyContracts, backfillPlayerTraits, backfillRealNameAndHoF, sanitizePlayerAges, seedRealNamePool } from './freeAgents.ts';
 import { startBustTicker as startCrashBustTicker } from './crashSessions.ts';
 import { cleanupStaleCards, ensureCards, settleDueCards } from './aiBetting.ts';
 import { closeDueAuctions as closeDueLotAuctions } from './realEstate.ts';
@@ -69,6 +69,17 @@ if (hofBackfill.updated > 0) {
 const sponsorMigration = db.backfillLegacySponsors();
 if (sponsorMigration.updated > 0) {
   console.log(`[csm] retired ${sponsorMigration.updated} legacy sponsor rows (objective model migration)`);
+}
+
+// One-shot: flag every HLTV real-name player with isRealName=true,
+// un-retire any that got mistakenly retired, and purge them from the
+// Hall of Fame (they're evergreen now — never age, never retire).
+const realNameMigration = backfillRealNameAndHoF(db);
+if (realNameMigration.flagged > 0 || realNameMigration.hofDeleted > 0 || realNameMigration.unretired > 0) {
+  console.log(
+    `[csm] real-name/HoF backfill: flagged=${realNameMigration.flagged}, ` +
+    `un-retired=${realNameMigration.unretired}, HoF rows deleted=${realNameMigration.hofDeleted}`,
+  );
 }
 
 // Shared http.Server: serves /team/:id HTML profiles + upgrades to WebSocket

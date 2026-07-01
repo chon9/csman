@@ -247,6 +247,9 @@ export function seedRealNamePool(db: DB): { added: number } {
     const player = buildPlayer(spec, null, startDate);
     player.id = id;
     player.traits = rollPlayerTraits(rng);
+    // Flag every seeded real-name player as evergreen — they never age
+    // and never retire, keeping HLTV names permanently signable.
+    player.isRealName = true;
     db.savePlayer(player); // INSERT OR IGNORE — duplicate ids silently no-op
     added++;
   };
@@ -286,6 +289,61 @@ export function backfillLegacyContracts(db: DB): { updated: number } {
     updated++;
   }
   return { updated };
+}
+
+/** Set of nicknames (lowercased) that come from the seeded HLTV real-
+ *  name pool. Used by the retirement/HoF backfill to identify players
+ *  that should be flagged evergreen (never age, never retire). */
+export function collectRealNameNicks(): Set<string> {
+  const set = new Set<string>();
+  const allTeamRosters: TeamSpec[] = [...ROSTERS_A, ...ROSTERS_B, ...ROSTERS_C, ...ROSTERS_D];
+  for (const team of allTeamRosters) {
+    for (const spec of team.players) set.add(spec.nick.toLowerCase());
+  }
+  for (const spec of REAL_FREE_AGENTS) set.add(spec.nick.toLowerCase());
+  return set;
+}
+
+/** One-shot cleanup for the new age/HoF model:
+ *   1. Every player whose nickname matches the real-name pool gets
+ *      isRealName = true (and if they were somehow retired, un-retire).
+ *   2. Every hall_of_fame row whose player is a real-name gets deleted;
+ *      the player itself is un-retired (returned to free agency or
+ *      whatever team they were on before HoF removed them).
+ *   3. matchesPlayed is defaulted to 0 for any player missing the field.
+ *  Canary-gated; subsequent boots no-op. */
+export function backfillRealNameAndHoF(db: DB): { flagged: number; unretired: number; hofDeleted: number } {
+  if (db.getMeta('realname_hof_backfill_v1') === '1') {
+    return { flagged: 0, unretired: 0, hofDeleted: 0 };
+  }
+  const realNames = collectRealNameNicks();
+  const rows = db.raw.prepare(`SELECT id, json FROM players`).all() as { id: string; json: string }[];
+  let flagged = 0;
+  let unretired = 0;
+  for (const r of rows) {
+    let p: Player;
+    try { p = JSON.parse(r.json) as Player; }
+    catch { continue; }
+    let dirty = false;
+    if (typeof p.matchesPlayed !== 'number') { p.matchesPlayed = 0; dirty = true; }
+    if (realNames.has(p.nickname.toLowerCase())) {
+      if (!p.isRealName) { p.isRealName = true; flagged++; dirty = true; }
+      if (p.retired) { p.retired = false; unretired++; dirty = true; }
+    }
+    if (dirty) db.persistPlayer(p);
+  }
+  // Delete HoF entries for real-name players.
+  const hofRows = db.raw.prepare(`SELECT player_id, nickname FROM hall_of_fame`).all() as { player_id: string; nickname: string }[];
+  let hofDeleted = 0;
+  const del = db.raw.prepare(`DELETE FROM hall_of_fame WHERE player_id = ?`);
+  for (const h of hofRows) {
+    if (realNames.has(h.nickname.toLowerCase())) {
+      del.run(h.player_id);
+      hofDeleted++;
+    }
+  }
+  db.setMeta('realname_hof_backfill_v1', '1');
+  return { flagged, unretired, hofDeleted };
 }
 
 /**

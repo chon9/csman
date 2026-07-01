@@ -223,6 +223,19 @@ export interface Player {
     duelsLeft: number;
     appliedAt: number;
   };
+  /** Total ranked matches this player has appeared in (as a starter).
+   *  Increments post-match in tickContractsAfterDuel. Feeds the HoF
+   *  eligibility check (needs 1000+ AND age 40+ to retire). */
+  matchesPlayed?: number;
+  /** True once retired — the player is truly out (removed from FA pool,
+   *  hidden from market, can't be signed). Prevents the old bug where
+   *  a HoF-inducted player could still be bought and instantly retired
+   *  again after one match. */
+  retired?: boolean;
+  /** Marks pool-seeded HLTV real-name players (s1mple, ZywOo, etc.).
+   *  These NEVER age and NEVER retire — they're evergreen fixtures of
+   *  the online economy. Newgens + scout pulls default to false. */
+  isRealName?: boolean;
 }
 
 export interface MapPoolRating {

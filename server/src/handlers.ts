@@ -569,6 +569,10 @@ function tickContractsAfterDuel(
   const expired: Player[] = [];
   const recalledIds = new Set<string>();
   for (const p of rosterStarters) {
+    // Every starter that walked onto the map gets +1 matchesPlayed —
+    // feeds the retirement / HoF eligibility gate (need 1000+ AND
+    // age 40+ to be inducted).
+    p.matchesPlayed = (p.matchesPlayed ?? 0) + 1;
     const c = p.contract;
     if (!c) continue;
     // Backfill legacy contracts on first play: any contract that's missing
@@ -1089,12 +1093,17 @@ export function handle(
         notifyTeam(team.id, { kind: 'goal-reached', ...reached });
         tryUnlock(db, notifyTeam, team.id, 'first_goal_reached', ACHIEVEMENT_LABELS.first_goal_reached);
       }
-      // Age + retirement roll once per real week skipped.
+      // Age progression once per real week skipped. Real-name HLTV
+      // players are evergreen and don't age — they stay at their
+      // seeded age forever.
       const weeks = Math.floor(days / 7);
       if (weeks > 0) {
         // Round to 2 decimals every step — 0.02 isn't exactly representable
         // in IEEE 754, so naive += accumulates float garbage like 26.339999..
-        for (const p of players) p.age = Math.round((p.age + weeks * 0.02) * 100) / 100;
+        for (const p of players) {
+          if (p.isRealName) continue;
+          p.age = Math.round((p.age + weeks * 0.02) * 100) / 100;
+        }
       }
       const ret = processRetirements(db, team, players, weeks);
       for (const r of ret.retired) {
@@ -1768,6 +1777,9 @@ export function handle(
       const player = db.loadPlayer(msg.playerId);
       if (!player || player.teamId !== null) {
         return { kind: 'error', code: 'not-free', message: 'Player is no longer a free agent.' };
+      }
+      if (player.retired) {
+        return { kind: 'error', code: 'retired', message: `${player.nickname} is retired and honoured in the Hall of Fame — can't be signed.` };
       }
       // Wage offered = upfront cost for two months (first + signing fee).
       const wage = Math.max(suggestedWage(player), Math.round(msg.wage));
@@ -4186,6 +4198,9 @@ export function handle(
       const player = db.loadPlayer(listing.playerId);
       if (!buyerTeam || !sellerTeam || !player) {
         return { kind: 'error', code: 'stale-listing', message: 'Listing is stale (player or team gone).' };
+      }
+      if (player.retired) {
+        return { kind: 'error', code: 'retired', message: `${player.nickname} is retired — not for sale.` };
       }
       if (buyerTeam.money < listing.askingPrice) {
         return { kind: 'error', code: 'insufficient-funds', message: `Need $${listing.askingPrice.toLocaleString()} — you have $${buyerTeam.money.toLocaleString()}.` };

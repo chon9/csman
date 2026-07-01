@@ -1834,7 +1834,10 @@ export function openDb(path: string) {
 
   function loadFreeAgents(limit = 60): Player[] {
     const rows = freeAgentsStmt.all(limit) as { json: string }[];
-    return rows.map((r) => JSON.parse(r.json) as Player);
+    // Filter out retired players — they're in the HoF, not the market.
+    // JSON payload holds the flag; SQL can't easily filter without a
+    // column, and this scan is fast enough for FA pool sizes.
+    return rows.map((r) => JSON.parse(r.json) as Player).filter((p) => !p.retired);
   }
 
   function countFreeAgents(): number {

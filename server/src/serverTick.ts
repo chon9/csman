@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { RNG, hashSeed } from '../../src/engine/rng.ts';
 import {
   RETIREMENT_AGE_THRESHOLD,
+  RETIREMENT_MATCHES_REQUIRED,
   type HoFEntry,
 } from '../../src/online/protocol.ts';
 import type { Player } from '../../src/types.ts';
@@ -89,19 +90,23 @@ export function processRetirements(
   weeksAdvanced: number,
 ): { retired: { playerId: string; nickname: string; lastAge: number }[] } {
   if (weeksAdvanced <= 0) return { retired: [] };
-  const rng = new RNG(hashSeed(`retire-${team.id}-${Date.now()}`));
   const retired: { playerId: string; nickname: string; lastAge: number }[] = [];
   const keepIds: string[] = [];
 
+  // NEW retirement policy (was: age-curve random roll starting at 32):
+  //   - Real-name HLTV players never retire (isRealName=true).
+  //   - Everyone else needs BOTH: age >= 40 AND matchesPlayed >= 1000.
+  //   - Once both hit, retirement is DETERMINISTIC (no dice) so the
+  //     "sudden retirement of older players" bug goes away.
+  //   - Retired players are hard-flagged retired=true + teamId=null so
+  //     they can never be re-signed / re-bought (fixes the "buy after
+  //     HoF, retires again after 1 match" bug).
   for (const p of players) {
+    if (p.isRealName) { keepIds.push(p.id); continue; }
     if (p.age < RETIREMENT_AGE_THRESHOLD) { keepIds.push(p.id); continue; }
-    // Age-curve retirement: 32 → 4%/week, 35 → 18%/week, 38+ → 50%/week.
-    // Scaled by weeks advanced (a 2-week skip rolls roughly twice as often).
-    const base = p.age >= 38 ? 0.5 : p.age >= 35 ? 0.18 : p.age >= 33 ? 0.08 : 0.04;
-    const chance = Math.min(0.95, base * Math.max(1, weeksAdvanced));
-    if (!rng.chance(chance)) { keepIds.push(p.id); continue; }
-    // Retire — induct into HoF. Career W/L is the TEAM's W/L since we
-    // don't track per-player game-by-game history (every starter played).
+    if ((p.matchesPlayed ?? 0) < RETIREMENT_MATCHES_REQUIRED) { keepIds.push(p.id); continue; }
+
+    // Both criteria met — retire deterministically.
     const teamRecord = db.loadTeamCareerRecord(team.id);
     db.inductIntoHoF({
       playerId: p.id,
@@ -116,9 +121,10 @@ export function processRetirements(
       lastTeamTag: team.tag,
     });
     retired.push({ playerId: p.id, nickname: p.nickname, lastAge: p.age });
-    // Player record itself stays in the players table for history, but with
-    // teamId nulled so they no longer appear on rosters or in the market.
+    // Hard-retire: unsigns from team AND blocks any future signing.
     p.teamId = null;
+    p.retired = true;
+    p.contract = null;
     db.persistPlayer(p);
   }
   if (retired.length > 0) db.setTeamPlayers(team.id, keepIds);

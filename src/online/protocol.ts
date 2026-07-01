@@ -1952,7 +1952,14 @@ export const PROTOCOL_VERSION = 47;
  *  the UTC epoch — i.e. at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC. */
 export const AUTO_TICK_MS = 4 * 3600 * 1000;
 /** Age past which players have a non-zero chance to retire each time-skip week. */
-export const RETIREMENT_AGE_THRESHOLD = 32;
+/** Age at which a player becomes retirement-eligible. Was 32 (too
+ *  aggressive — legends would vanish mid-career). Raised to 40 as
+ *  part of the objective retirement rework: age alone no longer
+ *  triggers retirement — see RETIREMENT_MATCHES_REQUIRED too. */
+export const RETIREMENT_AGE_THRESHOLD = 40;
+/** Second gate: total matches this player has appeared in as a
+ *  starter. Retirement fires only when BOTH thresholds are met. */
+export const RETIREMENT_MATCHES_REQUIRED = 1000;
 /** Sponsor payment cadence — auto-credit once per 30 real days while active. */
 export const SPONSOR_PAYMENT_INTERVAL_MS = 30 * 24 * 3600 * 1000;
 
