@@ -419,9 +419,12 @@ export default function OnlineLiveReplayScreen() {
             {/* No final score in the title — the whole point of the replay is
                 the suspense. Live in-progress score lives in the subline below
                 and only reveals as rounds play out. */}
-            Replay — {spectator
-              ? <>{replay.teamATag || 'A'} <span className="muted">vs</span> {replay.teamBTag || 'B'}</>
-              : <>{team.tag} <span className="muted">vs</span> {userIsA ? (replay.teamBTag || 'opp') : (replay.teamATag || 'opp')}</>}
+            {/* Always team A on the LEFT, team B on the RIGHT — matches
+                the score/scoreboard so all three surfaces agree. The
+                server already stamps teamATag/teamBTag to the correct
+                side (user's tag lands on their actual side, not always
+                on the left), so no user-vs-opponent flipping needed. */}
+            Replay — {replay.teamATag || 'A'} <span className="muted">vs</span> {replay.teamBTag || 'B'}
           </h2>
           <div className="muted small" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span>Map {mapIdx + 1}/{r.maps.length} · {curMap?.map}</span>
@@ -438,7 +441,7 @@ export default function OnlineLiveReplayScreen() {
                 {roundClock.planted ? '💣 ' : '⏱ '}{roundClock.label}
               </span>
             )}
-            {teamASide && <span className={`side-badge ${teamASide.toLowerCase()}`}>{spectator || userIsA ? teamASide : teamBSide}</span>}
+            {teamASide && <span className={`side-badge ${teamASide.toLowerCase()}`}>{teamASide}</span>}
           </div>
         </div>
         {locked ? (
@@ -568,8 +571,8 @@ export default function OnlineLiveReplayScreen() {
         <div className="panel" style={{ padding: 10 }}>
           <div className="md-bottom-scoreboards">
             {[
-              { rosterIds: teamABoard, tag: spectator ? (replay.teamATag || 'A') : (userIsA ? team.tag : (replay.teamATag || 'OPP')), side: teamASide },
-              { rosterIds: teamBBoard, tag: spectator ? (replay.teamBTag || 'B') : (userIsA ? (replay.teamBTag || 'OPP') : team.tag), side: teamBSide },
+              { rosterIds: teamABoard, tag: replay.teamATag || 'A', side: teamASide },
+              { rosterIds: teamBBoard, tag: replay.teamBTag || 'B', side: teamBSide },
             ].map((board, bi) => (
               <table key={bi} className="sb-table md-bottom-sb">
                 <thead>
