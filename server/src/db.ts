@@ -103,8 +103,10 @@ export function openDb(path: string) {
       wallet_id TEXT NOT NULL DEFAULT '',
       FOREIGN KEY (owner_nick) REFERENCES owners(nickname)
     );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_wallet_id
-      ON teams(wallet_id) WHERE wallet_id != '';
+    -- NOTE: the UNIQUE index on wallet_id is created AFTER the tryAddColumn
+    -- migration further below. Creating it here would crash on pre-migration
+    -- DBs where the CREATE TABLE IF NOT EXISTS is a no-op and the wallet_id
+    -- column doesn't exist yet.
 
     -- Single-row table tracking the current weekly season + a rolling
     -- standings counter per team. Season rolls over every 7 real days.
@@ -424,7 +426,12 @@ export function openDb(path: string) {
   tryAddColumn('teams', 'all_done_bonus_date', 'TEXT', "''");
   // Per-team E-Wallet address (like a BTC-style handle). Populated at
   // create-team time; existing rows get one via boot-time backfill.
+  // The UNIQUE partial index MUST be created AFTER the column exists
+  // (on pre-migration DBs the CREATE TABLE IF NOT EXISTS above is a
+  // no-op, so the column is only present once tryAddColumn has run).
   tryAddColumn('teams', 'wallet_id', 'TEXT', "''");
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_wallet_id
+           ON teams(wallet_id) WHERE wallet_id != '';`);
   // Real-estate vault interest tracking. UTC ms of the last-collected
   // interest tick per lot. 0 = never collected (accrual starts at
   // creation time — see helper). Cap of 30 days accrual enforced at
