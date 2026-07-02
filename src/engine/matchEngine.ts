@@ -175,8 +175,12 @@ function effectiveSkill(p: Player, map: MapName, mapProf: number, coachSkill: nu
   const stageTolerance = (a.composure + a.resilience) / 2;
   const chokeRisk = Math.max(0, (12 - stageTolerance) / 12) * pressure;
   base *= 1 - chokeRisk * 0.1;
-  // "on the day" variance — even stars have off days; consistency narrows the band
-  const band = 0.16 - (a.consistency / 20) * 0.08;
+  // "on the day" variance — even stars have off days. Consistency + discipline
+  // both narrow the band: consistency = day-to-day form, discipline = fewer
+  // in-round mistakes (bad angles, throwaway rounds). Average of the two,
+  // weighted equally, so a fully-consistent + fully-disciplined player still
+  // hits the old max reduction (0.08).
+  const band = 0.16 - ((a.consistency + a.discipline) / 40) * 0.08;
   base *= 1 + (dayVariance * 2 - 1) * band;
   return base;
 }
@@ -488,7 +492,12 @@ function simulateRound(ctx: RoundCtx): RoundOutput {
   // T-side plan
   const tTac = ctx.tTeam.tactics;
   const igl = ctx.tSide.find((s) => s.p.role === 'IGL') ?? ctx.tSide[0];
-  const iglQ = (igl.p.attributes.leadership + igl.p.attributes.gameSense) / 2;
+  // IGL call quality: leadership makes the call, game sense reads the map,
+  // communication delivers the call cleanly to the team. Weighted average
+  // (0.45 leadership, 0.35 game sense, 0.20 communication) so leadership
+  // stays dominant but a mute IGL bleeds ~15% of their call efficacy.
+  const iglAttrs = igl.p.attributes;
+  const iglQ = iglAttrs.leadership * 0.45 + iglAttrs.gameSense * 0.35 + iglAttrs.communication * 0.20;
   // target decision quality: good IGLs hit the weaker site
   const ctOnA = () => ctx.ctSide.filter((c) => c.alive && (c.zone === siteA.id || siteA.neighbors.includes(c.zone))).length;
   const ctOnB = () => ctx.ctSide.filter((c) => c.alive && (c.zone === siteB.id || siteB.neighbors.includes(c.zone))).length;
@@ -990,6 +999,21 @@ function resolveFight(
     const ctAggSlider = (ctx.ctTeam.tactics.aggression - 10) / 10;
     tScore *= 1 + tAggSlider * (tDefending ? -0.03 : 0.06);
     cScore *= 1 + ctAggSlider * (ctDefending ? -0.03 : 0.06);
+    // Individual aggression: layered on top of the team slider. Style stat
+    // for Entry-role players — an aggressive Entry wins more first-contact
+    // duels but eats the trade in return. Non-Entry roles get half the
+    // effect (a Rifler pushing hard still gets some benefit). Attackers
+    // only — aggression doesn't help defending duels.
+    if (!tDefending) {
+      const tAggSelf = (t.p.attributes.aggression - 10) / 10;
+      const tRoleMul = t.assignedRole === 'Entry' ? 0.06 : 0.03;
+      tScore *= 1 + tAggSelf * tRoleMul;
+    }
+    if (!ctDefending) {
+      const cAggSelf = (c.p.attributes.aggression - 10) / 10;
+      const cRoleMul = c.assignedRole === 'Entry' ? 0.06 : 0.03;
+      cScore *= 1 + cAggSelf * cRoleMul;
+    }
     // utility support: attacker flashing in (team utility level * player util skill)
     const tBuyD = sideBuy(ctx, t);
     if (!tDefending) tScore *= 1 + tBuyD.utilityLevel * (t.utilSkill / 20) * 0.12;

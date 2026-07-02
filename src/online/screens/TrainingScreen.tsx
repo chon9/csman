@@ -70,20 +70,130 @@ const ROLE_WEIGHTS: Record<PlayerRole, Partial<Record<AttrKey, number>>> = {
   Anchor:  { positioning: 0.24, composure: 0.18, clutch: 0.15, aim: 0.12, gameSense: 0.12, utility: 0.10, consistency: 0.09 },
 };
 
-/** Non-core attributes still have real effects; describe them in one
- *  line so the user doesn't dismiss them as useless. */
-const ATTR_HINT: Partial<Record<AttrKey, string>> = {
-  utility:      'Drives grenade damage (molotovs, HE).',
-  clutch:       '±12% in 1vX situations.',
-  leadership:   'IGL call quality (mid-round decisions).',
-  teamwork:     'Trade-frag success rate (up to +50%).',
-  resilience:   'Pairs with composure to resist big-stage choke.',
-  communication:'Info sharing quality — helps team-level plays.',
-  discipline:   'Throw discipline, avoids mistakes, rotates on time.',
-  aggression:   'Style modifier (not raw quality).',
-  loyalty:      'Resists rival transfer offers.',
-  endurance:    'Slower fatigue accumulation across long events.',
+/** Real engine effects per attribute — sourced from a code audit of
+ *  matchEngine.ts + sim/daily.ts. Rendered in the tooltip when you
+ *  hover an attribute button or grid cell. If you add a new engine
+ *  hook for an attribute, update this map with the citation. */
+interface AttrEffect {
+  /** Short summary shown as the first line. */
+  summary: string;
+  /** Bullet list of concrete engine effects. */
+  effects: string[];
+}
+
+const ATTR_EFFECTS: Record<AttrKey, AttrEffect> = {
+  aim: {
+    summary: 'Universal duel skill + headshot rate.',
+    effects: [
+      '28% of effectiveSkill (biggest single weight)',
+      'Headshot chance = 0.25 + aim/20 × 0.35 (max Aim doubles HS rate)',
+    ],
+  },
+  reflexes: {
+    summary: 'Universal duel skill — first-contact speed.',
+    effects: ['20% of effectiveSkill (second-biggest weight)'],
+  },
+  positioning: {
+    summary: 'Universal duel skill + defender bonus.',
+    effects: [
+      '17% of effectiveSkill',
+      '+18% when holding as CT defender or T post-plant',
+    ],
+  },
+  gameSense: {
+    summary: 'Universal duel skill + IGL call reads.',
+    effects: [
+      '15% of effectiveSkill',
+      'IGL only: 35% weight in call quality → correct site read up to 80%',
+    ],
+  },
+  consistency: {
+    summary: 'Universal duel skill + narrows day variance.',
+    effects: [
+      '10% of effectiveSkill',
+      'Day-variance band: max Consistency reduces off-day swing by ~50%',
+    ],
+  },
+  composure: {
+    summary: 'Universal duel skill + choke resistance.',
+    effects: [
+      '10% of effectiveSkill',
+      'Stage tolerance (with Resilience): resists big-stage choke under tournament pressure',
+    ],
+  },
+  clutch: {
+    summary: '1vX-only skill multiplier.',
+    effects: ['±12% skill scaling in 1vX situations'],
+  },
+  utility: {
+    summary: 'Grenade damage + team utility scaling.',
+    effects: [
+      'Direct grenade damage roll (molotovs, HE)',
+      'Higher Utility = more likely to be picked as the thrower',
+      'Attackers: +12% × team utility level × your Utility/20',
+    ],
+  },
+  teamwork: {
+    summary: 'Trade-frag probability.',
+    effects: ['Trade probability = 0.22 + teamwork/20 × 0.4 (max ~62%)'],
+  },
+  leadership: {
+    summary: 'IGL only — call quality.',
+    effects: ['IGL only: 45% weight in call quality (biggest factor)'],
+  },
+  communication: {
+    summary: 'IGL call clarity + team trade-frag bonus.',
+    effects: [
+      'IGL only: 20% weight in call quality',
+      'Team-average Comms adds small bonus to trade-frag probability',
+    ],
+  },
+  discipline: {
+    summary: 'Narrows day variance (mistake avoidance).',
+    effects: [
+      'Day-variance band: shares weight with Consistency',
+      'Both stats at 20 → full ~50% off-day reduction',
+    ],
+  },
+  aggression: {
+    summary: 'Entry-role duel style + light bonus for other attackers.',
+    effects: [
+      'Attackers only (peeking): Entry role gets ±6% per aggression Δ',
+      'Non-Entry attackers get half effect (±3%)',
+      'Defenders unaffected — over-aggression on holds is bad',
+    ],
+  },
+  resilience: {
+    summary: 'Choke resistance + faster mental recovery.',
+    effects: [
+      'Stage tolerance (with Composure): resists big-stage choke',
+      'Dampens morale loss after defeats (up to −40% loss swing)',
+    ],
+  },
+  endurance: {
+    summary: 'Slower fatigue accumulation.',
+    effects: [
+      'END 20 gains ~4 fatigue/match; END 5 gains ~9',
+      'Matters most across long tournament runs',
+    ],
+  },
+  loyalty: {
+    summary: 'Contract / transfer only — no in-match effect.',
+    effects: ['Resists rival transfer offers + contract demands'],
+  },
 };
+
+/** Compose a tooltip title string from the effects map + role-fit weight. */
+function tooltipFor(k: AttrKey, role: PlayerRole | undefined, weight: number, tier: 'S' | 'A' | 'B' | ''): string {
+  const eff = ATTR_EFFECTS[k];
+  const header = tier
+    ? `${tier}-tier · ${(weight * 100).toFixed(0)}% weight for ${role ?? 'duel skill'}`
+    : role
+      ? `Situational for ${role}`
+      : 'Situational';
+  const body = eff.effects.map((line) => `• ${line}`).join('\n');
+  return `${header}\n\n${eff.summary}\n${body}`;
+}
 
 /** Impact tier for the ⭐ badge. S = single biggest lever for the target
  *  role (or duel-generic weight, if no role provided). Empty = situational.
@@ -236,18 +346,12 @@ function Idle({
                 {group.keys.filter((k) => ATTRIBUTE_KEYS.includes(k)).map((k) => {
                   const tier = impactTier(k, target?.role);
                   const weight = weightFor(k, target?.role);
-                  const hint = ATTR_HINT[k];
-                  const roleLabel = target ? target.role : 'duel skill';
                   return (
                     <button
                       key={k}
                       className={`btn ${pickedAttr === k ? 'btn-accent' : ''}`}
                       onClick={() => setPickedAttr(k)}
-                      title={
-                        tier
-                          ? `${tier}-tier · ${(weight * 100).toFixed(0)}% weight for ${roleLabel}`
-                          : hint ?? 'Situational effect only.'
-                      }
+                      title={tooltipFor(k, target?.role, weight, tier)}
                       style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                     >
                       {tier && <span style={{ color: impactColor(tier), fontSize: 14, lineHeight: 1 }}>★</span>}
@@ -375,15 +479,18 @@ function AttributesPanel({ target, pickedAttr }: { target: Player; pickedAttr: A
               {group.keys.filter((k) => ATTRIBUTE_KEYS.includes(k)).map((k) => {
                 const v = target.attributes[k];
                 const tier = impactTier(k, role);
+                const weight = weightFor(k, role);
                 const isPicked = k === pickedAttr;
                 return (
                   <div
                     key={k}
+                    title={tooltipFor(k, role, weight, tier)}
                     style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       padding: '6px 10px', borderRadius: 'var(--radius-sm)',
                       background: isPicked ? 'var(--accent-soft)' : 'var(--bg-elev)',
                       border: isPicked ? '1px solid var(--border-accent)' : '1px solid var(--border-soft)',
+                      cursor: 'help',
                     }}
                   >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 'var(--text-sm)' }}>
@@ -405,10 +512,9 @@ function AttributesPanel({ target, pickedAttr }: { target: Player; pickedAttr: A
       <div className="muted small" style={{ marginTop: 'var(--space-3)' }}>
         You picked <strong style={{ color: 'var(--accent-hi)' }}>{ATTR_LABEL[pickedAttr]} ({target.attributes[pickedAttr]}/20)</strong>
         {pickedTier
-          ? ` — ${pickedTier}-tier for ${role} (${(pickedWeight * 100).toFixed(0)}% of role fit).`
-          : ATTR_HINT[pickedAttr]
-            ? ` — ${ATTR_HINT[pickedAttr]}`
-            : ` — situational for ${role}.`}
+          ? ` — ${pickedTier}-tier for ${role} (${(pickedWeight * 100).toFixed(0)}% of role fit). `
+          : ` — situational for ${role}. `}
+        <span style={{ color: 'var(--text-dim)' }}>{ATTR_EFFECTS[pickedAttr].summary}</span>
       </div>
     </div>
   );
