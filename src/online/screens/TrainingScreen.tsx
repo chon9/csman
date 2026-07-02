@@ -40,6 +40,55 @@ const ATTR_LABEL: Record<AttrKey, string> = {
   teamwork: 'Teamwork', loyalty: 'Loyalty', endurance: 'Endurance',
 };
 
+/** Weights of each attribute in the match engine's effective-skill formula.
+ *  Higher = bigger impact on duel outcomes. Anything at 0 has only
+ *  situational/indirect effects (utility damage, clutch multiplier, etc.).
+ *  Source: [src/engine/matchEngine.ts effectiveSkill()]. */
+const ATTR_CORE_WEIGHT: Record<AttrKey, number> = {
+  aim: 0.28, reflexes: 0.20, positioning: 0.17, gameSense: 0.15,
+  consistency: 0.10, composure: 0.10,
+  // Below have indirect / situational effects — surfaced in the tooltip.
+  utility: 0, clutch: 0, leadership: 0, teamwork: 0, resilience: 0,
+  communication: 0, discipline: 0, aggression: 0, loyalty: 0, endurance: 0,
+};
+
+/** Non-core attributes still have real effects; describe them in one
+ *  line so the user doesn't dismiss them as useless. */
+const ATTR_HINT: Partial<Record<AttrKey, string>> = {
+  utility:      'Drives grenade damage (molotovs, HE).',
+  clutch:       '±12% in 1vX situations.',
+  leadership:   'IGL call quality (mid-round decisions).',
+  teamwork:     'Trade-frag success rate (up to +50%).',
+  resilience:   'Pairs with composure to resist big-stage choke.',
+  communication:'Info sharing quality — helps team-level plays.',
+  discipline:   'Throw discipline, avoids mistakes, rotates on time.',
+  aggression:   'Style modifier (not raw quality).',
+  loyalty:      'Resists rival transfer offers.',
+  endurance:    'Slower fatigue accumulation across long events.',
+};
+
+/** Impact tier for the ⭐ badge. S = single biggest lever; A = strong core;
+ *  B = still counts for something. Empty = situational only. */
+function impactTier(k: AttrKey): 'S' | 'A' | 'B' | '' {
+  const w = ATTR_CORE_WEIGHT[k];
+  if (w >= 0.25) return 'S';
+  if (w >= 0.15) return 'A';
+  if (w >= 0.10) return 'B';
+  return '';
+}
+function impactColor(tier: 'S' | 'A' | 'B' | ''): string {
+  return tier === 'S' ? 'var(--accent)' : tier === 'A' ? 'var(--win)' : tier === 'B' ? 'var(--info)' : 'transparent';
+}
+
+/** Color the numeric attribute value FM-style: dim below 8, neutral 8-13,
+ *  green 14-16, gold 17-20. */
+function attrValueColor(v: number): string {
+  if (v >= 17) return 'var(--accent)';
+  if (v >= 14) return 'var(--win)';
+  if (v >= 8)  return 'var(--text)';
+  return 'var(--muted)';
+}
+
 export default function TrainingScreen(): React.ReactElement | null {
   const team = useOnline((s) => s.team);
   const playersMap = useOnline((s) => s.players);
@@ -141,19 +190,39 @@ function Idle({
     <>
       {/* Attribute picker */}
       <div className="panel">
-        <div className="panel-title">1. Pick an attribute to train</div>
+        <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>1. Pick an attribute to train</span>
+          <span className="muted small" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
+            <span style={{ color: 'var(--accent)' }}>★</span> S-tier &nbsp;·&nbsp;
+            <span style={{ color: 'var(--win)' }}>★</span> A-tier &nbsp;·&nbsp;
+            <span style={{ color: 'var(--info)' }}>★</span> B-tier &nbsp;·&nbsp; rest = situational
+          </span>
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           {ATTR_GROUPS.map((group) => (
             <div key={group.label}>
               <div className="section-title" style={{ margin: '0 0 var(--space-2)' }}>{group.label}</div>
               <div style={{ display: 'flex', gap: 'var(--space-1)', flexWrap: 'wrap' }}>
-                {group.keys.filter((k) => ATTRIBUTE_KEYS.includes(k)).map((k) => (
-                  <button
-                    key={k}
-                    className={`btn ${pickedAttr === k ? 'btn-accent' : ''}`}
-                    onClick={() => setPickedAttr(k)}
-                  >{ATTR_LABEL[k]}</button>
-                ))}
+                {group.keys.filter((k) => ATTRIBUTE_KEYS.includes(k)).map((k) => {
+                  const tier = impactTier(k);
+                  const hint = ATTR_HINT[k];
+                  return (
+                    <button
+                      key={k}
+                      className={`btn ${pickedAttr === k ? 'btn-accent' : ''}`}
+                      onClick={() => setPickedAttr(k)}
+                      title={
+                        tier
+                          ? `${tier}-tier · direct weight ${(ATTR_CORE_WEIGHT[k] * 100).toFixed(0)}% of duel skill`
+                          : hint ?? 'Situational effect only.'
+                      }
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    >
+                      {tier && <span style={{ color: impactColor(tier), fontSize: 14, lineHeight: 1 }}>★</span>}
+                      {ATTR_LABEL[k]}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -182,12 +251,14 @@ function Idle({
                     marginBottom: 0, textAlign: 'left', cursor: 'pointer',
                     padding: 'var(--space-3)',
                     borderColor: isSel ? meta.color : 'var(--border)',
-                    background: isSel ? `${meta.color}10` : 'var(--panel)',
+                    background: isSel ? `${meta.color}18` : 'var(--panel)',
                     borderLeft: `3px solid ${isSel ? meta.color : 'transparent'}`,
+                    color: 'var(--text)',
+                    fontFamily: 'inherit',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <strong>{p.nickname}</strong>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                    <strong style={{ color: isSel ? '#fff' : 'var(--text)' }}>{p.nickname}</strong>
                     <span className="pill" style={{ background: `${meta.color}22`, borderColor: `${meta.color}55`, color: meta.color }}>
                       {meta.label}
                     </span>
@@ -201,6 +272,12 @@ function Idle({
           </div>
         )}
       </div>
+
+      {/* Current attributes of the selected newgen — so you can see
+       *  whether the picked attribute is worth training up right now. */}
+      {target && (
+        <AttributesPanel target={target} pickedAttr={pickedAttr} />
+      )}
 
       {/* Odds preview + Start */}
       {target && targetRarity && (
@@ -224,6 +301,101 @@ function Idle({
       </div>
     </>
   );
+}
+
+// ---------------------------------------------------------------------
+// Attribute grid — current stats of the selected newgen, FM-style
+// ---------------------------------------------------------------------
+
+function AttributesPanel({ target, pickedAttr }: { target: Player; pickedAttr: AttrKey }): React.ReactElement {
+  const pickedTier = impactTier(pickedAttr);
+  const suggestion = suggestBetter(target, pickedAttr);
+  return (
+    <div className="panel">
+      <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>{target.nickname}'s current attributes</span>
+        <span className="muted small" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
+          Values 1–20 · <span style={{ color: 'var(--accent)' }}>gold</span> = 17+ ·
+          <span style={{ color: 'var(--win)' }}> green</span> = 14–16
+        </span>
+      </div>
+      {suggestion && (
+        <div style={{
+          padding: '8px 12px', marginBottom: 'var(--space-3)',
+          background: 'var(--info-soft)', border: '1px solid rgba(90,164,230,0.35)',
+          borderRadius: 'var(--radius-sm)', fontSize: 'var(--text-sm)',
+        }}>
+          💡 <strong>{suggestion.reason}</strong>&nbsp;
+          <span className="muted">Consider {ATTR_LABEL[suggestion.attr]} ({target.attributes[suggestion.attr]}/20) instead.</span>
+        </div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        {ATTR_GROUPS.map((group) => (
+          <div key={group.label}>
+            <div className="section-title" style={{ margin: '0 0 var(--space-2)' }}>{group.label}</div>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+              gap: 'var(--space-1)',
+            }}>
+              {group.keys.filter((k) => ATTRIBUTE_KEYS.includes(k)).map((k) => {
+                const v = target.attributes[k];
+                const tier = impactTier(k);
+                const isPicked = k === pickedAttr;
+                return (
+                  <div
+                    key={k}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      padding: '6px 10px', borderRadius: 'var(--radius-sm)',
+                      background: isPicked ? 'var(--accent-soft)' : 'var(--bg-elev)',
+                      border: isPicked ? '1px solid var(--border-accent)' : '1px solid var(--border-soft)',
+                    }}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 'var(--text-sm)' }}>
+                      {tier && <span style={{ color: impactColor(tier), fontSize: 11 }}>★</span>}
+                      <span style={{ color: isPicked ? 'var(--accent-hi)' : 'var(--text-dim)' }}>{ATTR_LABEL[k]}</span>
+                    </span>
+                    <strong style={{
+                      color: attrValueColor(v),
+                      fontVariantNumeric: 'tabular-nums',
+                      fontSize: 'var(--text-lg)',
+                    }}>{v}</strong>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="muted small" style={{ marginTop: 'var(--space-3)' }}>
+        You picked <strong style={{ color: 'var(--accent-hi)' }}>{ATTR_LABEL[pickedAttr]} ({target.attributes[pickedAttr]}/20)</strong>
+        {pickedTier && ` — ${pickedTier}-tier duel impact.`}
+        {!pickedTier && ATTR_HINT[pickedAttr] && ` — ${ATTR_HINT[pickedAttr]}`}
+      </div>
+    </div>
+  );
+}
+
+/** Suggest a smarter attribute pick when the user is training something
+ *  suboptimal (e.g. already at 20, or a situational stat while an S-tier
+ *  is still low). Returns null if the current pick is fine. */
+function suggestBetter(target: Player, pickedAttr: AttrKey): { attr: AttrKey; reason: string } | null {
+  const attrs = target.attributes;
+  const pickedValue = attrs[pickedAttr];
+  if (pickedValue >= 20) {
+    // Suggest the lowest S/A-tier attribute they still have room to grow.
+    const growable = (['aim', 'reflexes', 'positioning', 'gameSense'] as AttrKey[])
+      .filter((k) => attrs[k] < 20)
+      .sort((a, b) => attrs[a] - attrs[b])[0];
+    if (growable) return { attr: growable, reason: `${ATTR_LABEL[pickedAttr]} is already maxed.` };
+  }
+  // If they picked a non-core attribute while Aim is under 15, nudge them.
+  const pickedTier = impactTier(pickedAttr);
+  if (!pickedTier && attrs.aim < 15) {
+    return { attr: 'aim', reason: `Aim (${attrs.aim}) is the single biggest lever in duels.` };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------
