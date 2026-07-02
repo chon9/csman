@@ -60,11 +60,14 @@ import type {
   LotMapPin,
   DailyRaceEntryWire,
   DailyRacePayoutWire,
+  TrainingSessionWire,
+  TrainingOutcome,
 } from './protocol';
+import type { PlayerAttributes } from '../types';
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets' | 'real-estate' | 'ewallet' | 'daily-race';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets' | 'real-estate' | 'ewallet' | 'daily-race' | 'training';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -304,6 +307,14 @@ interface OnlineState {
     recentPayouts: DailyRacePayoutWire[];
   } | null;
 
+  // ----- Training Center -----
+  /** Currently-active training session or null. Refreshed on screen
+   *  open + after each collect/cancel. */
+  trainingSession: TrainingSessionWire | null;
+  /** Result of the most recent collect — drives the outcome modal.
+   *  Set on `training-collected`, cleared by dismissTrainingResult. */
+  trainingResult: TrainingOutcome | null;
+
   // ----- UI -----
   screen: OnlineScreen;
   errorBanner: string | null;
@@ -483,6 +494,12 @@ interface OnlineState {
   collectLotInterest: (lotId: string) => void;
   // Daily race
   refreshDailyRace: () => void;
+  // Training Center
+  refreshTraining: () => void;
+  startTraining: (playerId: string, attribute: keyof PlayerAttributes) => void;
+  collectTraining: () => void;
+  cancelTraining: () => void;
+  dismissTrainingResult: () => void;
 }
 
 let nextToastId = 1;
@@ -581,6 +598,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   viewingLot: null,
   lotLeaderboard: [],
   dailyRace: null,
+  trainingSession: null,
+  trainingResult: null,
   screen: 'connect',
   errorBanner: null,
   toasts: [],
@@ -1538,6 +1557,41 @@ export const useOnline = create<OnlineState>((set, get) => ({
           if (get().dailyRace) get().client?.send({ kind: 'list-daily-race' });
           break;
         }
+        case 'training-state': {
+          set({ trainingSession: msg.session });
+          break;
+        }
+        case 'training-collected': {
+          // Fold the mutated player back into the players map so squad
+          // views reflect the new attribute / PA / retired state.
+          const playersById = { ...get().players };
+          for (const p of msg.playersDelta) {
+            if (msg.outcome.kind === 'retire' && p.id === msg.outcome.playerId) {
+              delete playersById[p.id];
+            } else {
+              playersById[p.id] = p;
+            }
+          }
+          set({
+            trainingSession: null,
+            trainingResult: msg.outcome,
+            players: playersById,
+          });
+          // Also drop the retired player from the team roster locally so
+          // the roster count is right before the next state broadcast.
+          if (msg.outcome.kind === 'retire') {
+            const t = get().team;
+            if (t) {
+              set({
+                team: {
+                  ...t,
+                  playerIds: t.playerIds.filter((id) => id !== msg.outcome.playerId),
+                },
+              });
+            }
+          }
+          break;
+        }
         case 'ai-bet-replay-starting': {
           // Server pushed the full match frames for a card we bet on.
           // Route into the locked replay viewer so every bettor on this
@@ -2220,5 +2274,21 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   refreshDailyRace() {
     get().client?.send({ kind: 'list-daily-race' });
+  },
+
+  refreshTraining() {
+    get().client?.send({ kind: 'list-training' });
+  },
+  startTraining(playerId, attribute) {
+    get().client?.send({ kind: 'start-training', playerId, attribute });
+  },
+  collectTraining() {
+    get().client?.send({ kind: 'collect-training' });
+  },
+  cancelTraining() {
+    get().client?.send({ kind: 'cancel-training' });
+  },
+  dismissTrainingResult() {
+    set({ trainingResult: null });
   },
 }));

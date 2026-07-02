@@ -1766,6 +1766,11 @@ export type ClientMessage =
   | { kind: 'list-my-ai-bet-history' }
   // ----- Daily race (points + money leaderboards, UTC-daily rollover) -----
   | { kind: 'list-daily-race' }
+  // ----- Training Center (5-min idle · high-risk / high-return) -----
+  | { kind: 'list-training' }
+  | { kind: 'start-training'; playerId: string; attribute: keyof PlayerAttributes }
+  | { kind: 'collect-training' }
+  | { kind: 'cancel-training' }
   // ----- Virtual real estate -----
   | { kind: 'list-lot-map'; x0: number; y0: number; x1: number; y1: number }
   | { kind: 'list-lot-auctions' }
@@ -1915,6 +1920,8 @@ export type ServerMessage =
   | { kind: 'daily-race-state'; dateUtc: string; rolloverUtcMs: number; pointsBoard: DailyRaceEntryWire[]; moneyBoard: DailyRaceEntryWire[]; myRank: { points: number | null; money: number | null }; recentPayouts: DailyRacePayoutWire[] }
   | { kind: 'daily-race-payout'; raceKind: 'points' | 'money'; rank: number; amount: number; valueDelta: number; dateUtc: string; newMoney: number }
   | { kind: 'daily-race-rolled'; dateUtc: string }
+  | { kind: 'training-state'; session: TrainingSessionWire | null }
+  | { kind: 'training-collected'; outcome: TrainingOutcome; playersDelta: Player[] }
   | { kind: 'player-scouted'; player: Player; cost: number; rarity: ScoutRarity; newMoney: number }
   // ----- Daily bonus + cases -----
   | { kind: 'daily-bonus-claimed'; amount: number; newMoney: number; nextClaimUtc: string }
@@ -1984,7 +1991,71 @@ export interface DailyRacePayoutWire {
   paidAt: number;
 }
 
-export const PROTOCOL_VERSION = 50;
+// ============ Training Center (high-risk / high-return) ============
+//
+// One session per team at a time. Newgens only (real-name players are
+// evergreen — no training). User picks a target attribute; after
+// TRAINING_DURATION_MS the roll fires with rarity-scaled odds:
+//   - JACKPOT: rare PA break + attribute gain
+//   - SUCCESS: +1 to chosen attribute
+//   - REDUCE:  −1 to chosen attribute
+//   - RETIRE:  career-ending injury; player gone forever
+// Composure + Resilience further reduce the two bad outcomes.
+
+/** Real-time ms a training session must run before it can be collected. */
+export const TRAINING_DURATION_MS = 5 * 60 * 1000;
+
+/** Player rarity tier derived from PA. Rarer = better odds on training. */
+export type TrainingRarity = 'common' | 'rare' | 'epic' | 'legendary';
+
+export function trainingRarityFor(pa: number): TrainingRarity {
+  if (pa >= 170) return 'legendary';
+  if (pa >= 150) return 'epic';
+  if (pa >= 130) return 'rare';
+  return 'common';
+}
+
+/** Base outcome odds by rarity (before comp+res dampener). Order:
+ *  [retire, reduce, success, jackpot]. Must sum to 1.0. Jackpot is
+ *  intentionally flat across tiers to keep the dream alive for commons. */
+export const TRAINING_ODDS: Record<TrainingRarity, [number, number, number, number]> = {
+  common:    [0.06, 0.18, 0.74, 0.02],
+  rare:      [0.05, 0.15, 0.78, 0.02],
+  epic:      [0.04, 0.12, 0.82, 0.02],
+  legendary: [0.03, 0.09, 0.86, 0.02],
+};
+
+export type TrainingOutcomeKind = 'jackpot' | 'success' | 'reduce' | 'retire';
+
+export interface TrainingSessionWire {
+  playerId: string;
+  playerNickname: string;
+  attribute: keyof PlayerAttributes;
+  startedAt: number;
+  /** UTC ms when the session becomes collectable. */
+  readyAt: number;
+  rarity: TrainingRarity;
+}
+
+/** Result of a completed roll — sent back to the client for the modal. */
+export interface TrainingOutcome {
+  kind: TrainingOutcomeKind;
+  playerId: string;
+  playerNickname: string;
+  attribute: keyof PlayerAttributes;
+  /** Change to the target attribute (+1 on success, -1 on reduce, +1 on
+   *  jackpot, 0 on retire). */
+  attrDelta: number;
+  /** Change to PA (only nonzero on jackpot). */
+  paDelta: number;
+  /** True on retire — the player is gone from the roster. */
+  retired: boolean;
+  /** For success/jackpot — the new attribute value AFTER the delta. */
+  newAttrValue?: number;
+  newPA?: number;
+}
+
+export const PROTOCOL_VERSION = 51;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

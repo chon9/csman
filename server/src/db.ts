@@ -73,6 +73,14 @@ export interface DailyRacePayoutRow {
   paid_at: number;
 }
 
+/** In-progress training session. One per team enforced by PK. */
+export interface TrainingSessionRow {
+  team_id: string;
+  player_id: string;
+  attribute: string;
+  started_at: number;
+}
+
 /** Profile fields editable on the home customisation modal. */
 export interface TeamProfileFields {
   bio?: string;
@@ -409,6 +417,19 @@ export function openDb(path: string) {
       FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_daily_race_date ON daily_race(date_utc);
+
+    -- One in-progress training session per team (PK on team_id is the
+    -- concurrency guard — inserting a second row fails). Idle-style:
+    -- start → wait TRAINING_DURATION_MS real ms → collect → row deleted.
+    -- High-risk / high-return: chance of stat gain, stat loss, jackpot
+    -- PA break, or career-ending injury.
+    CREATE TABLE IF NOT EXISTS training_sessions (
+      team_id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL,
+      attribute TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
 
     -- Historical payout log — one row per (date, race_kind, rank).
     -- Insertion is the authoritative signal that a day has been rolled;
@@ -869,6 +890,17 @@ export function openDb(path: string) {
   );
   const listAllTeamIds = db.prepare(`SELECT id, mmr FROM teams`);
   const getTeamMmr = db.prepare(`SELECT mmr FROM teams WHERE id = ?`);
+  // Training
+  const insertTrainingSession = db.prepare(
+    `INSERT INTO training_sessions (team_id, player_id, attribute, started_at)
+     VALUES (?, ?, ?, ?)`,
+  );
+  const getTrainingSession = db.prepare(
+    `SELECT team_id, player_id, attribute, started_at FROM training_sessions WHERE team_id = ?`,
+  );
+  const deleteTrainingSession = db.prepare(
+    `DELETE FROM training_sessions WHERE team_id = ?`,
+  );
   const updateTeamTactics = db.prepare(`UPDATE teams SET tactics_json = ? WHERE id = ?`);
   const updatePlayerJson = db.prepare(`UPDATE players SET json = ?, team_id = ? WHERE id = ?`);
   // Admin-only: targeted field edits on the teams row.
@@ -1907,6 +1939,30 @@ export function openDb(path: string) {
 
   function loadRecentRacePayoutsForTeam(teamId: string, limit: number): DailyRacePayoutRow[] {
     return selectRecentPayoutsForTeam.all(teamId, limit) as DailyRacePayoutRow[];
+  }
+
+  // ================================================================
+  // Training helpers
+  // ================================================================
+
+  /** Start a training session. Returns `false` if the team already has
+   *  one active (PK collision handled). */
+  function startTrainingSession(teamId: string, playerId: string, attribute: string): boolean {
+    try {
+      insertTrainingSession.run(teamId, playerId, attribute, Date.now());
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function loadTrainingSession(teamId: string): TrainingSessionRow | null {
+    const row = getTrainingSession.get(teamId) as TrainingSessionRow | undefined;
+    return row ?? null;
+  }
+
+  function clearTrainingSession(teamId: string): void {
+    deleteTrainingSession.run(teamId);
   }
 
   function persistPlayer(player: Player): void {
@@ -3222,6 +3278,9 @@ export function openDb(path: string) {
     dailyRaceRolled,
     recordDailyRacePayout,
     loadRecentRacePayoutsForTeam,
+    startTrainingSession,
+    loadTrainingSession,
+    clearTrainingSession,
     setTeamPlayers,
     setTeamMoneyDay,
     setTeamTactics,

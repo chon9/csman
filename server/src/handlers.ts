@@ -382,6 +382,9 @@ import { loadMyBetHistory as loadMyAiBetHistory, loadTeamProfileForCard as loadA
 import { utcDateKey } from './db.ts';
 import { DAILY_RACE_BOARD_LIMIT } from './dailyRace.ts';
 import type { DailyRaceEntryWire, DailyRacePayoutWire } from '../../src/online/protocol.ts';
+import { canTrain, loadTrainingWire, logLineFor, rollTrainingOutcome } from './training.ts';
+import { TRAINING_DURATION_MS } from '../../src/online/protocol.ts';
+import { ATTRIBUTE_KEYS } from '../../src/types.ts';
 import {
   assignResident as reAssignResident,
   buyCar as reBuyCar,
@@ -3263,6 +3266,92 @@ export function handle(
     case 'list-daily-race': {
       if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
       return buildDailyRaceState(db, conn.teamId);
+    }
+
+    // ---------- Training Center ----------
+
+    case 'list-training': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const { session } = loadTrainingWire(db, conn.teamId);
+      return { kind: 'training-state', session };
+    }
+
+    case 'start-training': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      // Enforce one-at-a-time via the DB PK; but also fail fast with a
+      // human error message before we hit the insert.
+      const existing = db.loadTrainingSession(conn.teamId);
+      if (existing) {
+        return { kind: 'error', code: 'training-in-progress', message: 'You already have a player in training — collect or cancel first.' };
+      }
+      const player = db.loadPlayer(msg.playerId);
+      if (!player || player.teamId !== conn.teamId) {
+        return { kind: 'error', code: 'not-your-player', message: 'Player not on your roster.' };
+      }
+      if (!canTrain(player)) {
+        return { kind: 'error', code: 'not-eligible', message: 'Only newgens can enter training — real-name legends stay evergreen.' };
+      }
+      const attr = msg.attribute;
+      if (!ATTRIBUTE_KEYS.includes(attr)) {
+        return { kind: 'error', code: 'bad-attribute', message: `Unknown attribute: ${String(attr)}.` };
+      }
+      if (team.playerIds.length <= 5) {
+        return { kind: 'error', code: 'roster-floor', message: 'Roster at 5 — training risks retirement. Sign a backup first.' };
+      }
+      const ok = db.startTrainingSession(conn.teamId, msg.playerId, attr);
+      if (!ok) {
+        return { kind: 'error', code: 'training-in-progress', message: 'You already have a player in training.' };
+      }
+      log(`training start: ${player.nickname} on ${attr}`);
+      const { session } = loadTrainingWire(db, conn.teamId);
+      return { kind: 'training-state', session };
+    }
+
+    case 'cancel-training': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      db.clearTrainingSession(conn.teamId);
+      log(`training cancelled`);
+      return { kind: 'training-state', session: null };
+    }
+
+    case 'collect-training': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const team = db.loadTeam(conn.teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      const row = db.loadTrainingSession(conn.teamId);
+      if (!row) return { kind: 'error', code: 'no-session', message: 'No active training session.' };
+      const elapsed = Date.now() - row.started_at;
+      if (elapsed < TRAINING_DURATION_MS) {
+        const remainingMs = TRAINING_DURATION_MS - elapsed;
+        const s = Math.ceil(remainingMs / 1000);
+        return { kind: 'error', code: 'not-ready', message: `Not ready yet — ${s}s remaining.` };
+      }
+      const player = db.loadPlayer(row.player_id);
+      if (!player || player.teamId !== conn.teamId) {
+        // Player left the roster mid-training (traded/released). Wipe the
+        // session and tell the user — no outcome to apply.
+        db.clearTrainingSession(conn.teamId);
+        return { kind: 'error', code: 'stale-session', message: 'Player is no longer on your roster.' };
+      }
+      // Roll + apply. The attribute cast is safe: ATTRIBUTE_KEYS gate at
+      // start-time; the row.attribute string is only ever one of those.
+      const outcome = rollTrainingOutcome(player, row.attribute as keyof PlayerAttributes);
+      const playersDelta: import('../../src/types.ts').Player[] = [];
+      if (outcome.kind === 'retire') {
+        // Prune from roster + break contract. player.teamId set to null
+        // so the client's state.players lookup drops them.
+        team.playerIds = team.playerIds.filter((id) => id !== player.id);
+        db.setTeamPlayers(team.id, team.playerIds);
+        player.teamId = null;
+        player.contract = null;
+      }
+      db.persistPlayer(player);
+      db.clearTrainingSession(conn.teamId);
+      playersDelta.push(player);
+      log(logLineFor(outcome, team.tag));
+      return { kind: 'training-collected', outcome, playersDelta };
     }
 
     // ---------- Virtual real estate ----------
