@@ -14,6 +14,7 @@ import type { PlayerAttributes } from '../../types';
 import type { TrainingOutcome, TrainingRarity, TrainingSessionWire } from '../protocol';
 import { TRAINING_DURATION_MS, TRAINING_ODDS, trainingRarityFor } from '../protocol';
 import { ATTRIBUTE_KEYS } from '../../types';
+import type { PlayerRole } from '../../types';
 import ToastStack from './ToastStack';
 
 type AttrKey = keyof PlayerAttributes;
@@ -43,13 +44,30 @@ const ATTR_LABEL: Record<AttrKey, string> = {
 /** Weights of each attribute in the match engine's effective-skill formula.
  *  Higher = bigger impact on duel outcomes. Anything at 0 has only
  *  situational/indirect effects (utility damage, clutch multiplier, etc.).
- *  Source: [src/engine/matchEngine.ts effectiveSkill()]. */
+ *  Source: [src/engine/matchEngine.ts effectiveSkill()].
+ *  This is the "generic" ranking used before a player is picked. Once a
+ *  role is known, ROLE_WEIGHTS below takes precedence (e.g. Leadership
+ *  jumps to S-tier for IGLs). */
 const ATTR_CORE_WEIGHT: Record<AttrKey, number> = {
   aim: 0.28, reflexes: 0.20, positioning: 0.17, gameSense: 0.15,
   consistency: 0.10, composure: 0.10,
   // Below have indirect / situational effects — surfaced in the tooltip.
   utility: 0, clutch: 0, leadership: 0, teamwork: 0, resilience: 0,
   communication: 0, discipline: 0, aggression: 0, loyalty: 0, endurance: 0,
+};
+
+/** Per-role attribute weight tables. Kept in sync with ROLE_WEIGHTS in
+ *  playerAnalytics.ts (that's the source of truth used by the engine's
+ *  role-fit modifier). Duplicated here to avoid importing sim code from
+ *  the online bundle. If you tune those weights, mirror them here. */
+const ROLE_WEIGHTS: Record<PlayerRole, Partial<Record<AttrKey, number>>> = {
+  IGL:     { leadership: 0.28, gameSense: 0.22, communication: 0.18, composure: 0.10, teamwork: 0.07, aim: 0.05, reflexes: 0.05, positioning: 0.05 },
+  AWPer:   { aim: 0.26, reflexes: 0.20, positioning: 0.18, composure: 0.12, clutch: 0.08, gameSense: 0.08, consistency: 0.08 },
+  Entry:   { reflexes: 0.22, aim: 0.20, aggression: 0.18, teamwork: 0.12, positioning: 0.08, composure: 0.08, gameSense: 0.06, consistency: 0.06 },
+  Lurker:  { positioning: 0.22, gameSense: 0.22, clutch: 0.18, composure: 0.12, aim: 0.12, consistency: 0.08, reflexes: 0.06 },
+  Support: { utility: 0.28, teamwork: 0.20, communication: 0.14, gameSense: 0.14, aim: 0.10, positioning: 0.08, composure: 0.06 },
+  Rifler:  { aim: 0.18, reflexes: 0.15, positioning: 0.15, gameSense: 0.12, consistency: 0.10, teamwork: 0.10, composure: 0.10, clutch: 0.10 },
+  Anchor:  { positioning: 0.24, composure: 0.18, clutch: 0.15, aim: 0.12, gameSense: 0.12, utility: 0.10, consistency: 0.09 },
 };
 
 /** Non-core attributes still have real effects; describe them in one
@@ -67,14 +85,21 @@ const ATTR_HINT: Partial<Record<AttrKey, string>> = {
   endurance:    'Slower fatigue accumulation across long events.',
 };
 
-/** Impact tier for the ⭐ badge. S = single biggest lever; A = strong core;
- *  B = still counts for something. Empty = situational only. */
-function impactTier(k: AttrKey): 'S' | 'A' | 'B' | '' {
-  const w = ATTR_CORE_WEIGHT[k];
+/** Impact tier for the ⭐ badge. S = single biggest lever for the target
+ *  role (or duel-generic weight, if no role provided). Empty = situational.
+ *  Once a player is picked, callers pass their role so IGLs correctly
+ *  see Leadership at S-tier, Supports see Utility at S-tier, etc. */
+function impactTier(k: AttrKey, role?: PlayerRole): 'S' | 'A' | 'B' | '' {
+  const w = role ? (ROLE_WEIGHTS[role][k] ?? 0) : ATTR_CORE_WEIGHT[k];
   if (w >= 0.25) return 'S';
   if (w >= 0.15) return 'A';
   if (w >= 0.10) return 'B';
   return '';
+}
+
+/** Numeric weight for a role — used by the smart-nudge suggester. */
+function weightFor(k: AttrKey, role?: PlayerRole): number {
+  return role ? (ROLE_WEIGHTS[role][k] ?? 0) : ATTR_CORE_WEIGHT[k];
 }
 function impactColor(tier: 'S' | 'A' | 'B' | ''): string {
   return tier === 'S' ? 'var(--accent)' : tier === 'A' ? 'var(--win)' : tier === 'B' ? 'var(--info)' : 'transparent';
@@ -190,12 +215,17 @@ function Idle({
     <>
       {/* Attribute picker */}
       <div className="panel">
-        <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
           <span>1. Pick an attribute to train</span>
           <span className="muted small" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
-            <span style={{ color: 'var(--accent)' }}>★</span> S-tier &nbsp;·&nbsp;
-            <span style={{ color: 'var(--win)' }}>★</span> A-tier &nbsp;·&nbsp;
-            <span style={{ color: 'var(--info)' }}>★</span> B-tier &nbsp;·&nbsp; rest = situational
+            {target ? (
+              <>Ranked for <strong style={{ color: 'var(--accent-hi)' }}>{target.role}</strong>: </>
+            ) : (
+              <>Generic duel weight: </>
+            )}
+            <span style={{ color: 'var(--accent)' }}>★</span> S &nbsp;·&nbsp;
+            <span style={{ color: 'var(--win)' }}>★</span> A &nbsp;·&nbsp;
+            <span style={{ color: 'var(--info)' }}>★</span> B &nbsp;·&nbsp; rest = situational
           </span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -204,8 +234,10 @@ function Idle({
               <div className="section-title" style={{ margin: '0 0 var(--space-2)' }}>{group.label}</div>
               <div style={{ display: 'flex', gap: 'var(--space-1)', flexWrap: 'wrap' }}>
                 {group.keys.filter((k) => ATTRIBUTE_KEYS.includes(k)).map((k) => {
-                  const tier = impactTier(k);
+                  const tier = impactTier(k, target?.role);
+                  const weight = weightFor(k, target?.role);
                   const hint = ATTR_HINT[k];
+                  const roleLabel = target ? target.role : 'duel skill';
                   return (
                     <button
                       key={k}
@@ -213,7 +245,7 @@ function Idle({
                       onClick={() => setPickedAttr(k)}
                       title={
                         tier
-                          ? `${tier}-tier · direct weight ${(ATTR_CORE_WEIGHT[k] * 100).toFixed(0)}% of duel skill`
+                          ? `${tier}-tier · ${(weight * 100).toFixed(0)}% weight for ${roleLabel}`
                           : hint ?? 'Situational effect only.'
                       }
                       style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
@@ -308,12 +340,14 @@ function Idle({
 // ---------------------------------------------------------------------
 
 function AttributesPanel({ target, pickedAttr }: { target: Player; pickedAttr: AttrKey }): React.ReactElement {
-  const pickedTier = impactTier(pickedAttr);
+  const role = target.role;
+  const pickedTier = impactTier(pickedAttr, role);
+  const pickedWeight = weightFor(pickedAttr, role);
   const suggestion = suggestBetter(target, pickedAttr);
   return (
     <div className="panel">
-      <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span>{target.nickname}'s current attributes</span>
+      <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <span>{target.nickname}'s current attributes <span className="muted small" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400, marginLeft: 6 }}>· ranked for {role}</span></span>
         <span className="muted small" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
           Values 1–20 · <span style={{ color: 'var(--accent)' }}>gold</span> = 17+ ·
           <span style={{ color: 'var(--win)' }}> green</span> = 14–16
@@ -340,7 +374,7 @@ function AttributesPanel({ target, pickedAttr }: { target: Player; pickedAttr: A
             }}>
               {group.keys.filter((k) => ATTRIBUTE_KEYS.includes(k)).map((k) => {
                 const v = target.attributes[k];
-                const tier = impactTier(k);
+                const tier = impactTier(k, role);
                 const isPicked = k === pickedAttr;
                 return (
                   <div
@@ -370,30 +404,46 @@ function AttributesPanel({ target, pickedAttr }: { target: Player; pickedAttr: A
       </div>
       <div className="muted small" style={{ marginTop: 'var(--space-3)' }}>
         You picked <strong style={{ color: 'var(--accent-hi)' }}>{ATTR_LABEL[pickedAttr]} ({target.attributes[pickedAttr]}/20)</strong>
-        {pickedTier && ` — ${pickedTier}-tier duel impact.`}
-        {!pickedTier && ATTR_HINT[pickedAttr] && ` — ${ATTR_HINT[pickedAttr]}`}
+        {pickedTier
+          ? ` — ${pickedTier}-tier for ${role} (${(pickedWeight * 100).toFixed(0)}% of role fit).`
+          : ATTR_HINT[pickedAttr]
+            ? ` — ${ATTR_HINT[pickedAttr]}`
+            : ` — situational for ${role}.`}
       </div>
     </div>
   );
 }
 
-/** Suggest a smarter attribute pick when the user is training something
- *  suboptimal (e.g. already at 20, or a situational stat while an S-tier
- *  is still low). Returns null if the current pick is fine. */
+/** Suggest a smarter attribute pick using the target's ROLE weights.
+ *  Fires in two cases:
+ *   1. Picked attribute is already at 20 → suggest the lowest S/A-tier
+ *      the role cares about that still has room.
+ *   2. Picked attribute is non-core for this role AND at least one
+ *      S-tier role-key stat is still under 15. Nudge to that stat. */
 function suggestBetter(target: Player, pickedAttr: AttrKey): { attr: AttrKey; reason: string } | null {
   const attrs = target.attributes;
+  const role = target.role;
   const pickedValue = attrs[pickedAttr];
+  // Ordered role-key attrs (S then A tier by weight).
+  const roleKeys = (Object.entries(ROLE_WEIGHTS[role]) as [AttrKey, number][])
+    .sort((a, b) => b[1] - a[1])
+    .map(([k]) => k);
+  const sTierKeys = roleKeys.filter((k) => (ROLE_WEIGHTS[role][k] ?? 0) >= 0.25);
+
   if (pickedValue >= 20) {
-    // Suggest the lowest S/A-tier attribute they still have room to grow.
-    const growable = (['aim', 'reflexes', 'positioning', 'gameSense'] as AttrKey[])
-      .filter((k) => attrs[k] < 20)
-      .sort((a, b) => attrs[a] - attrs[b])[0];
-    if (growable) return { attr: growable, reason: `${ATTR_LABEL[pickedAttr]} is already maxed.` };
+    const growable = roleKeys.filter((k) => attrs[k] < 20)[0];
+    if (growable) return { attr: growable, reason: `${ATTR_LABEL[pickedAttr]} is already maxed for ${role}.` };
   }
-  // If they picked a non-core attribute while Aim is under 15, nudge them.
-  const pickedTier = impactTier(pickedAttr);
-  if (!pickedTier && attrs.aim < 15) {
-    return { attr: 'aim', reason: `Aim (${attrs.aim}) is the single biggest lever in duels.` };
+  const pickedTier = impactTier(pickedAttr, role);
+  if (!pickedTier) {
+    // Prefer an S-tier role stat that's still low.
+    const belowThreshold = sTierKeys.find((k) => attrs[k] < 15);
+    if (belowThreshold) {
+      return {
+        attr: belowThreshold,
+        reason: `${ATTR_LABEL[belowThreshold]} (${attrs[belowThreshold]}) is a top ${role} stat and still has room.`,
+      };
+    }
   }
   return null;
 }
