@@ -15,37 +15,17 @@
 import type { DB } from './db.ts';
 import type { Player, PlayerAttributes } from '../../src/types.ts';
 import {
-  TRAINING_ODDS,
+  trainingAdjustedOdds,
   trainingRarityFor,
   type TrainingOutcome,
-  type TrainingRarity,
 } from '../../src/online/protocol.ts';
 
 const ATTR_MIN = 1;
 const ATTR_MAX = 20;
 const PA_MAX = 200;
-/** How much the composure+resilience floor discounts the two bad outcomes.
- *  (comp+res)/40 * DAMPENER_MAX = fraction of retire+reduce weight removed
- *  and reallocated to success. E.g. 20 comp + 20 res = 1.0 * 0.5 = 50%
- *  of the bad probability shifts to success. */
-const CR_DAMPENER_MAX = 0.5;
 /** Jackpot PA bonus range — flat regardless of rarity (dream factor). */
 const JACKPOT_PA_MIN = 5;
 const JACKPOT_PA_MAX = 15;
-
-/** Roll odds after adjusting for composure+resilience. Returns the four
- *  slice probabilities in the same order as TRAINING_ODDS. */
-function adjustedOdds(
-  rarity: TrainingRarity, composure: number, resilience: number,
-): [number, number, number, number] {
-  const [retire, reduce, success, jackpot] = TRAINING_ODDS[rarity];
-  const cr = Math.max(0, Math.min(40, composure + resilience));
-  const shift = (cr / 40) * CR_DAMPENER_MAX;
-  const retireShifted = retire * (1 - shift);
-  const reduceShifted = reduce * (1 - shift);
-  const successBonus = (retire + reduce) - (retireShifted + reduceShifted);
-  return [retireShifted, reduceShifted, success + successBonus, jackpot];
-}
 
 function pickOutcome(odds: [number, number, number, number]): 'retire' | 'reduce' | 'success' | 'jackpot' {
   const r = Math.random();
@@ -63,10 +43,13 @@ export function rollTrainingOutcome(
   player: Player, attribute: keyof PlayerAttributes,
 ): TrainingOutcome {
   const pa = player.potentialAbility ?? 100;
+  const ca = player.currentAbility ?? 100;
   const rarity = trainingRarityFor(pa);
   const composure = player.attributes.composure ?? 10;
   const resilience = player.attributes.resilience ?? 10;
-  const odds = adjustedOdds(rarity, composure, resilience);
+  // Shared formula with the client odds preview — keeps what you see
+  // exactly what you roll (rarity → CA penalty → comp/res dampener).
+  const odds = trainingAdjustedOdds(rarity, composure, resilience, ca);
   const kind = pickOutcome(odds);
 
   const base = {

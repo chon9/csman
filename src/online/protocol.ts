@@ -2025,6 +2025,52 @@ export const TRAINING_ODDS: Record<TrainingRarity, [number, number, number, numb
   legendary: [0.03, 0.09, 0.86, 0.02],
 };
 
+/** CA below this threshold gets no difficulty penalty — kids can learn
+ *  freely. Above it, the marginal cost of each rank climbs quadratically. */
+export const TRAINING_CA_SAFE = 100;
+/** How steeply CA scales the bad-outcome weights. At CA 200 (theoretical
+ *  ceiling): caPenalty = ((200-100)/100)^2 = 1.0 → risks multiplied by
+ *  (1 + 1.0 × MULT) = 3× vs the CA-100 baseline before the composure
+ *  dampener runs. Tuned so mid-CA (140) is a modest ×1.32, high (170)
+ *  is a punishing ×2.0, and 190+ approaches the hard ceiling. */
+export const TRAINING_CA_MULT = 2.0;
+
+/** Multiplier applied to retire + reduce weights based on current
+ *  ability. Composure + Resilience still discount the penalized value,
+ *  so keeping a level head is doubly valuable at high CA. */
+export function trainingCaPenalty(currentAbility: number): number {
+  const excess = Math.max(0, currentAbility - TRAINING_CA_SAFE);
+  const t = excess / 100;
+  return t * t * TRAINING_CA_MULT;
+}
+
+/** Compute the four outcome probabilities after applying rarity → CA
+ *  penalty → composure/resilience dampener. Used by both server (roll)
+ *  and client (preview) so what you see is what you get. Return order
+ *  matches TRAINING_ODDS: [retire, reduce, success, jackpot]. */
+export function trainingAdjustedOdds(
+  rarity: TrainingRarity,
+  composure: number,
+  resilience: number,
+  currentAbility: number,
+): [number, number, number, number] {
+  const [retire, reduce, , jackpot] = TRAINING_ODDS[rarity];
+  const caPenalty = trainingCaPenalty(currentAbility);
+  const retirePenalized = retire * (1 + caPenalty);
+  const reducePenalized = reduce * (1 + caPenalty);
+  const cr = Math.max(0, Math.min(40, composure + resilience));
+  const shift = (cr / 40) * 0.5;
+  const retireFinal = retirePenalized * (1 - shift);
+  const reduceFinal = reducePenalized * (1 - shift);
+  // Success absorbs whatever is left after the other three take their share.
+  // Guaranteed non-negative because retire+reduce+jackpot can't reach 1
+  // even at CA 200 with zero comp/res on a common (worst case: retire =
+  // 0.06 × 3 = 0.18, reduce = 0.18 × 3 = 0.54, jackpot = 0.02 → 0.74
+  // still leaves 0.26 for success).
+  const successFinal = Math.max(0, 1 - retireFinal - reduceFinal - jackpot);
+  return [retireFinal, reduceFinal, successFinal, jackpot];
+}
+
 export type TrainingOutcomeKind = 'jackpot' | 'success' | 'reduce' | 'retire';
 
 export interface TrainingSessionWire {

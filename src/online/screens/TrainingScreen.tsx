@@ -12,7 +12,13 @@ import { useOnline } from '../onlineStore';
 import type { Player } from '../../types';
 import type { PlayerAttributes } from '../../types';
 import type { TrainingOutcome, TrainingRarity, TrainingSessionWire } from '../protocol';
-import { TRAINING_DURATION_MS, TRAINING_ODDS, trainingRarityFor } from '../protocol';
+import {
+  TRAINING_CA_SAFE,
+  TRAINING_DURATION_MS,
+  trainingAdjustedOdds,
+  trainingCaPenalty,
+  trainingRarityFor,
+} from '../protocol';
 import { ATTRIBUTE_KEYS } from '../../types';
 import type { PlayerRole } from '../../types';
 import ToastStack from './ToastStack';
@@ -559,17 +565,17 @@ function suggestBetter(target: Player, pickedAttr: AttrKey): { attr: AttrKey; re
 // ---------------------------------------------------------------------
 
 function OddsPanel({ target, attr, rarity }: { target: Player; attr: AttrKey; rarity: TrainingRarity }): React.ReactElement {
-  const [retire, reduce, success, jackpot] = TRAINING_ODDS[rarity];
-  const cr = Math.max(0, Math.min(40, (target.attributes.composure ?? 10) + (target.attributes.resilience ?? 10)));
+  const ca = target.currentAbility ?? 100;
+  const composure = target.attributes.composure ?? 10;
+  const resilience = target.attributes.resilience ?? 10;
+  const cr = Math.max(0, Math.min(40, composure + resilience));
   const shift = (cr / 40) * 0.5;
-  const adj = {
-    retire:  retire  * (1 - shift),
-    reduce:  reduce  * (1 - shift),
-    jackpot,
-    success: success + (retire + reduce) - (retire * (1 - shift) + reduce * (1 - shift)),
-  };
+  const caPenalty = trainingCaPenalty(ca);
+  const [retireFinal, reduceFinal, successFinal, jackpotFinal] =
+    trainingAdjustedOdds(rarity, composure, resilience, ca);
   const pct = (n: number): string => `${(n * 100).toFixed(1)}%`;
   const meta = RARITY_META[rarity];
+  const caTier = caDifficultyTier(ca);
 
   return (
     <div className="panel">
@@ -578,22 +584,49 @@ function OddsPanel({ target, attr, rarity }: { target: Player; attr: AttrKey; ra
         <span className="pill" style={{ background: `${meta.color}22`, borderColor: `${meta.color}55`, color: meta.color }}>
           {meta.label} tier
         </span>
+        <span
+          className="pill"
+          title={
+            `CA ${ca} · penalty ${(caPenalty * 100).toFixed(0)}%\n\n` +
+            `Above CA ${TRAINING_CA_SAFE} each rank grows harder to earn:\n` +
+            `  CA 120 → +8% retire/setback risk\n` +
+            `  CA 140 → +32%\n` +
+            `  CA 160 → +72%\n` +
+            `  CA 180 → +128%\n` +
+            `  CA 200 → +200% (near-impossible without max composure+resilience)`
+          }
+          style={{
+            background: `${caTier.color}18`, borderColor: `${caTier.color}66`, color: caTier.color,
+            cursor: 'help',
+          }}
+        >
+          🩹 CA {ca} · {caTier.label} {caPenalty > 0 && `(+${(caPenalty * 100).toFixed(0)}% risk)`}
+        </span>
         <span className="muted small">
-          Composure {target.attributes.composure ?? 10} + Resilience {target.attributes.resilience ?? 10} = {cr}
+          Composure {composure} + Resilience {resilience} = {cr}
           {shift > 0 && ` → cuts bad outcomes by ${Math.round(shift * 100)}%`}
         </span>
       </div>
       <OddsBar
         segments={[
-          { label: 'Jackpot',      value: adj.jackpot, color: 'var(--accent)' },
-          { label: 'Success (+1)', value: adj.success, color: 'var(--win)' },
-          { label: 'Setback (-1)', value: adj.reduce,  color: '#f59e0b' },
-          { label: 'Retire',       value: adj.retire,  color: 'var(--loss)' },
+          { label: 'Jackpot',      value: jackpotFinal, color: 'var(--accent)' },
+          { label: 'Success (+1)', value: successFinal, color: 'var(--win)' },
+          { label: 'Setback (-1)', value: reduceFinal,  color: '#f59e0b' },
+          { label: 'Retire',       value: retireFinal,  color: 'var(--loss)' },
         ]}
         pct={pct}
       />
     </div>
   );
+}
+
+/** Group CA into human-readable difficulty tiers for the risk pill. */
+function caDifficultyTier(ca: number): { label: string; color: string } {
+  if (ca < TRAINING_CA_SAFE) return { label: 'Developing · no penalty', color: 'var(--win)' };
+  if (ca < 130) return { label: 'Established', color: 'var(--info)' };
+  if (ca < 160) return { label: 'Elite', color: '#f59e0b' };
+  if (ca < 185) return { label: 'World-class', color: 'var(--loss)' };
+  return { label: 'GOAT-tier · every rank hurts', color: 'var(--loss)' };
 }
 
 function OddsBar({ segments, pct }: {
