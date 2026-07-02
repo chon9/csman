@@ -115,19 +115,19 @@ export default function OnlineHomeScreen() {
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <NewsTicker />
-      <div className="panel" style={{ padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div className="hero-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
           <div className="team-logo team-logo-lg team-logo-placeholder">{team.tag.slice(0, 2)}</div>
           <div>
-            <h2 style={{ margin: '0 0 4px' }}>
+            <h2>
               <span style={{ color: 'var(--accent)' }}>{team.tag}</span> · {team.name}
             </h2>
-            <div className="muted small">
+            <div className="hero-sub">
               {team.region} · owner <strong>{team.ownerNick}</strong> · {formatGameAge(team.day)}
             </div>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
           <DuelCapChip
             used={duelsUsed}
             refillsUsed={duelsRefillsUsed}
@@ -425,9 +425,9 @@ export default function OnlineHomeScreen() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="panel" style={{ padding: 10, textAlign: 'center' }}>
-      <div className="muted small" style={{ textTransform: 'uppercase', letterSpacing: 1 }}>{label}</div>
-      <div style={{ fontSize: 18, fontWeight: 800 }}>{value}</div>
+    <div className="stat-card">
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">{value}</div>
     </div>
   );
 }

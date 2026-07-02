@@ -28,27 +28,24 @@ export default function DailyRaceScreen(): React.ReactElement | null {
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* Header */}
-      <div className="panel" style={{
-        padding: 18,
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10,
-        background: 'linear-gradient(135deg, #1a3a1a 0%, #2a2a4a 60%, #4a3a1a 100%)',
-        border: '1px solid rgba(255,215,0,0.24)',
-      }}>
+      <div className="hero-panel">
         <div>
-          <h2 style={{ margin: '0 0 4px', letterSpacing: 1 }}>🏁 DAILY RACE</h2>
-          <div className="muted small">Two boards · resets 00:00 UTC · top 3 win cash on each · no signup, just play</div>
+          <h2>🏁 Daily Race</h2>
+          <div className="hero-sub">Two boards · resets 00:00 UTC · top 3 win cash on each · no signup, just play</div>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
           {daily && <RolloverChip rolloverUtcMs={daily.rolloverUtcMs} />}
           <button className="btn" onClick={() => go('home')}>← Back</button>
         </div>
       </div>
 
       {/* Payout schedule strip */}
-      <div className="panel" style={{ padding: 12, fontSize: 12, background: 'rgba(0,0,0,0.2)' }}>
-        <strong>Payout per board:</strong> &nbsp;
-        🥇 <strong>$500,000</strong> · 🥈 <strong>$250,000</strong> · 🥉 <strong>$100,000</strong>
-        &nbsp; — awarded automatically at 00:00 UTC. Only positive deltas eligible.
+      <div className="panel panel-accent" style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'center' }}>
+        <span className="section-title" style={{ margin: 0, flex: 'none' }}>Payout schedule</span>
+        <span className="pill pill-accent">🥇 $500,000</span>
+        <span className="pill">🥈 $250,000</span>
+        <span className="pill">🥉 $100,000</span>
+        <span className="muted small" style={{ marginLeft: 'auto' }}>Awarded automatically at 00:00 UTC · positive deltas only</span>
       </div>
 
       {/* The two boards */}
@@ -79,20 +76,24 @@ export default function DailyRaceScreen(): React.ReactElement | null {
 
       {/* Recent payouts strip */}
       {daily && daily.recentPayouts.length > 0 && (
-        <div className="panel" style={{ padding: 14 }}>
-          <div className="panel-title" style={{ marginBottom: 8 }}>Your recent race wins</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
+        <div className="panel">
+          <div className="panel-title">Your recent race wins</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--text-md)' }}>
             {daily.recentPayouts.map((p) => (
               <div key={`${p.dateUtc}-${p.raceKind}-${p.rank}`} style={{
-                display: 'flex', justifyContent: 'space-between', gap: 8,
-                padding: '4px 8px', borderRadius: 4,
-                background: 'rgba(255,255,255,0.03)',
+                display: 'flex', justifyContent: 'space-between', gap: 'var(--space-2)',
+                padding: '8px 10px', borderRadius: 'var(--radius-sm)',
+                background: 'var(--bg-elev)',
+                borderLeft: `2px solid ${p.raceKind === 'points' ? '#78d078' : 'var(--accent)'}`,
               }}>
-                <span>
-                  <strong>{p.dateUtc}</strong> · {p.raceKind === 'points' ? '📈' : '💰'} {p.raceKind === 'points' ? 'Points' : 'Money'}
-                  &nbsp; #{p.rank} <span className="muted">(Δ {p.raceKind === 'points' ? p.valueDelta.toLocaleString() + ' MMR' : '$' + p.valueDelta.toLocaleString()})</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                  <span className="pill" style={{ minWidth: 90 }}>{p.dateUtc}</span>
+                  <span>{p.raceKind === 'points' ? '📈 Points' : '💰 Money'} <span className="muted">#{p.rank}</span></span>
+                  <span className="muted small">
+                    Δ {p.raceKind === 'points' ? `${p.valueDelta.toLocaleString()} MMR` : `$${p.valueDelta.toLocaleString()}`}
+                  </span>
                 </span>
-                <strong style={{ color: '#d9b344' }}>+${p.amount.toLocaleString()}</strong>
+                <strong style={{ color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>+${p.amount.toLocaleString()}</strong>
               </div>
             ))}
           </div>
@@ -118,43 +119,46 @@ function Board({
     i === 0 ? '#ffd700' : i === 1 ? '#c0c0c0' : i === 2 ? '#cd7f32' : 'rgba(255,255,255,0.55)';
 
   return (
-    <div className="panel" style={{ padding: 14, borderTop: `3px solid ${accent}` }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-        <div className="panel-title">{title}</div>
+    <div className="panel" style={{ borderTop: `3px solid ${accent}`, padding: 'var(--space-4)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 'var(--space-1)' }}>
+        <div className="panel-title" style={{ margin: 0 }}>{title}</div>
         {myRank != null && (
-          <div style={{ fontSize: 11, padding: '3px 8px', borderRadius: 999, background: `${accent}22`, color: accent, fontWeight: 700 }}>
-            You: #{myRank}
-          </div>
+          <span className="pill" style={{
+            background: `${accent}22`, borderColor: `${accent}55`, color: accent,
+          }}>
+            You · #{myRank}
+          </span>
         )}
       </div>
-      <div className="muted small" style={{ marginBottom: 10 }}>{subtitle}</div>
+      <div className="muted small" style={{ marginBottom: 'var(--space-3)' }}>{subtitle}</div>
       {rows.length === 0 ? (
-        <div className="muted small" style={{ padding: 12, textAlign: 'center' }}>
+        <div className="muted small" style={{ padding: 'var(--space-4)', textAlign: 'center' }}>
           No entries yet today — be the first!
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {rows.map((r, i) => {
             const isMe = r.teamId === myTeamId;
             return (
               <div key={r.teamId} style={{
-                display: 'grid', gridTemplateColumns: '30px 1fr auto', gap: 8, alignItems: 'center',
-                padding: '6px 10px', borderRadius: 6,
-                background: isMe ? `${accent}18` : (i < 3 ? 'rgba(255,255,255,0.05)' : 'transparent'),
-                border: isMe ? `1px solid ${accent}55` : '1px solid transparent',
-                fontWeight: isMe ? 700 : 400,
+                display: 'grid', gridTemplateColumns: '32px 1fr auto', gap: 'var(--space-2)', alignItems: 'center',
+                padding: '8px 10px', borderRadius: 'var(--radius-sm)',
+                background: isMe ? `${accent}18` : 'transparent',
+                borderLeft: isMe ? `2px solid ${accent}` : '2px solid transparent',
+                fontWeight: isMe ? 600 : 400,
+                transition: 'background var(--motion-fast)',
               }}>
-                <span style={{ color: rankColor(i), fontWeight: 800, fontSize: 13, textAlign: 'center' }}>
-                  {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`}
+                <span style={{ color: rankColor(i), fontWeight: 700, fontSize: 'var(--text-md)', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
+                  {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`}
                 </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', minWidth: 0 }}>
                   {r.logoId && <span style={{ fontSize: 16 }}>{r.logoId}</span>}
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     <strong style={{ color: r.primaryColor ?? 'inherit' }}>{r.tag}</strong>
-                    <span className="muted" style={{ marginLeft: 6, fontSize: 11 }}>{r.name}</span>
+                    <span className="muted" style={{ marginLeft: 6, fontSize: 'var(--text-sm)' }}>{r.name}</span>
                   </span>
                 </span>
-                <strong style={{ color: accent }}>{fmtDelta(r.delta)}</strong>
+                <strong style={{ color: accent, fontVariantNumeric: 'tabular-nums' }}>{fmtDelta(r.delta)}</strong>
               </div>
             );
           })}
@@ -182,12 +186,8 @@ function RolloverChip({ rolloverUtcMs }: { rolloverUtcMs: number }): React.React
     return `${h}h ${m.toString().padStart(2, '0')}m ${sec.toString().padStart(2, '0')}s`;
   }, [remaining]);
   return (
-    <div style={{
-      padding: '6px 12px', borderRadius: 999,
-      background: 'rgba(0,0,0,0.35)',
-      fontSize: 12, fontWeight: 700, letterSpacing: 0.5,
-    }}>
+    <span className="pill pill-accent" style={{ fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums' }}>
       ⏳ Rolls in <strong>{label}</strong>
-    </div>
+    </span>
   );
 }

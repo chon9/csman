@@ -111,21 +111,23 @@ export default function OnlineCasesScreen() {
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+      <div className="hero-panel">
         <div>
-          <h2 style={{ margin: '0 0 4px' }}>Cases</h2>
-          <div className="muted small">
+          <h2>📦 Cases</h2>
+          <div className="hero-sub">
             Open cases, sell skins, fund your team. Daily free case from the {cases.find((c) => c.id === freeCaseId)?.name ?? 'starter'} pool.
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <span className="muted small">Cash: <strong>${team.money.toLocaleString()}</strong></span>
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+          <span className="pill pill-accent" style={{ fontSize: 'var(--text-md)', padding: '5px 12px' }}>
+            💰 ${team.money.toLocaleString()}
+          </span>
           <button className="btn" onClick={() => go('home')}>← Back</button>
         </div>
       </div>
 
       {/* ===== Tab strip ===== */}
-      <div className="panel" style={{ padding: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+      <div className="panel" style={{ padding: 'var(--space-2)', display: 'flex', gap: 'var(--space-1)', flexWrap: 'wrap' }}>
         <button
           className={`btn ${tab === 'open' ? 'btn-accent' : ''}`}
           onClick={() => setTab('open')}

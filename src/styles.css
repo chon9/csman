@@ -1,17 +1,97 @@
-/* ============ CS2 Manager — FM-style dark theme ============ */
+/* ============ CS2 Manager — FM26-inspired dark theme ============ */
+/*
+ * Design tokens. The `:root` block is the single source of truth for
+ * colors / spacing / typography / elevation — every component reads
+ * from here. When tuning the visual language, edit these variables
+ * rather than the component classes below.
+ *
+ * Palette approach: near-black canvas, one lifted-panel shade, one
+ * hover shade, one strong border, one soft border. Text is a warm
+ * off-white so it doesn't clash with the gold accent. Accent is a
+ * muted amber/gold — used sparingly, never as a base color.
+ */
 
 :root {
-  --bg: #14171c;
-  --panel: #1d2129;
-  --panel-2: #232834;
-  --border: #2a2f3a;
-  --text: #d8dce4;
-  --muted: #8b93a3;
-  --accent: #de9b35;
-  --accent-dark: #b97f24;
-  --win: #4caf7d;
-  --loss: #e25555;
-  --sidebar-w: 200px;
+  /* ----- Surfaces (canvas → elevated) ----- */
+  --bg:        #0e1116;
+  --bg-elev:   #131820;
+  --panel:     #161a22;
+  --panel-2:   #1e2330;
+  --panel-hi:  #232937;
+  --overlay:   rgba(0, 0, 0, 0.55);
+
+  /* ----- Borders (soft → strong) ----- */
+  --border:        #242832;
+  --border-soft:   rgba(255, 255, 255, 0.06);
+  --border-strong: #2d3340;
+  --border-accent: rgba(217, 179, 68, 0.35);
+
+  /* ----- Text ----- */
+  --text:      #e6e8ee;
+  --text-dim:  #b4bac8;
+  --muted:     #8a93a3;
+  --text-faint:#5f6673;
+
+  /* ----- Accent + semantic ----- */
+  --accent:      #d9b344;
+  --accent-dark: #b8952e;
+  --accent-hi:   #ecc76a;
+  --accent-soft: rgba(217, 179, 68, 0.14);
+  --win:         #4caf7d;
+  --win-soft:    rgba(76, 175, 125, 0.12);
+  --loss:        #e25555;
+  --loss-soft:   rgba(226, 85, 85, 0.12);
+  --info:        #5aa4e6;
+  --info-soft:   rgba(90, 164, 230, 0.12);
+
+  /* ----- Rarity / brand-adjacent (keep in sync with cs2Cases) ----- */
+  --rarity-milspec:    #4b69ff;
+  --rarity-restricted: #8847ff;
+  --rarity-classified: #d32ce6;
+  --rarity-covert:     #eb4b4b;
+  --rarity-rare:       #ffd700;
+
+  /* ----- Spacing scale (4pt rhythm) ----- */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-5:  20px;
+  --space-6:  24px;
+  --space-7:  32px;
+  --space-8:  48px;
+
+  /* ----- Radius ----- */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-pill: 999px;
+
+  /* ----- Typography scale ----- */
+  --font-body: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  --text-xs:  10px;
+  --text-sm:  11px;
+  --text-md:  12.5px;
+  --text-lg:  14px;
+  --text-xl:  16px;
+  --text-2xl: 20px;
+  --text-3xl: 26px;
+
+  /* ----- Elevation (layered shadows for FM26 depth) ----- */
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --elev-2: 0 2px 8px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.5);
+  --elev-3: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --focus-ring: 0 0 0 2px var(--accent-soft), 0 0 0 3px var(--accent);
+
+  /* ----- Motion ----- */
+  --motion-fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-med:  200ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ----- Layout ----- */
+  --sidebar-w: 208px;
 }
 
 * {
@@ -28,9 +108,12 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Segoe UI', 'Inter', system-ui, -apple-system, sans-serif;
-  font-size: 13px;
+  font-family: var(--font-body);
+  font-size: var(--text-md);
   line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 button {
@@ -258,20 +341,37 @@ button {
   background: var(--panel-2);
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 6px 14px;
-  border-radius: 4px;
-  font-size: 12px;
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-md);
+  font-weight: 500;
+  letter-spacing: 0.1px;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition:
+    background var(--motion-fast),
+    border-color var(--motion-fast),
+    color var(--motion-fast),
+    transform var(--motion-fast);
+  user-select: none;
 }
 
 .btn:hover:not(:disabled) {
-  background: #2b3140;
-  border-color: #3a4150;
+  background: var(--panel-hi);
+  border-color: var(--border-strong);
+  color: #fff;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .btn:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: default;
 }
 
@@ -281,12 +381,14 @@ button {
   border-color: var(--accent);
   color: #14171c;
   font-weight: 700;
+  box-shadow: var(--elev-1);
 }
 
 .btn-primary:hover:not(:disabled),
 .btn-accent:hover:not(:disabled) {
-  background: var(--accent-dark);
-  border-color: var(--accent-dark);
+  background: var(--accent-hi);
+  border-color: var(--accent-hi);
+  color: #14171c;
 }
 
 .btn-danger {
@@ -381,15 +483,30 @@ button {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 12px;
+  padding: 7px 11px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-md);
   font-family: inherit;
+  transition:
+    border-color var(--motion-fast),
+    background var(--motion-fast),
+    box-shadow var(--motion-fast);
+}
+
+.input:hover:not(:focus):not(:disabled) {
+  border-color: var(--border-strong);
 }
 
 .input:focus {
   outline: none;
   border-color: var(--accent);
+  background: var(--bg-elev);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .input-num {
@@ -420,19 +537,158 @@ input[type='range'] {
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 14px;
-  margin-bottom: 14px;
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  box-shadow: var(--elev-1);
 }
 
 .panel-title {
-  font-size: 11px;
+  font-size: var(--text-sm);
   text-transform: uppercase;
   letter-spacing: 0.8px;
+  color: var(--text-dim);
+  font-weight: 700;
+  margin-bottom: var(--space-3);
+}
+
+/* Left-accent stripe — used sparingly to highlight one primary panel
+ * on a screen (the "focus" panel). Signature FM26 touch. */
+.panel-accent {
+  border-left: 3px solid var(--accent);
+  padding-left: calc(var(--space-4) - 3px);
+}
+
+/* Slightly darker inner surface — for headers/toolbars inside a panel. */
+.panel-inner {
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+}
+
+/* Hero header panel — replaces the one-off gradient hero-panel pattern.
+ * Consistent shape, single subtle radial-tinted background. */
+.hero-panel {
+  background:
+    radial-gradient(120% 200% at 0% 0%, var(--accent-soft), transparent 45%),
+    linear-gradient(180deg, var(--panel-hi), var(--panel));
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  margin-bottom: var(--space-4);
+  box-shadow: var(--elev-2);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.hero-panel h1,
+.hero-panel h2 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: var(--text);
+}
+.hero-panel .hero-sub {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+/* Stat card — big-number tile. Used on Home/Race/E-Wallet dashboards. */
+.stat-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  box-shadow: var(--elev-1);
+  transition: border-color var(--motion-fast), transform var(--motion-fast);
+}
+.stat-card:hover {
+  border-color: var(--border-strong);
+}
+.stat-label {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.stat-value {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
+}
+.stat-caption {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+/* Data cluster — a group of related stat cards on a shared grid. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+/* Section header — thin uppercase title above a group of cards.
+ * FM26 uses these constantly instead of prose headers. */
+.section-title {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
   color: var(--muted);
   font-weight: 700;
-  margin-bottom: 10px;
+  margin: 0 0 var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
+.section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Divider — for use inside panels. */
+.divider {
+  height: 1px;
+  background: var(--border);
+  border: 0;
+  margin: var(--space-3) 0;
+}
+
+/* Pill — small always-visible marker (rank, count, status). */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.pill-accent {
+  background: var(--accent-soft);
+  border-color: var(--border-accent);
+  color: var(--accent-hi);
+}
+.pill-win  { background: var(--win-soft);  border-color: rgba(76, 175, 125, 0.35); color: var(--win); }
+.pill-loss { background: var(--loss-soft); border-color: rgba(226, 85, 85, 0.35); color: var(--loss); }
+.pill-info { background: var(--info-soft); border-color: rgba(90, 164, 230, 0.35); color: var(--info); }
 
 .table-panel {
   padding: 0;
@@ -452,18 +708,19 @@ input[type='range'] {
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
 }
 
 .table th {
   text-align: left;
-  font-size: 10px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
   color: var(--muted);
   font-weight: 700;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
+  padding: 10px 10px;
+  border-bottom: 1px solid var(--border-strong);
   position: sticky;
   top: 0;
   background: var(--panel);
@@ -472,17 +729,21 @@ input[type='range'] {
 }
 
 .table td {
-  padding: 5px 10px;
-  border-bottom: 1px solid rgba(42, 47, 58, 0.55);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
   white-space: nowrap;
 }
 
 .table tbody tr {
-  transition: background 0.1s ease;
+  transition: background var(--motion-fast);
 }
 
 .table tbody tr:hover {
   background: var(--panel-2);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
 }
 
 .table-dense td {

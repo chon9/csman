@@ -93,84 +93,69 @@ export default function EWalletScreen(): React.ReactElement | null {
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* Header */}
-      <div className="panel" style={{
-        padding: 18,
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10,
-        background: 'linear-gradient(135deg, #142d4f 0%, #2a1b4a 60%, #4f1f3d 100%)',
-        border: '1px solid rgba(255,255,255,0.14)',
-      }}>
+      <div className="hero-panel">
         <div>
-          <h2 style={{ margin: '0 0 4px', letterSpacing: 1 }}>💳 E-WALLET</h2>
-          <div className="muted small">Peer-to-peer transfers · zero fee · cash, skins, players and real estate</div>
+          <h2>💳 E-Wallet</h2>
+          <div className="hero-sub">Peer-to-peer transfers · zero fee · cash, skins, players and real estate</div>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <div style={{ padding: '6px 12px', borderRadius: 999, background: 'rgba(0,0,0,0.35)', fontSize: 12, fontWeight: 700 }}>
-            💰 <strong>${team.money.toLocaleString()}</strong>
-          </div>
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+          <span className="pill pill-accent" style={{ fontSize: 'var(--text-md)', padding: '5px 12px' }}>
+            💰 ${team.money.toLocaleString()}
+          </span>
           <button className="btn" onClick={() => go('home')}>← Back</button>
         </div>
       </div>
 
       {/* Your Wallet ID — the number you share with senders. */}
-      <div className="panel" style={{
-        padding: 16,
-        background: 'linear-gradient(135deg, rgba(222,155,53,0.14), rgba(80,120,220,0.08))',
-        border: '1px solid rgba(222,155,53,0.35)',
-      }}>
-        <div className="muted small" style={{ fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 6 }}>
-          🔑 Your Wallet ID
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div className="panel panel-accent">
+        <div className="section-title" style={{ margin: '0 0 var(--space-3)' }}>🔑 Your Wallet ID</div>
+        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
           <code style={{
-            fontSize: 20, fontWeight: 800, letterSpacing: 2,
-            padding: '8px 14px', borderRadius: 8,
-            background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.12)',
-            fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+            fontSize: 'var(--text-2xl)', fontWeight: 700, letterSpacing: 2,
+            padding: '10px 16px', borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-elev)', border: '1px solid var(--border-strong)',
+            fontFamily: 'var(--font-mono)',
+            color: 'var(--accent-hi)',
             userSelect: 'all',
           }}>{myWalletId || '— assigning… reconnect —'}</code>
           <button
             className="btn btn-accent"
             disabled={!myWalletId}
             onClick={copyMyWalletId}
-            style={{ padding: '8px 14px', fontWeight: 700 }}
           >{copied ? '✓ Copied' : '📋 Copy'}</button>
         </div>
-        <div className="muted small" style={{ marginTop: 8, fontSize: 11 }}>
+        <div className="muted small" style={{ marginTop: 'var(--space-2)' }}>
           Share this ID (not your team tag) with anyone who wants to send you cash, skins, players or real estate.
         </div>
       </div>
 
       {/* Recipient Wallet ID input */}
-      <div className="panel" style={{ padding: 14, display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 260 }}>
-          <div className="muted small" style={{ fontSize: 10, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4 }}>
-            Recipient Wallet ID
+      <div className="panel">
+        <div className="section-title" style={{ margin: '0 0 var(--space-2)' }}>Recipient Wallet ID</div>
+        <input
+          type="text"
+          className="input"
+          placeholder="CSM-XXXX-XXXX-XXXX"
+          value={toWallet}
+          onChange={(e) => setToWallet(formatWalletIdInput(e.target.value))}
+          maxLength={19}
+          spellCheck={false}
+          autoCapitalize="characters"
+          autoCorrect="off"
+          style={{
+            width: '100%',
+            textTransform: 'uppercase',
+            fontWeight: 700,
+            letterSpacing: 2,
+            fontFamily: 'var(--font-mono)',
+          }}
+        />
+        {walletError && <div style={{ color: 'var(--loss)', fontSize: 'var(--text-sm)', marginTop: 'var(--space-1)' }}>{walletError}</div>}
+        {!walletError && valid && (
+          <div className="small" style={{ marginTop: 'var(--space-1)', color: 'var(--win)' }}>
+            ✓ Format looks good — server confirms on send.
           </div>
-          <input
-            type="text"
-            className="input"
-            placeholder="CSM-XXXX-XXXX-XXXX"
-            value={toWallet}
-            onChange={(e) => setToWallet(formatWalletIdInput(e.target.value))}
-            maxLength={19}
-            spellCheck={false}
-            autoCapitalize="characters"
-            autoCorrect="off"
-            style={{
-              width: '100%',
-              textTransform: 'uppercase',
-              fontWeight: 700,
-              letterSpacing: 2,
-              fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-            }}
-          />
-          {walletError && <div style={{ color: '#e25555', fontSize: 11, marginTop: 4 }}>{walletError}</div>}
-          {!walletError && valid && (
-            <div className="muted small" style={{ fontSize: 11, marginTop: 4, color: '#7ecb7e' }}>
-              ✓ Format looks good — server confirms on send.
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Tab bar */}
