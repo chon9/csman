@@ -7,6 +7,7 @@ import { RNG, hashSeed } from '../../src/engine/rng.ts';
 import {
   RETIREMENT_AGE_THRESHOLD,
   RETIREMENT_MATCHES_REQUIRED,
+  fansForRoster,
   type HoFEntry,
 } from '../../src/online/protocol.ts';
 import type { Player } from '../../src/types.ts';
@@ -169,7 +170,17 @@ export function maybeOfferSponsor(db: DB, teamId: string, careerWins: number): {
   // brands. Rounded to $500 for tidy numbers.
   const scaledBase = Math.round(pickedDef.baseMonthly * (0.20 + rng.next() * 0.25));
   const jitter = Math.round(scaledBase * (0.85 + rng.next() * 0.3));
-  const reward = Math.max(15_000, Math.round(jitter / 500) * 500);
+  // Fan reach multiplier — brands pay more to teams with an audience.
+  // roster-derived fans + persisted media bonus. Caps at ×3 so a
+  // stratospheric fanbase doesn't fully warp the sponsor economy.
+  //   0 fans → ×1.00
+  //   100k  → ×1.20
+  //   500k  → ×2.00
+  //   1M+   → ×3.00 (capped)
+  const roster = db.loadTeamPlayers(teamId);
+  const totalFans = fansForRoster(roster) + db.getTeamBonusFans(teamId);
+  const fanMult = Math.min(3.0, 1 + totalFans / 500_000);
+  const reward = Math.max(15_000, Math.round((jitter * fanMult) / 500) * 500);
 
   const id = `sponsor-${randomBytes(4).toString('hex')}`;
   db.createSponsorOffer({

@@ -15,6 +15,7 @@ import { RNG, hashSeed } from '../../src/engine/rng.ts';
 import { applyWeeklyTraining, dailyPlayerTick } from '../../src/sim/daily.ts';
 import type { Player, Team, TrainingSetup } from '../../src/types.ts';
 import { ALL_MAPS, DEFAULT_TACTICS } from '../../src/types.ts';
+import { fansForRoster } from '../../src/online/protocol.ts';
 
 /** Length of one in-game day in real-world ms. 4 hours. */
 export const AUTO_TICK_MS = 4 * 3600 * 1000;
@@ -92,10 +93,19 @@ export function applyAutoTicks(db: DB, teamId: string, now: number = Date.now())
   // injury roll lands. Use the real wall-clock date — the per-day RNG
   // seed gives all the entropy this loop needs.
   const todayIso = new Date().toISOString().slice(0, 10);
+  // Merch revenue accrued across all advanced game days. Fans are cheap
+  // per-tick but stack — high-audience teams generate a real passive
+  // income layer. See MERCH_RATE below for the tuning knob.
+  const totalFans = fansForRoster(players) + db.getTeamBonusFans(teamId);
+  let merchAccrued = 0;
   for (let i = 0; i < daysAdvanced; i++) {
     team.day += 1;
     const dayRng = new RNG(hashSeed(`auto-${team.id}-${team.day}`));
     dailyPlayerTick(playerLookup, todayIso, dayRng);
+    // $2 per 1000 fans per game-day tick. Since AUTO_TICK_MS = 4 hours
+    // there are 6 game days per UTC day → daily merch = fans × 0.012.
+    // Examples: 50k fans → $600/day · 100k → $1200/day · 500k → $6000/day.
+    merchAccrued += Math.floor(totalFans / 500);
     if (team.day % 7 === 0) {
       // Smart focus: if the squad is exhausted, run a rest week (flat -18
       // fatigue + small morale lift) instead of stacking +4 fatigue from a
@@ -113,9 +123,8 @@ export function applyAutoTicks(db: DB, teamId: string, now: number = Date.now())
     }
   }
 
-  // Persist. team.money is unchanged but setTeamMoneyDay is the only API
-  // that bumps both money + day in one prepared statement; safe to call
-  // with the same money.
+  // Persist. team.money may have grown from merch revenue this pass.
+  if (merchAccrued > 0) team.money += merchAccrued;
   db.setTeamMoneyDay(team.id, team.money, team.day);
   for (const p of players) db.persistPlayer(p);
   // Anchor jumps forward to the most recent boundary we applied.
