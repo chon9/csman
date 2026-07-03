@@ -21,9 +21,9 @@ interface NavItem {
 /** Primary 4 bar destinations — most-used online-mode screens. */
 const PRIMARY: NavItem[] = [
   { id: 'home', label: 'Home', icon: '🏠' },
+  { id: 'inbox', label: 'Inbox', icon: '📬' },
   { id: 'challenges', label: 'PvP', icon: '⚔' },
   { id: 'market', label: 'Market', icon: '💱' },
-  { id: 'ewallet', label: 'Wallet', icon: '💳' },
 ];
 
 /** Everything else lives in the drawer. */

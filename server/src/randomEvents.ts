@@ -365,6 +365,29 @@ export function tickRandomEvents(ctx: EventContext): NewsItem | null {
     // Publish + broadcast + set cooldown.
     const item = ctx.db.publishNews('event', outcome.newsBody) as NewsItem;
     ctx.broadcastAll({ kind: 'news-item', item });
+    // Also drop into the affected team's inbox so the manager sees the
+    // personal impact without needing to scan the ticker. Skip for the
+    // '_world' sentinel — nobody owns it.
+    if (outcome.affectedTeamId && outcome.affectedTeamId !== '_world' && ctx.notifyTeam) {
+      const team = ctx.db.loadTeam(outcome.affectedTeamId);
+      if (team) {
+        // pushInbox is exported by the DB facade; we go through it
+        // (rather than emitInboxItem in inbox.ts) to keep this module
+        // dependency-free of the inbox helper.
+        const inbox = ctx.db.pushInbox({
+          teamId: outcome.affectedTeamId,
+          kind: 'event',
+          title: `Event: ${picked.id.replace(/_/g, ' ')}`,
+          body: outcome.newsBody,
+        });
+        const unread = ctx.db.inboxUnreadCount(outcome.affectedTeamId);
+        ctx.notifyTeam(outcome.affectedTeamId, {
+          kind: 'inbox-item',
+          item: inbox as import('../../src/online/protocol.ts').InboxItem,
+          unread,
+        });
+      }
+    }
     if (outcome.affectedTeamId) {
       ctx.cooldowns.set(outcome.affectedTeamId, Date.now() + EVENT_TARGET_COOLDOWN_MS);
     }

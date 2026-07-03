@@ -20,6 +20,7 @@ interface NavItem {
 
 const PRIMARY: NavItem[] = [
   { id: 'home', label: 'Home', icon: '🏠' },
+  { id: 'inbox', label: 'Inbox', icon: '📬' },
   { id: 'tactics', label: 'Tactics', icon: '🎯' },
   { id: 'challenges', label: 'PvP Lobby', icon: '⚔' },
   { id: 'tournaments', label: 'Tournaments', icon: '🏆' },
@@ -47,6 +48,7 @@ export default function OnlineSidebar(): React.ReactElement {
   const status = useOnline((s) => s.status);
   const onlineTeams = useOnline((s) => s.onlineTeams);
   const dailyBonusAvailable = useOnline((s) => s.dailyBonusAvailable);
+  const inboxUnread = useOnline((s) => s.inboxUnread);
   const claimDailyBonus = useOnline((s) => s.claimDailyBonus);
   const nextTickUtcMs = useOnline((s) => s.nextTickUtcMs);
   const refresh = useOnline((s) => s.refreshState);
@@ -119,17 +121,22 @@ export default function OnlineSidebar(): React.ReactElement {
 
       {/* ===== Primary nav ===== */}
       <nav className="osb-nav">
-        {PRIMARY.map((item) => (
-          <button
-            key={item.id}
-            className={`osb-nav-item ${screen === item.id ? 'osb-nav-item-active' : ''}`}
-            onClick={() => go(item.id)}
-          >
-            <span className="osb-nav-icon">{item.icon}</span>
-            <span className="osb-nav-label">{item.label}</span>
-            {item.badge && <span className="osb-nav-badge">{item.badge}</span>}
-          </button>
-        ))}
+        {PRIMARY.map((item) => {
+          // Dynamic badge: inbox shows the unread counter (or nothing when 0).
+          const dynBadge = item.id === 'inbox' && inboxUnread > 0
+            ? String(inboxUnread) : item.badge;
+          return (
+            <button
+              key={item.id}
+              className={`osb-nav-item ${screen === item.id ? 'osb-nav-item-active' : ''}`}
+              onClick={() => go(item.id)}
+            >
+              <span className="osb-nav-icon">{item.icon}</span>
+              <span className="osb-nav-label">{item.label}</span>
+              {dynBadge && <span className="osb-nav-badge">{dynBadge}</span>}
+            </button>
+          );
+        })}
         {isAdmin && (
           <button
             className={`osb-nav-item osb-nav-admin ${screen === 'admin' ? 'osb-nav-item-active' : ''}`}

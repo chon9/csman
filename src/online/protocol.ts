@@ -1860,6 +1860,10 @@ export type ClientMessage =
   | { kind: 'list-my-ai-bet-history' }
   // ----- Daily race (points + money leaderboards, UTC-daily rollover) -----
   | { kind: 'list-daily-race' }
+  // ----- Inbox -----
+  | { kind: 'list-inbox' }
+  | { kind: 'mark-inbox-read'; itemId: number }
+  | { kind: 'respond-inbox'; itemId: number; choiceId: string }
   // ----- Training Center (5-min idle · high-risk / high-return) -----
   | { kind: 'list-training' }
   | { kind: 'start-training'; playerId: string; attribute: keyof PlayerAttributes }
@@ -2018,6 +2022,13 @@ export type ServerMessage =
   | { kind: 'daily-race-state'; dateUtc: string; rolloverUtcMs: number; pointsBoard: DailyRaceEntryWire[]; moneyBoard: DailyRaceEntryWire[]; myRank: { points: number | null; money: number | null }; recentPayouts: DailyRacePayoutWire[] }
   | { kind: 'daily-race-payout'; raceKind: 'points' | 'money'; rank: number; amount: number; valueDelta: number; dateUtc: string; newMoney: number }
   | { kind: 'daily-race-rolled'; dateUtc: string }
+  | { kind: 'inbox'; items: InboxItem[]; unread: number }
+  /** Push a single new inbox item — either fresh (unread) or resolved
+   *  (interactive response applied). Client folds it into local state. */
+  | { kind: 'inbox-item'; item: InboxItem; unread: number }
+  /** Feedback line + updated fans/morale after resolving an interactive
+   *  item — surfaced as a toast alongside the folded-in item. */
+  | { kind: 'inbox-resolved'; item: InboxItem; effectSummary: string; newFans?: number; unread: number }
   | { kind: 'training-state'; session: TrainingSessionWire | null }
   | { kind: 'training-collected'; outcome: TrainingOutcome; playersDelta: Player[] }
   | { kind: 'player-scouted'; player: Player; cost: number; rarity: ScoutRarity; newMoney: number }
@@ -2201,7 +2212,47 @@ export interface TrainingOutcome {
   newPA?: number;
 }
 
-export const PROTOCOL_VERSION = 55;
+// ============ Inbox (narrative-driven) ============
+
+/** Inbox item kind — drives the client's icon, colour, and filter chip. */
+export type InboxKind =
+  | 'event'          // Random-events ticker that affected this team
+  | 'missed-battle'  // Quick-Match defender: someone attacked you
+  | 'sponsor'        // New sponsor offer waiting for review
+  | 'player-message' // Player has words about the last match (interactive)
+  | 'media';         // Press-conference question (interactive, affects fans)
+
+export interface InboxChoice {
+  /** Stable id — echoed back on `respond-inbox`. */
+  id: string;
+  /** Button label the user sees. */
+  label: string;
+  /** Optional short hint under the button ("respectful", "confident"). */
+  hint?: string;
+}
+
+export interface InboxItem {
+  id: number;
+  kind: InboxKind;
+  title: string;
+  body: string;
+  /** Kind-specific payload — `choices` for interactive items, plus
+   *  contextual data like the opponent tag or player id. */
+  payload: {
+    choices?: InboxChoice[];
+    /** Free-form additional context — opponent tag, player nickname,
+     *  sponsor id, etc. Not typed strictly to avoid pinning every
+     *  future event kind here. */
+    [k: string]: unknown;
+  };
+  /** UTC ms — set when the item is opened. */
+  readAt?: number;
+  /** UTC ms — set when the user picks a choice on an interactive item. */
+  resolvedAt?: number;
+  createdAt: number;
+}
+
+export const PROTOCOL_VERSION = 56;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

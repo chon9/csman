@@ -63,12 +63,13 @@ import type {
   DailyRacePayoutWire,
   TrainingSessionWire,
   TrainingOutcome,
+  InboxItem,
 } from './protocol';
 import type { PlayerAttributes } from '../types';
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets' | 'real-estate' | 'ewallet' | 'daily-race' | 'training';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets' | 'real-estate' | 'ewallet' | 'daily-race' | 'training' | 'inbox';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -136,6 +137,13 @@ interface OnlineState {
   /** Player-rating leaderboard — top qualifying players (≥10 maps) by
    *  career HLTV rating. Refreshes on the Leaderboard screen. */
   playerLeaderRows: PlayerLeaderRow[];
+  /** Personal inbox — narrative events, missed battles, sponsor offers,
+   *  post-match player messages, press-conference media questions.
+   *  Capped at 30 server-side; folded here on inbox-item / inbox-resolved. */
+  inboxItems: InboxItem[];
+  /** Unread inbox count — server-authoritative, ships on every inbox
+   *  message. Drives the nav badge. */
+  inboxUnread: number;
   /** Pop-up team profile (any team — your own or an enemy's). Set by
    *  clicking a team tag anywhere in the app; cleared on dismiss. */
   viewingTeamProfile: PublicTeamProfile | null;
@@ -433,6 +441,9 @@ interface OnlineState {
   refreshLeaderboard: () => void;
   refreshRankedLeaderboard: () => void;
   refreshPlayerLeaderboard: () => void;
+  refreshInbox: () => void;
+  markInboxRead: (itemId: number) => void;
+  respondInbox: (itemId: number, choiceId: string) => void;
 
   // Phase 5 actions
   fetchLiveReplay: (matchId: string) => void;
@@ -558,6 +569,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   myPvpStandings: null,
   rankedLeaderRows: [],
   playerLeaderRows: [],
+  inboxItems: [],
+  inboxUnread: 0,
   viewingTeamProfile: null,
   teamProfileLoading: null,
   viewingPlayerId: null,
@@ -704,6 +717,13 @@ export const useOnline = create<OnlineState>((set, get) => ({
           break;
         }
         case 'state': {
+          // First state after connect triggers a one-shot inbox fetch so
+          // the nav badge reflects the correct unread count. Subsequent
+          // state broadcasts are ignored — inbox-item pushes keep it
+          // fresh in real time.
+          if (get().inboxItems.length === 0 && get().inboxUnread === 0) {
+            get().client?.send({ kind: 'list-inbox' });
+          }
           const players: Record<string, Player> = {};
           for (const p of msg.players) players[p.id] = p;
           // Reset the local morale-game tally when the server tells us the
@@ -887,6 +907,29 @@ export const useOnline = create<OnlineState>((set, get) => ({
         }
         case 'player-leaderboard': {
           set({ playerLeaderRows: msg.rows });
+          break;
+        }
+        case 'inbox': {
+          set({ inboxItems: msg.items, inboxUnread: msg.unread });
+          break;
+        }
+        case 'inbox-item': {
+          // Fold in — replace by id if present (mark-read echo), else prepend.
+          const existing = get().inboxItems;
+          const idx = existing.findIndex((it) => it.id === msg.item.id);
+          const next = idx === -1
+            ? [msg.item, ...existing].slice(0, 30)
+            : existing.map((it, i) => (i === idx ? msg.item : it));
+          set({ inboxItems: next, inboxUnread: msg.unread });
+          // Toast the arrival of NEW items (but not read-state echoes).
+          if (idx === -1) pushToast('info', `📬 ${msg.item.title}`);
+          break;
+        }
+        case 'inbox-resolved': {
+          const existing = get().inboxItems;
+          const next = existing.map((it) => (it.id === msg.item.id ? msg.item : it));
+          set({ inboxItems: next, inboxUnread: msg.unread });
+          pushToast('success', `📬 ${msg.effectSummary}`);
           break;
         }
         case 'live-replay': {
@@ -2106,6 +2149,15 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   refreshPlayerLeaderboard() {
     get().client?.send({ kind: 'list-player-leaderboard' });
+  },
+  refreshInbox() {
+    get().client?.send({ kind: 'list-inbox' });
+  },
+  markInboxRead(itemId) {
+    get().client?.send({ kind: 'mark-inbox-read', itemId });
+  },
+  respondInbox(itemId, choiceId) {
+    get().client?.send({ kind: 'respond-inbox', itemId, choiceId });
   },
 
   fetchLiveReplay(matchId) {

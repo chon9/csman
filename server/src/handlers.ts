@@ -386,6 +386,8 @@ import { DAILY_RACE_BOARD_LIMIT } from './dailyRace.ts';
 import type { DailyRaceEntryWire, DailyRacePayoutWire } from '../../src/online/protocol.ts';
 import { canTrain, loadTrainingWire, logLineFor, rollTrainingOutcome } from './training.ts';
 import { matchupBonusPct, resolveArchetypes } from '../../src/engine/tacticalMatchup.ts';
+import { emitInboxItem, generateMediaItem, generatePlayerMessageItem, resolveInboxChoice } from './inbox.ts';
+import type { InboxItem } from '../../src/online/protocol.ts';
 import { TRAINING_DURATION_MS } from '../../src/online/protocol.ts';
 import { ATTRIBUTE_KEYS } from '../../src/types.ts';
 import {
@@ -1056,6 +1058,18 @@ export function handle(
           offers: buildSponsorsWire(db, conn.teamId),
           paid: [],
         });
+        // Also drop into the inbox so the manager doesn't miss it after
+        // the sponsors panel toast disappears.
+        const offerDetails = db.loadSponsor(newOffer.id);
+        if (offerDetails) {
+          emitInboxItem(db, notifyTeam, {
+            teamId: conn.teamId,
+            kind: 'sponsor',
+            title: `New sponsor offer: ${offerDetails.sponsorName}`,
+            body: `${offerDetails.sponsorName} is offering $${offerDetails.rewardAmount.toLocaleString()} for hitting ${offerDetails.winsRequired} more wins this season. Head to the sponsors panel to accept or decline.`,
+            payload: { sponsorId: newOffer.id },
+          });
+        }
       }
 
       return buildState(db, conn.teamId);
@@ -1951,6 +1965,62 @@ export function handle(
         mvp: computeMvpSnapshot(db, duel.result, opp.id),
       };
       notifyTeam(opp.id, { kind: 'duel-result', outcome: oppOutcome });
+
+      // Missed-battle inbox item — the defender didn't opt in and gets
+      // an async notification. Includes the outcome from THEIR side.
+      const defenderWon = !meWon;
+      emitInboxItem(db, notifyTeam, {
+        teamId: opp.id,
+        kind: 'missed-battle',
+        title: defenderWon
+          ? `Held off ${me.tag} in Quick Match`
+          : `Lost to ${me.tag} in Quick Match`,
+        body: defenderWon
+          ? `${me.tag} found you in Quick Match — you held them off ${duel.result.mapsB}-${duel.result.mapsA}. +$${defenderBonus.toLocaleString()} defender bonus.`
+          : `${me.tag} found you in Quick Match — beat your team ${duel.result.mapsA}-${duel.result.mapsB}. No cash lost, no contract impact (you didn\'t opt in).`,
+        payload: {
+          matchId: duel.result.matchId,
+          opponentTag: me.tag,
+          opponentTeamId: me.id,
+          mapsA: duel.result.mapsA,
+          mapsB: duel.result.mapsB,
+          won: defenderWon,
+        },
+      });
+
+      // Post-match roll: 15% chance a player wants words, 8% chance a
+      // reporter shows up. Kept low so the inbox doesn't spam after
+      // every match — narrative moments should feel earned.
+      const meMood: 'win' | 'loss' = meWon ? 'win' : 'loss';
+      const oppMood: 'win' | 'loss' = defenderWon ? 'win' : 'loss';
+      if (Math.random() < 0.15) {
+        const myStartersFresh = db.loadTeamPlayers(me.id).slice(0, 5);
+        const gen = generatePlayerMessageItem(myStartersFresh, meMood);
+        if (gen) {
+          emitInboxItem(db, notifyTeam, {
+            teamId: me.id, kind: 'player-message',
+            title: gen.title, body: gen.body, payload: gen.payload,
+          });
+        }
+      }
+      if (Math.random() < 0.08) {
+        const gen = generateMediaItem(opp.tag, meMood);
+        if (gen) {
+          emitInboxItem(db, notifyTeam, {
+            teamId: me.id, kind: 'media',
+            title: gen.title, body: gen.body, payload: gen.payload,
+          });
+        }
+      }
+      if (Math.random() < 0.08) {
+        const gen = generateMediaItem(me.tag, oppMood);
+        if (gen) {
+          emitInboxItem(db, notifyTeam, {
+            teamId: opp.id, kind: 'media',
+            title: gen.title, body: gen.body, payload: gen.payload,
+          });
+        }
+      }
 
       if (stake >= 10_000) {
         const winnerTag = meWon ? me.tag : opp.tag;
@@ -3495,6 +3565,43 @@ export function handle(
       return buildDailyRaceState(db, conn.teamId);
     }
 
+    // ---------- Inbox ----------
+
+    case 'list-inbox': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const items = db.loadInbox(conn.teamId, 30) as InboxItem[];
+      const unread = db.inboxUnreadCount(conn.teamId);
+      return { kind: 'inbox', items, unread };
+    }
+
+    case 'mark-inbox-read': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      db.markInboxItemRead(conn.teamId, msg.itemId);
+      const item = db.loadInboxItem(msg.itemId) as InboxItem | null;
+      const unread = db.inboxUnreadCount(conn.teamId);
+      if (!item) return { kind: 'error', code: 'no-inbox-item', message: 'Item not found.' };
+      return { kind: 'inbox-item', item, unread };
+    }
+
+    case 'respond-inbox': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const item = db.loadInboxItem(msg.itemId) as InboxItem | null;
+      if (!item) return { kind: 'error', code: 'no-inbox-item', message: 'Item not found.' };
+      if (item.resolvedAt) return { kind: 'error', code: 'already-resolved', message: 'You already responded to this item.' };
+      const outcome = resolveInboxChoice(db, item, conn.teamId, msg.choiceId);
+      if (!outcome) return { kind: 'error', code: 'bad-choice', message: 'That option isn\'t on this item.' };
+      db.markInboxItemResolved(conn.teamId, msg.itemId);
+      const resolved = db.loadInboxItem(msg.itemId) as InboxItem;
+      const unread = db.inboxUnreadCount(conn.teamId);
+      return {
+        kind: 'inbox-resolved',
+        item: resolved,
+        effectSummary: outcome.summary,
+        newFans: outcome.newFans,
+        unread,
+      };
+    }
+
     // ---------- Training Center ----------
 
     case 'list-training': {
@@ -3919,7 +4026,7 @@ export function handle(
         target.tactics?.ctArchetype,
         roster.slice(0, 5),
       );
-      const fans = fansForRoster(roster);
+      const fans = fansForRoster(roster) + db.getTeamBonusFans(target.id);
       const season = db.currentSeason();
       const seasonStandings = db.loadTeamStandings(season.seasonNo, target.id);
       const pvpStandings = db.loadPvpStandingsForTeam(season.startedAt, target.id);

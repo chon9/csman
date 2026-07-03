@@ -403,6 +403,26 @@ export function openDb(path: string) {
     CREATE INDEX IF NOT EXISTS idx_team_comments_team ON team_comments(team_id, posted_at DESC);
     CREATE INDEX IF NOT EXISTS idx_team_comments_ip_time ON team_comments(ip, posted_at DESC);
 
+    -- Per-team narrative inbox — random events, missed battles, sponsor
+    -- pitches, post-match player messages, and press-conference media
+    -- questions all land here. Interactive items (kind='player-message'
+    -- or 'media') expose choices in payload_json; resolved_at fills in
+    -- when the user picks a response. Only the newest 30 per team are
+    -- retained (older ones dropped on insert).
+    CREATE TABLE IF NOT EXISTS inbox_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      team_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      read_at INTEGER,
+      resolved_at INTEGER,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_inbox_team_created ON inbox_items(team_id, created_at DESC);
+
     -- Daily race leaderboard state. One row per (team, UTC date). The
     -- Points Race compares (current_team.mmr − mmr_at_start); the Money
     -- Race sums gross_earned (positive money deltas only; spending
@@ -513,6 +533,11 @@ export function openDb(path: string) {
   tryAddColumn('teams', 'wallet_id', 'TEXT', "''");
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_wallet_id
            ON teams(wallet_id) WHERE wallet_id != '';`);
+  // Bonus fans accumulated from media / press-conference responses.
+  // Sits ON TOP OF the roster-derived fan count so a well-managed
+  // media presence pays off over time; negative values allowed
+  // (bad press).
+  tryAddColumn('teams', 'bonus_fans', 'INTEGER', '0');
   // Real-estate vault interest tracking. UTC ms of the last-collected
   // interest tick per lot. 0 = never collected (accrual starts at
   // creation time — see helper). Cap of 30 days accrual enforced at
@@ -2995,6 +3020,115 @@ export function openDb(path: string) {
     return rows.map(rowToNews).reverse(); // oldest first for ticker
   }
 
+  // -------- Inbox --------
+
+  const insertInbox = db.prepare(
+    `INSERT INTO inbox_items (team_id, kind, title, body, payload_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+  const findInbox = db.prepare(`SELECT * FROM inbox_items WHERE id = ?`);
+  const inboxForTeam = db.prepare(
+    `SELECT * FROM inbox_items WHERE team_id = ? ORDER BY created_at DESC LIMIT ?`,
+  );
+  const trimInbox = db.prepare(
+    `DELETE FROM inbox_items
+     WHERE team_id = ?
+       AND id NOT IN (SELECT id FROM inbox_items WHERE team_id = ? ORDER BY created_at DESC LIMIT 30)`,
+  );
+  const markInboxRead = db.prepare(
+    `UPDATE inbox_items SET read_at = ? WHERE id = ? AND team_id = ? AND read_at IS NULL`,
+  );
+  const markInboxResolved = db.prepare(
+    `UPDATE inbox_items SET resolved_at = ?, read_at = COALESCE(read_at, ?) WHERE id = ? AND team_id = ?`,
+  );
+  const countUnread = db.prepare(
+    `SELECT COUNT(*) AS n FROM inbox_items WHERE team_id = ? AND read_at IS NULL`,
+  );
+
+  interface InboxRow {
+    id: number; team_id: string; kind: string; title: string; body: string;
+    payload_json: string; read_at: number | null; resolved_at: number | null; created_at: number;
+  }
+
+  function rowToInbox(r: InboxRow) {
+    let payload: Record<string, unknown> = {};
+    try { payload = JSON.parse(r.payload_json) as Record<string, unknown>; } catch { /* malformed → empty */ }
+    return {
+      id: r.id,
+      teamId: r.team_id,
+      kind: r.kind,
+      title: r.title,
+      body: r.body,
+      payload,
+      readAt: r.read_at ?? undefined,
+      resolvedAt: r.resolved_at ?? undefined,
+      createdAt: r.created_at,
+    };
+  }
+
+  /** Push a new inbox item and drop anything past the 30-item cap.
+   *  Returns the inserted row (with server-assigned id) so the caller
+   *  can broadcast it to the affected team's live sockets. */
+  function pushInbox(args: {
+    teamId: string; kind: string; title: string; body: string;
+    payload?: Record<string, unknown>;
+  }) {
+    const at = Date.now();
+    const payloadJson = JSON.stringify(args.payload ?? {});
+    const info = insertInbox.run(
+      args.teamId, args.kind, args.title.slice(0, 120),
+      args.body.slice(0, 800), payloadJson, at,
+    );
+    // Enforce the per-team 30-item cap AFTER insert.
+    trimInbox.run(args.teamId, args.teamId);
+    const row = findInbox.get(info.lastInsertRowid as number) as InboxRow;
+    return rowToInbox(row);
+  }
+
+  function loadInbox(teamId: string, limit = 30) {
+    const rows = inboxForTeam.all(teamId, limit) as InboxRow[];
+    return rows.map(rowToInbox);
+  }
+
+  function loadInboxItem(itemId: number) {
+    const row = findInbox.get(itemId) as InboxRow | undefined;
+    return row ? rowToInbox(row) : null;
+  }
+
+  function markInboxItemRead(teamId: string, itemId: number): boolean {
+    const at = Date.now();
+    return markInboxRead.run(at, itemId, teamId).changes > 0;
+  }
+
+  function markInboxItemResolved(teamId: string, itemId: number): boolean {
+    const at = Date.now();
+    return markInboxResolved.run(at, at, itemId, teamId).changes > 0;
+  }
+
+  function inboxUnreadCount(teamId: string): number {
+    const r = countUnread.get(teamId) as { n: number };
+    return r.n;
+  }
+
+  // -------- Bonus fans (media / press impact) --------
+
+  const getBonusFans = db.prepare(`SELECT bonus_fans FROM teams WHERE id = ?`);
+  const bumpBonusFans = db.prepare(
+    `UPDATE teams SET bonus_fans = COALESCE(bonus_fans, 0) + ? WHERE id = ?`,
+  );
+
+  function getTeamBonusFans(teamId: string): number {
+    const r = getBonusFans.get(teamId) as { bonus_fans: number | null } | undefined;
+    return r?.bonus_fans ?? 0;
+  }
+
+  /** Add (or subtract) fans from the persistent media-earned pool.
+   *  Returns the new total so the caller can echo it back to the UI. */
+  function bumpTeamBonusFans(teamId: string, delta: number): number {
+    bumpBonusFans.run(delta, teamId);
+    return getTeamBonusFans(teamId);
+  }
+
   // -------- Player development goals --------
 
   interface GoalRow {
@@ -3421,6 +3555,14 @@ export function openDb(path: string) {
     loadPreset,
     removePreset,
     publishNews,
+    pushInbox,
+    loadInbox,
+    loadInboxItem,
+    markInboxItemRead,
+    markInboxItemResolved,
+    inboxUnreadCount,
+    getTeamBonusFans,
+    bumpTeamBonusFans,
     loadRecentNews,
     createLoanOffer,
     loadLoan,
