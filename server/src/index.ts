@@ -19,6 +19,7 @@ import { startBustTicker as startCrashBustTicker } from './crashSessions.ts';
 import { cleanupStaleCards, ensureCards, settleDueCards } from './aiBetting.ts';
 import { closeDueAuctions as closeDueLotAuctions } from './realEstate.ts';
 import { initDailyRaceOnBoot, startDailyRaceTicker } from './dailyRace.ts';
+import { startRandomEventTicker } from './randomEvents.ts';
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '../../src/online/protocol.ts';
 
 const PORT = Number(process.env.CSM_PORT ?? 8787);
@@ -206,6 +207,17 @@ const raceDeps = {
 };
 initDailyRaceOnBoot(db, raceDeps);
 startDailyRaceTicker(db, raceDeps);
+
+// Random world-events ticker — every ~10 minutes rolls a chance that an
+// ambient event fires (breakthrough, slump, sponsor bonus, meta shift…)
+// and publishes a news line. Keeps the world feeling reactive without
+// touching balance in any meaningful way.
+startRandomEventTicker(
+  db,
+  broadcastAll,
+  notifyTeam,
+  (line) => console.log(`[csm:event] ${line}`),
+);
 
 function bindTeamSocket(ws: WebSocket, teamId: string): void {
   let set = socketsByTeam.get(teamId);

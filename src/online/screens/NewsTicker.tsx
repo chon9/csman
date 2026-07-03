@@ -10,6 +10,7 @@ const ICON: Record<string, string> = {
   duel: '⚔️',
   tournament: '🏆',
   goal: '🎯',
+  event: '🌍',
   other: '📰',
 };
 
