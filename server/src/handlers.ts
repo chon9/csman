@@ -383,7 +383,7 @@ import { utcDateKey } from './db.ts';
 import { DAILY_RACE_BOARD_LIMIT } from './dailyRace.ts';
 import type { DailyRaceEntryWire, DailyRacePayoutWire } from '../../src/online/protocol.ts';
 import { canTrain, loadTrainingWire, logLineFor, rollTrainingOutcome } from './training.ts';
-import { resolveArchetypes } from '../../src/engine/tacticalMatchup.ts';
+import { matchupBonusPct, resolveArchetypes } from '../../src/engine/tacticalMatchup.ts';
 import { TRAINING_DURATION_MS } from '../../src/online/protocol.ts';
 import { ATTRIBUTE_KEYS } from '../../src/types.ts';
 import {
@@ -447,6 +447,8 @@ const LEGACY_BOOST_TARGETS: BoostAttrKey[] = ['aim', 'reflexes', 'positioning', 
 function buildDuelDiagnostics(
   userStarters: Player[],
   oppStarters: Player[],
+  userTactics?: import('../../src/types.ts').Tactics,
+  oppTactics?: import('../../src/types.ts').Tactics,
 ): import('../../src/online/protocol.ts').DuelDiagnostics {
   const avg = (xs: number[]): number => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0);
   const userAvgCA = avg(userStarters.map((p) => p.currentAbility));
@@ -483,6 +485,30 @@ function buildDuelDiagnostics(
   if (warnings.length === 0 && userAvgCA >= oppAvgCA + 6) {
     warnings.push(`On paper you were favoured (avg CA ${Math.round(userAvgCA)} vs ${Math.round(oppAvgCA)}). Unlucky variance this match.`);
   }
+  // Tactical archetype matchup (if both sides have tactics — always true
+  // for real matches; scrims / demos may pass undefined).
+  let tactical: import('../../src/online/protocol.ts').DuelDiagnostics['tactical'];
+  if (userTactics && oppTactics) {
+    const userArch = resolveArchetypes(userTactics.tArchetype, userTactics.ctArchetype, userStarters);
+    const oppArch = resolveArchetypes(oppTactics.tArchetype, oppTactics.ctArchetype, oppStarters);
+    // When user is on T: userT vs oppCt
+    // When user is on CT: oppT vs userCt → flip sign so + = user favored
+    const userTBonus = matchupBonusPct(userArch.t, oppArch.ct);
+    const userCtBonus = -matchupBonusPct(oppArch.t, userArch.ct);
+    tactical = {
+      userT: userArch.t, userCt: userArch.ct,
+      oppT: oppArch.t, oppCt: oppArch.ct,
+      userTBonusPct: userTBonus, userCtBonusPct: userCtBonus,
+      userSource: userArch.source, oppSource: oppArch.source,
+    };
+    // Bubble a warning when the tactical read was decisively bad.
+    const totalTacticalSwing = userTBonus + userCtBonus;
+    if (totalTacticalSwing <= -8) {
+      warnings.push(`Your tactical archetype was a poor matchup (${totalTacticalSwing}% net swing). Check the opponent's tendency next time.`);
+    } else if (totalTacticalSwing >= 8) {
+      warnings.push(`Great tactical read — matchup gave you +${totalTacticalSwing}% net swing.`);
+    }
+  }
   return {
     userAvgCA: Math.round(userAvgCA * 10) / 10,
     oppAvgCA: Math.round(oppAvgCA * 10) / 10,
@@ -493,6 +519,7 @@ function buildDuelDiagnostics(
     userRoleSynergy: userSyn.mult,
     oppRoleSynergy: oppSyn.mult,
     userSynergyNotes: userSyn.notes,
+    tactical,
   };
 }
 
@@ -1485,13 +1512,17 @@ export function handle(
       const accepterLineupIds = accepterPlayers.slice(0, 5).map((p) => p.id);
       // Build per-side diagnostics. Each side sees themselves as "user", the
       // other side as "opponent" — so the avg CA labels read correctly.
-      const buildSide = (own: typeof challengerBaseline, opp: typeof accepterBaseline, ownPlayers: Player[]) =>
+      const buildSide = (
+        own: typeof challengerBaseline, opp: typeof accepterBaseline,
+        ownPlayers: Player[], ownTactics: import('../../src/types.ts').Tactics, oppTactics: import('../../src/types.ts').Tactics,
+      ) =>
         buildDuelDiagnostics(
           own.map((b, i) => ({ ...ownPlayers[i], ...b })) as Player[],
           opp.map((b, i) => ({ ...ownPlayers[i], ...b })) as Player[], // shape-only — only CA is read for opponent
+          ownTactics, oppTactics,
         );
-      const challengerDiag = buildSide(challengerBaseline, accepterBaseline, challengerPlayers);
-      const accepterDiag = buildSide(accepterBaseline, challengerBaseline, accepterPlayers);
+      const challengerDiag = buildSide(challengerBaseline, accepterBaseline, challengerPlayers, challenger.tactics as import('../../src/types.ts').Tactics, accepter.tactics as import('../../src/types.ts').Tactics);
+      const accepterDiag = buildSide(accepterBaseline, challengerBaseline, accepterPlayers, accepter.tactics as import('../../src/types.ts').Tactics, challenger.tactics as import('../../src/types.ts').Tactics);
       const challengerOutcome = {
         result: duel.result,
         opponentName: accepter.name,
@@ -1793,13 +1824,17 @@ export function handle(
       // Push the duel-result to opponent + news headline at high stake.
       const myLineupIds = myStarters.map((p) => p.id);
       const oppLineupIds = oppPlayers.slice(0, 5).map((p) => p.id);
-      const buildSide = (own: typeof myBaseline, opp2: typeof oppBaseline, ownPlayers: Player[]) =>
+      const buildSide = (
+        own: typeof myBaseline, opp2: typeof oppBaseline,
+        ownPlayers: Player[], ownTactics: import('../../src/types.ts').Tactics, oppTactics: import('../../src/types.ts').Tactics,
+      ) =>
         buildDuelDiagnostics(
           own.map((b, i) => ({ ...ownPlayers[i], ...b })) as Player[],
           opp2.map((b, i) => ({ ...ownPlayers[i], ...b })) as Player[],
+          ownTactics, oppTactics,
         );
-      const myDiag = buildSide(myBaseline, oppBaseline, myPlayers);
-      const oppDiag = buildSide(oppBaseline, myBaseline, oppPlayers);
+      const myDiag = buildSide(myBaseline, oppBaseline, myPlayers, me.tactics as import('../../src/types.ts').Tactics, opp.tactics as import('../../src/types.ts').Tactics);
+      const oppDiag = buildSide(oppBaseline, myBaseline, oppPlayers, opp.tactics as import('../../src/types.ts').Tactics, me.tactics as import('../../src/types.ts').Tactics);
       const myOutcome = {
         result: duel.result,
         opponentName: opp.name,

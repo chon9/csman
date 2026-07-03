@@ -1665,6 +1665,25 @@ export interface DuelDiagnostics {
   oppRoleSynergy?: number;
   /** Plain-language breakdown of the user-side synergy decisions. */
   userSynergyNotes?: string[];
+  /** Tactical archetype matchup breakdown — showcases why the meta call
+   *  helped or hurt this match. All four fields together = user's T vs
+   *  opp's CT AND user's CT vs opp's T. */
+  tactical?: {
+    userT: import('../types').TStratArchetype;
+    userCt: import('../types').CtArchetype;
+    oppT: import('../types').TStratArchetype;
+    oppCt: import('../types').CtArchetype;
+    /** T-team advantage percentage when user is on T (userT vs oppCt).
+     *  Positive = user favored. */
+    userTBonusPct: number;
+    /** T-team advantage from the OPPONENT'S perspective when they're on T
+     *  (oppT vs userCt). We flip the sign so it reads as *user* advantage:
+     *  positive = user favored on CT side. */
+    userCtBonusPct: number;
+    /** Where each archetype came from — mirrors resolveArchetypes source. */
+    userSource: 'explicit' | 'inferred' | 'mixed';
+    oppSource: 'explicit' | 'inferred' | 'mixed';
+  };
 }
 
 // ============ Client → Server messages ============
@@ -2110,7 +2129,7 @@ export interface TrainingOutcome {
   newPA?: number;
 }
 
-export const PROTOCOL_VERSION = 52;
+export const PROTOCOL_VERSION = 53;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

@@ -6,6 +6,7 @@ import { useOnline } from '../onlineStore';
 import type { DuelOutcome } from '../protocol';
 import { rankForMmr } from '../protocol';
 import { TeamTag } from './TeamProfileModal';
+import { CT_ARCHETYPE_LABEL, T_ARCHETYPE_LABEL } from '../../engine/tacticalMatchup';
 
 export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
   const dismiss = useOnline((s) => s.dismissDuelResult);
@@ -118,6 +119,9 @@ export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
                   </ul>
                 </div>
               )}
+              {outcome.diagnostics.tactical && (
+                <TacticalPanel tactical={outcome.diagnostics.tactical} />
+              )}
             </div>
           )}
         </div>
@@ -150,6 +154,43 @@ function DiagStat({ label, value, highlight }: { label: string; value: string; h
     <div style={{ background: 'rgba(255,255,255,0.02)', padding: '6px 8px', borderRadius: 6 }}>
       <div className="muted small" style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</div>
       <div style={{ fontSize: 14, fontWeight: 700, color }}>{value}</div>
+    </div>
+  );
+}
+
+function TacticalPanel({ tactical }: { tactical: NonNullable<import('../protocol').DuelDiagnostics['tactical']> }): React.ReactElement {
+  const { userT, userCt, oppT, oppCt, userTBonusPct, userCtBonusPct } = tactical;
+  const total = userTBonusPct + userCtBonusPct;
+  const totalColor = total >= 6 ? '#6ed09a' : total <= -6 ? '#e25555' : '#d4d8e1';
+  const bonusStyle = (v: number): React.CSSProperties => ({
+    color: v >= 3 ? '#6ed09a' : v <= -3 ? '#e25555' : '#d4d8e1',
+    fontWeight: 700,
+    fontVariantNumeric: 'tabular-nums',
+  });
+  const fmt = (v: number): string => (v > 0 ? `+${v}%` : `${v}%`);
+
+  return (
+    <div style={{
+      marginTop: 10, padding: 10, borderRadius: 6,
+      background: 'rgba(217,179,68,0.06)',
+      border: '1px solid rgba(217,179,68,0.28)',
+    }}>
+      <div className="muted small" style={{ fontSize: 10, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span>🎯 Tactical matchup</span>
+        <span>Net swing: <strong style={{ color: totalColor }}>{fmt(total)}</strong></span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12 }}>
+        <div style={{ padding: '6px 8px', background: 'rgba(0,0,0,0.15)', borderRadius: 4 }}>
+          <div className="muted" style={{ fontSize: 10, marginBottom: 2 }}>You on T</div>
+          <div><strong>{T_ARCHETYPE_LABEL[userT]}</strong> <span className="muted">vs</span> {CT_ARCHETYPE_LABEL[oppCt]}</div>
+          <div style={{ marginTop: 2 }}><span style={bonusStyle(userTBonusPct)}>{fmt(userTBonusPct)}</span> <span className="muted small">per duel</span></div>
+        </div>
+        <div style={{ padding: '6px 8px', background: 'rgba(0,0,0,0.15)', borderRadius: 4 }}>
+          <div className="muted" style={{ fontSize: 10, marginBottom: 2 }}>You on CT</div>
+          <div><strong>{CT_ARCHETYPE_LABEL[userCt]}</strong> <span className="muted">vs</span> {T_ARCHETYPE_LABEL[oppT]}</div>
+          <div style={{ marginTop: 2 }}><span style={bonusStyle(userCtBonusPct)}>{fmt(userCtBonusPct)}</span> <span className="muted small">per duel</span></div>
+        </div>
+      </div>
     </div>
   );
 }

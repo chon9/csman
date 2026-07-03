@@ -38,6 +38,38 @@ interface CenterHighlight {
  *  enough to read at 2× playback (PvP) or 4× (AI-bet spectator). */
 const HIGHLIGHT_DECAY_TICKS = 3;
 
+/** Commentary category — determines the visual style applied when rendered
+ *  in the overlay. Order = display priority (first match wins). */
+type CommentaryCat = 'analyst' | 'epic' | 'bomb' | 'tactic-shift' | 'freeze' | 'normal';
+
+/** Classify a commentary line by pattern-matching. Keeps the engine's
+ *  emitted strings as-is (no marker prefixes) — pattern rules live here
+ *  and are the ONLY thing to update if engine phrasing changes. */
+function classifyCommentary(text: string): CommentaryCat {
+  if (text.startsWith('[Analyst]')) return 'analyst';
+  if (text.startsWith('🏆') || text.startsWith('🔥') || text.includes('WINS the 1v')) return 'epic';
+  if (text.startsWith('💥') || text.includes('bomb down')) return 'bomb';
+  if (text.includes("It's a FAKE") || text.includes('Mid-round call') || text.includes('Second wave')) return 'tactic-shift';
+  if (text.startsWith('[Freeze]')) return 'freeze';
+  return 'normal';
+}
+
+/** Per-category visual style. Kept as data (not classes) so the overlay
+ *  stays self-contained — no CSS additions needed. */
+const COMMENTARY_STYLE: Record<CommentaryCat, {
+  color: string;
+  weight: number;
+  stripe?: string;
+  background?: string;
+}> = {
+  analyst:       { color: '#f2c443', weight: 700, stripe: '#d9b344', background: 'rgba(217,179,68,0.10)' },
+  epic:          { color: '#ff8a5c', weight: 700, stripe: '#ff8a5c', background: 'rgba(255,138,92,0.10)' },
+  bomb:          { color: '#ffd700', weight: 700 },
+  'tactic-shift':{ color: '#6ed8ff', weight: 600, stripe: '#5aa4e6' },
+  freeze:        { color: '#8a93a3', weight: 400 },
+  normal:        { color: '#d4d8e1', weight: 400 },
+};
+
 /** Pick the single most relevant highlight to flash in the centre of the
  *  map for the current frame. Event priority (most recent wins):
  *    1. Round-end events at the final frame (clutch / defuse)
@@ -557,17 +589,36 @@ export default function OnlineLiveReplayScreen() {
             )}
           </div>
 
-          {/* Commentary — overlays the TOP-RIGHT of the stage */}
+          {/* Commentary — overlays the TOP-RIGHT of the stage. Lines are
+           *  classified into categories and rendered with category-specific
+           *  colors + weights so users can pick out the important beats
+           *  (analyst calls, aces, clutches, bomb events, fake / mid-round
+           *  adaptations) at a glance without pausing. */}
           <div className="md-overlay md-overlay-commentary">
             <div className="md-overlay-label">COMMENTARY</div>
             {commentary.length === 0 ? (
               <div className="md-overlay-empty">…</div>
             ) : (
-              commentary.map((c, i) => (
-                <div key={i} className="md-overlay-comm-line">
-                  <span className="md-overlay-comm-r">R{c.round}</span> {c.text}
-                </div>
-              ))
+              commentary.map((c, i) => {
+                const cat = classifyCommentary(c.text);
+                const style = COMMENTARY_STYLE[cat];
+                return (
+                  <div
+                    key={i}
+                    className="md-overlay-comm-line"
+                    style={{
+                      color: style.color,
+                      fontWeight: style.weight,
+                      borderLeft: style.stripe ? `3px solid ${style.stripe}` : undefined,
+                      paddingLeft: style.stripe ? 6 : undefined,
+                      background: style.background,
+                      borderRadius: style.background ? 3 : undefined,
+                    }}
+                  >
+                    <span className="md-overlay-comm-r">R{c.round}</span> {c.text}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
