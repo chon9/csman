@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
+import { classifyCommentary, COMMENTARY_STYLE } from './commentaryStyles';
 import { MAP_LAYOUTS } from '../../data/maps';
 import MapCanvas from '../../ui/match/MapCanvas';
 import type { Player, RoundFrame, RoundResult } from '../../types';
@@ -35,40 +36,11 @@ interface CenterHighlight {
 
 /** How many ticks the multi-kill / single-kill badge stays on screen
  *  after the kill that triggered it. ~3 ticks ≈ 6 seconds in-engine; long
- *  enough to read at 2× playback (PvP) or 4× (AI-bet spectator). */
+ *  enough to read at the default 2× playback for both PvP and AI-bet. */
 const HIGHLIGHT_DECAY_TICKS = 3;
 
-/** Commentary category — determines the visual style applied when rendered
- *  in the overlay. Order = display priority (first match wins). */
-type CommentaryCat = 'analyst' | 'epic' | 'bomb' | 'tactic-shift' | 'freeze' | 'normal';
-
-/** Classify a commentary line by pattern-matching. Keeps the engine's
- *  emitted strings as-is (no marker prefixes) — pattern rules live here
- *  and are the ONLY thing to update if engine phrasing changes. */
-function classifyCommentary(text: string): CommentaryCat {
-  if (text.startsWith('[Analyst]')) return 'analyst';
-  if (text.startsWith('🏆') || text.startsWith('🔥') || text.includes('WINS the 1v')) return 'epic';
-  if (text.startsWith('💥') || text.includes('bomb down')) return 'bomb';
-  if (text.includes("It's a FAKE") || text.includes('Mid-round call') || text.includes('Second wave')) return 'tactic-shift';
-  if (text.startsWith('[Freeze]')) return 'freeze';
-  return 'normal';
-}
-
-/** Per-category visual style. Kept as data (not classes) so the overlay
- *  stays self-contained — no CSS additions needed. */
-const COMMENTARY_STYLE: Record<CommentaryCat, {
-  color: string;
-  weight: number;
-  stripe?: string;
-  background?: string;
-}> = {
-  analyst:       { color: '#f2c443', weight: 700, stripe: '#d9b344', background: 'rgba(217,179,68,0.10)' },
-  epic:          { color: '#ff8a5c', weight: 700, stripe: '#ff8a5c', background: 'rgba(255,138,92,0.10)' },
-  bomb:          { color: '#ffd700', weight: 700 },
-  'tactic-shift':{ color: '#6ed8ff', weight: 600, stripe: '#5aa4e6' },
-  freeze:        { color: '#8a93a3', weight: 400 },
-  normal:        { color: '#d4d8e1', weight: 400 },
-};
+// Commentary classifier + style table live in a shared module so the
+// Live Feed's "Read Commentary" modal uses the same colour language.
 
 /** Pick the single most relevant highlight to flash in the centre of the
  *  map for the current frame. Event priority (most recent wins):
@@ -178,14 +150,14 @@ export default function OnlineLiveReplayScreen() {
   const players = useOnline((s) => s.players);
   const replay = useOnline((s) => s.liveReplay);
   const close = useOnline((s) => s.closeReplay);
-  // Two locked-replay sources with different speed rules:
+  // Two locked-replay sources — both default to 2× so users can actually
+  // read the analyst / matchup commentary at their natural cadence:
   //   - PvP duel-result with lockedReplay=true → drain into result modal
-  //     on 'home'. Default 2× so the analyst / matchup commentary is
-  //     readable, but the user can still bump speed.
+  //     on 'home'.
   //   - AI bet card resolution → endAiBetReplay routes back to 'ai-bets'.
-  //     Locked at 4× so every bettor sees the payout reveal at the same
-  //     beat (synced spectator experience).
-  // Both hide the scrub controls; only the speed varies.
+  //     Still "synced" for the payout reveal — everyone starts at 2× on
+  //     the same server push, viewers can still nudge speed if they want.
+  // Both hide the scrub controls.
   const pendingDuelResult = useOnline((s) => s.pendingDuelResult);
   const drainPendingDuelResult = useOnline((s) => s.drainPendingDuelResult);
   const aiBetReplayLocked = useOnline((s) => s.aiBetReplayLocked);
@@ -199,7 +171,7 @@ export default function OnlineLiveReplayScreen() {
   // watches the same beat (synced payout reveal); PvP result auto-play
   // drops to 2x so the analyst / matchup commentary is readable. Manual
   // history rewatches (unlocked) also default to 2x.
-  const [speed, setSpeed] = useState<number>(aiBetReplayLocked ? 4 : 2);
+  const [speed, setSpeed] = useState<number>(2);
   const [playing, setPlaying] = useState(true);
 
   // Nickname dictionary for the on-canvas player labels.

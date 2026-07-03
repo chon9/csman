@@ -6,6 +6,7 @@
 import { useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import { TeamTag } from './TeamProfileModal';
+import CommentaryModal from './CommentaryModal';
 
 type Filter = 'all' | 'pvp' | 'ai' | 'tournament';
 
@@ -30,6 +31,8 @@ export default function LiveFeedWidget() {
   const feed = useOnline((s) => s.liveFeed);
   const toggle = useOnline((s) => s.toggleLiveFeed);
   const fetchReplay = useOnline((s) => s.fetchLiveReplay);
+  const openCommentary = useOnline((s) => s.openCommentary);
+  const pendingCommentary = useOnline((s) => s.pendingCommentaryMatchId);
 
   const [filter, setFilter] = useState<Filter>('all');
 
@@ -124,13 +127,29 @@ export default function LiveFeedWidget() {
                 </div>
               </div>
 
-              <button className="lf-watch" onClick={() => fetchReplay(e.matchId)}>
-                ▶ Watch Replay
-              </button>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  className="lf-watch"
+                  style={{ flex: 1 }}
+                  onClick={() => fetchReplay(e.matchId)}
+                >
+                  ▶ Watch Replay
+                </button>
+                <button
+                  className="lf-watch"
+                  style={{ flex: 1, background: 'transparent', border: '1px solid var(--border-strong)', color: 'var(--text)' }}
+                  disabled={pendingCommentary === e.matchId}
+                  onClick={() => openCommentary(e.matchId)}
+                  title="Read the round-by-round commentary without playing back the replay frames"
+                >
+                  {pendingCommentary === e.matchId ? 'Loading…' : '📝 Read Commentary'}
+                </button>
+              </div>
             </article>
           );
         })}
       </div>
+      <CommentaryModal />
     </div>
   );
 }

@@ -151,6 +151,18 @@ interface OnlineState {
   showDevReport: boolean;
   /** Latest live-replay frames cached server-side — null if expired. */
   liveReplay: { matchId: string; result: import('../types').MatchResult; teamATag: string; teamBTag: string; /** Spectator-mode anchor: explicit team A roster ids when neither team is the viewer's own (e.g. AI bet replays). */ teamARosterIds?: string[] } | null;
+  /** Non-null when the user asked to READ commentary (not watch the
+   *  replay). The `live-replay` response routes to this modal instead of
+   *  the replay screen when its matchId matches. */
+  pendingCommentaryMatchId: string | null;
+  /** Populated commentary modal state — the Live Feed's "Read commentary"
+   *  button lands here without leaving the feed. */
+  commentaryPanel: {
+    matchId: string;
+    teamATag: string;
+    teamBTag: string;
+    result: import('../types').MatchResult;
+  } | null;
   /** Chat history (whole-server snapshot — clients filter per channel). */
   chatHistory: ChatMessage[];
   chatOpen: boolean;
@@ -417,6 +429,12 @@ interface OnlineState {
 
   // Phase 5 actions
   fetchLiveReplay: (matchId: string) => void;
+  /** Fetch a live-replay match but display the commentary inline in a
+   *  modal instead of navigating to the replay screen. Reuses the same
+   *  server endpoint (fetch-live-replay) with an intent flag so we don't
+   *  need a separate wire message. */
+  openCommentary: (matchId: string) => void;
+  closeCommentary: () => void;
   closeReplay: () => void;
   dismissDevReport: () => void;
   toggleChat: () => void;
@@ -539,6 +557,8 @@ export const useOnline = create<OnlineState>((set, get) => ({
   lastDevChanges: [],
   showDevReport: false,
   liveReplay: null,
+  pendingCommentaryMatchId: null,
+  commentaryPanel: null,
   chatHistory: [],
   chatOpen: false,
   chatChannel: 'global',
@@ -858,6 +878,20 @@ export const useOnline = create<OnlineState>((set, get) => ({
           break;
         }
         case 'live-replay': {
+          // If the user asked for "read commentary" on this exact match,
+          // route into the commentary panel and skip the replay screen.
+          if (get().pendingCommentaryMatchId === msg.matchId) {
+            set({
+              commentaryPanel: {
+                matchId: msg.matchId,
+                teamATag: msg.teamATag,
+                teamBTag: msg.teamBTag,
+                result: msg.result,
+              },
+              pendingCommentaryMatchId: null,
+            });
+            break;
+          }
           set({
             liveReplay: {
               matchId: msg.matchId,
@@ -873,6 +907,14 @@ export const useOnline = create<OnlineState>((set, get) => ({
           break;
         }
         case 'live-replay-expired': {
+          // If the user was trying to read commentary, tell them the
+          // commentary cache expired (same 5-min window). Otherwise
+          // fall back to the generic replay-expired toast.
+          if (get().pendingCommentaryMatchId === msg.matchId) {
+            pushToast('warn', 'Commentary expired — matches drop out of the live cache after ~5 minutes.');
+            set({ pendingCommentaryMatchId: null });
+            break;
+          }
           pushToast('warn', 'Live replay expired — only the stats view is available now.');
           break;
         }
@@ -2027,7 +2069,34 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
 
   fetchLiveReplay(matchId) {
+    // Clear any pending commentary intent — this is a plain Watch flow.
+    set({ pendingCommentaryMatchId: null });
     get().client?.send({ kind: 'fetch-live-replay', matchId });
+  },
+  openCommentary(matchId) {
+    // If liveReplay already holds this match, just populate the panel
+    // directly — no extra roundtrip.
+    const cached = get().liveReplay;
+    if (cached && cached.matchId === matchId) {
+      set({
+        commentaryPanel: {
+          matchId,
+          teamATag: cached.teamATag,
+          teamBTag: cached.teamBTag,
+          result: cached.result,
+        },
+        pendingCommentaryMatchId: null,
+      });
+      return;
+    }
+    // Otherwise ask the server. The `live-replay` handler checks the
+    // pending flag and routes the response into commentaryPanel instead
+    // of navigating.
+    set({ pendingCommentaryMatchId: matchId });
+    get().client?.send({ kind: 'fetch-live-replay', matchId });
+  },
+  closeCommentary() {
+    set({ commentaryPanel: null, pendingCommentaryMatchId: null });
   },
 
   closeReplay() {
