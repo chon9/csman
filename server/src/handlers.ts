@@ -2941,6 +2941,12 @@ export function handle(
       log(`skin bought: ${buyer.tag} ← ${seller.tag} $${price.toLocaleString()} (seller net $${sellerProceeds.toLocaleString()}) — ${skin.weapon} ${skin.name} #${skin.serial ?? '?'}`);
       bumpQuestProgress(db, buyer.id, 'skin_buys');
       bumpQuestProgress(db, seller.id, 'skin_sells');
+      // Achievement: 5 lifetime peer skin sales as the seller. Was defined
+      // in ACHIEVEMENT_LABELS but never fired — no counter existed.
+      const totalSales = db.recordSkinSale(seller.id);
+      if (totalSales >= 5) {
+        tryUnlock(db, notifyTeam, seller.id, 'skin_seller_5', ACHIEVEMENT_LABELS.skin_seller_5, totalSales);
+      }
       // Push to the seller so their inventory + cash update live.
       notifyTeam(seller.id, { kind: 'skin-unlisted', listingId: listing.id });
       notifyTeam(seller.id, { kind: 'team-money-updated', teamId: seller.id, money: seller.money });

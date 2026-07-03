@@ -492,6 +492,10 @@ export function openDb(path: string) {
   tryAddColumn('teams', 'lifetime_cases_opened', 'INTEGER', '0');
   tryAddColumn('teams', 'lifetime_streams', 'INTEGER', '0');
   tryAddColumn('teams', 'lifetime_tournaments_won', 'INTEGER', '0');
+  // Peer skin market — closed sales made as the seller. Drives the
+  // 'skin_seller_5' achievement, which was defined but never fired
+  // because we had no lifetime counter.
+  tryAddColumn('teams', 'lifetime_skin_sales', 'INTEGER', '0');
   // Login streak — drives the daily-quest reward multiplier. Resets to
   // 1 when the gap between claim days is > 1 UTC day, increments
   // otherwise. last_streak_date is the YYYY-MM-DD of the most recent
@@ -985,6 +989,8 @@ export function openDb(path: string) {
   const getLifetimeStreams = db.prepare(`SELECT lifetime_streams FROM teams WHERE id = ?`);
   const bumpLifetimeTournamentsWon = db.prepare(`UPDATE teams SET lifetime_tournaments_won = COALESCE(lifetime_tournaments_won, 0) + 1 WHERE id = ?`);
   const getLifetimeTournamentsWon = db.prepare(`SELECT lifetime_tournaments_won FROM teams WHERE id = ?`);
+  const bumpLifetimeSkinSales = db.prepare(`UPDATE teams SET lifetime_skin_sales = COALESCE(lifetime_skin_sales, 0) + 1 WHERE id = ?`);
+  const getLifetimeSkinSales = db.prepare(`SELECT lifetime_skin_sales FROM teams WHERE id = ?`);
 
   function recordCaseOpened(teamId: string): number {
     bumpLifetimeCases.run(teamId);
@@ -995,6 +1001,14 @@ export function openDb(path: string) {
     bumpLifetimeStreams.run(teamId);
     const r = getLifetimeStreams.get(teamId) as { lifetime_streams: number | null } | undefined;
     return r?.lifetime_streams ?? 0;
+  }
+  /** Bump the seller's lifetime peer-market skin sale counter and return
+   *  the new total. Called on every `buy-skin-listing` after the money
+   *  has moved. Drives the 'skin_seller_5' achievement threshold. */
+  function recordSkinSale(sellerTeamId: string): number {
+    bumpLifetimeSkinSales.run(sellerTeamId);
+    const r = getLifetimeSkinSales.get(sellerTeamId) as { lifetime_skin_sales: number | null } | undefined;
+    return r?.lifetime_skin_sales ?? 0;
   }
   // -------- MMR ladder --------
 
@@ -3190,6 +3204,7 @@ export function openDb(path: string) {
     recordDuelRefill,
     recordCaseOpened,
     recordStreamDone,
+    recordSkinSale,
     recordTournamentWin,
     getLoginStreak,
     getLastStreakDate,
