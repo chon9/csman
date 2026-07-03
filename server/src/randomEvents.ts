@@ -74,9 +74,15 @@ function bumpAttribute(player: Player, attr: keyof PlayerAttributes, delta: numb
   return after - before;
 }
 
+/** Hoisted prepared statement — avoids the sqlite driver re-wrapping the
+ *  compiled SQL on every tick. Bound at first-use because it needs a `db`
+ *  handle that only exists inside the ticker. */
+let listAllTeamsStmt: ReturnType<DB['raw']['prepare']> | null = null;
+
 /** All active teams and their starter-five (for player-scoped events). */
 function loadActiveRosters(db: DB): Array<{ teamId: string; teamTag: string; starters: Player[] }> {
-  const teams = db.raw.prepare(`SELECT id, tag FROM teams`).all() as Array<{ id: string; tag: string }>;
+  if (!listAllTeamsStmt) listAllTeamsStmt = db.raw.prepare(`SELECT id, tag FROM teams`);
+  const teams = listAllTeamsStmt.all() as Array<{ id: string; tag: string }>;
   const out: Array<{ teamId: string; teamTag: string; starters: Player[] }> = [];
   for (const t of teams) {
     const players = db.loadTeamPlayers(t.id);
@@ -84,6 +90,16 @@ function loadActiveRosters(db: DB): Array<{ teamId: string; teamTag: string; sta
     out.push({ teamId: t.id, teamTag: t.tag, starters: players.slice(0, 5) });
   }
   return out;
+}
+
+/** Drop expired cooldown entries. Called once per tick. Keeps the map
+ *  bounded to teams that have been touched in the last cooldown window
+ *  — no unbounded growth from deleted teams or churned rosters. */
+function pruneCooldowns(cooldowns: Map<string, number>): void {
+  const now = Date.now();
+  for (const [key, expiry] of cooldowns) {
+    if (expiry <= now) cooldowns.delete(key);
+  }
 }
 
 /** Filter starters to newgens only (real-name legends stay evergreen). */
@@ -327,6 +343,10 @@ const EVENTS: RandomEvent[] = [
 /** Roll one tick — decide whether ANY event fires, and if so, pick +
  *  resolve one. Skips silently on days when nothing valid rolls up. */
 export function tickRandomEvents(ctx: EventContext): NewsItem | null {
+  // Housekeeping: drop expired cooldown entries so the map stays bounded
+  // to teams that are actually in the window. Prevents deleted / churned
+  // teams from leaving orphan keys.
+  pruneCooldowns(ctx.cooldowns);
   if (ctx.rng() > EVENT_TICK_CHANCE) return null;
   // Weighted-random draw across the whole registry.
   const totalWeight = EVENTS.reduce((s, e) => s + e.weight, 0);
