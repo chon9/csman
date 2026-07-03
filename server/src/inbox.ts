@@ -174,6 +174,17 @@ function pick<T>(list: T[]): T | null {
   return list[Math.floor(Math.random() * list.length)]!;
 }
 
+/** Substitute template placeholders on every visible string. Handles
+ *  `{nick}` (player nickname) and `{opp}` (opponent team tag). Missing
+ *  values leave the placeholder as-is so the bug is visible in copy
+ *  rather than silently swallowed. */
+function fill(text: string, vars: { nick?: string; opp?: string }): string {
+  let out = text;
+  if (vars.nick) out = out.replace(/\{nick\}/g, vars.nick);
+  if (vars.opp) out = out.replace(/\{opp\}/g, vars.opp);
+  return out;
+}
+
 /** Generate a post-match player message. Returns null if no eligible
  *  starter is available (all real-name / retired etc.). */
 export function generatePlayerMessageItem(
@@ -184,15 +195,20 @@ export function generatePlayerMessageItem(
   const player = pick(eligible)!;
   const template = pick(mood === 'win' ? WIN_MESSAGES : LOSS_MESSAGES);
   if (!template) return null;
+  const vars = { nick: player.nickname };
   return {
-    title: template.title.replace(/\{nick\}/g, player.nickname),
-    body: template.body.replace(/\{nick\}/g, player.nickname),
+    title: fill(template.title, vars),
+    body: fill(template.body, vars),
     payload: {
       templateId: `${mood}:${WIN_MESSAGES.concat(LOSS_MESSAGES).indexOf(template)}`,
       playerId: player.id,
       playerNickname: player.nickname,
       mood,
-      choices: template.choices.map((c) => ({ id: c.id, label: c.label, hint: c.hint })),
+      choices: template.choices.map((c) => ({
+        id: c.id,
+        label: fill(c.label, vars),
+        hint: c.hint,
+      })),
     },
   };
 }
@@ -203,14 +219,19 @@ export function generateMediaItem(
 ): { title: string; body: string; payload: Record<string, unknown> } | null {
   const template = pick(mood === 'win' ? WIN_MEDIA : LOSS_MEDIA);
   if (!template) return null;
+  const vars = { opp: oppTag };
   return {
-    title: template.title,
-    body: template.body.replace(/\{opp\}/g, oppTag),
+    title: fill(template.title, vars),
+    body: fill(template.body, vars),
     payload: {
       templateId: `${mood}:${WIN_MEDIA.concat(LOSS_MEDIA).indexOf(template)}`,
       oppTag,
       mood,
-      choices: template.choices.map((c) => ({ id: c.id, label: c.label, hint: c.hint })),
+      choices: template.choices.map((c) => ({
+        id: c.id,
+        label: fill(c.label, vars),
+        hint: c.hint,
+      })),
     },
   };
 }
