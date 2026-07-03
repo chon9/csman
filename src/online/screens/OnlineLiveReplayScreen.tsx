@@ -35,7 +35,7 @@ interface CenterHighlight {
 
 /** How many ticks the multi-kill / single-kill badge stays on screen
  *  after the kill that triggered it. ~3 ticks ≈ 6 seconds in-engine; long
- *  enough to read at 4× playback. */
+ *  enough to read at 2× playback (PvP) or 4× (AI-bet spectator). */
 const HIGHLIGHT_DECAY_TICKS = 3;
 
 /** Pick the single most relevant highlight to flash in the centre of the
@@ -146,11 +146,14 @@ export default function OnlineLiveReplayScreen() {
   const players = useOnline((s) => s.players);
   const replay = useOnline((s) => s.liveReplay);
   const close = useOnline((s) => s.closeReplay);
-  // Two locked-replay sources:
-  //   - PvP duel-result with lockedReplay=true → drain into result modal on 'home'
-  //   - AI bet card resolution → endAiBetReplay routes back to 'ai-bets'
-  // Both force 4× speed + hide the scrub controls so every viewer
-  // watches the same match at the same beat.
+  // Two locked-replay sources with different speed rules:
+  //   - PvP duel-result with lockedReplay=true → drain into result modal
+  //     on 'home'. Default 2× so the analyst / matchup commentary is
+  //     readable, but the user can still bump speed.
+  //   - AI bet card resolution → endAiBetReplay routes back to 'ai-bets'.
+  //     Locked at 4× so every bettor sees the payout reveal at the same
+  //     beat (synced spectator experience).
+  // Both hide the scrub controls; only the speed varies.
   const pendingDuelResult = useOnline((s) => s.pendingDuelResult);
   const drainPendingDuelResult = useOnline((s) => s.drainPendingDuelResult);
   const aiBetReplayLocked = useOnline((s) => s.aiBetReplayLocked);
@@ -461,7 +464,7 @@ export default function OnlineLiveReplayScreen() {
             }}
             title={aiBetReplayLocked ? 'Every bettor on this card is watching at the same time — no skipping.' : 'Both teams are watching this replay at the same time — no skipping.'}
           >
-            🔒 Synced replay · 4×
+            🔒 Synced replay · {speed}×
           </span>
         ) : (
           <button className="btn" onClick={close}>← Back</button>
@@ -618,7 +621,7 @@ export default function OnlineLiveReplayScreen() {
       {locked ? (
         <div className="panel" style={{ padding: 12, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
           <span className="muted small">
-            🔒 Watching with your opponent · forced 4× · skipping disabled. Result reveals when the last frame plays.
+            🔒 Watching with your opponent · {speed}× locked · skipping disabled. Result reveals when the last frame plays.
           </span>
         </div>
       ) : (
