@@ -1595,15 +1595,35 @@ export function handle(
         candidates.push({ teamId: t.id, tag: t.tag, name: t.name, players, totalCA });
       }
 
-      // Pick winners by CA window. Try the strict primary band first; fall
-      // back to the wider band only if the primary yielded nothing.
+      // Prevent same-opponent-twice-in-a-row. Look up the caller's last
+      // PvP opponent; if picking from the primary band would land on
+      // that team again, widen to the fallback band before allowing a
+      // rematch. Only allow the rematch as a true last resort (nobody
+      // else exists in either band).
+      const lastOppId = db.findLastPvpOpponent(me.id);
       const withinDelta = (delta: number): Candidate[] =>
         candidates.filter((c) => Math.abs(c.totalCA - myTotalCA) <= delta);
-      let band = withinDelta(APVP_PRIMARY_DELTA);
+      const excludingLast = (list: Candidate[]): Candidate[] =>
+        lastOppId ? list.filter((c) => c.teamId !== lastOppId) : list;
+
+      // Primary band excluding last opponent — the ideal case.
+      let band = excludingLast(withinDelta(APVP_PRIMARY_DELTA));
       let bandLabel = `±${APVP_PRIMARY_DELTA}`;
+
+      // If primary band is empty AFTER excluding the last opponent, widen
+      // to the fallback band before letting the rematch happen. Real users
+      // will accept "we searched wider to find someone new" much more than
+      // "you just fought them, here's a rematch".
+      if (band.length === 0) {
+        band = excludingLast(withinDelta(APVP_FALLBACK_DELTA));
+        bandLabel = `±${APVP_FALLBACK_DELTA} (widened to avoid rematch)`;
+      }
+      // Last-resort rematch: nobody else in either band. Better than
+      // erroring the user out — they still get a match, they just get
+      // the same team back with an honest 'no other opponents' notice.
       if (band.length === 0) {
         band = withinDelta(APVP_FALLBACK_DELTA);
-        bandLabel = `±${APVP_FALLBACK_DELTA}`;
+        bandLabel = `±${APVP_FALLBACK_DELTA} (rematch — no other teams available)`;
       }
       if (band.length === 0) {
         return {

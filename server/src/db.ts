@@ -2314,6 +2314,24 @@ export function openDb(path: string) {
     return rows;
   }
 
+  /** Return the opponent team_id from the caller's most recent PvP match,
+   *  or null if they've never played one. Used by Quick Match to avoid
+   *  serving the same opponent back-to-back. */
+  const findLastPvpOpponentStmt = db.prepare(
+    `SELECT team_a_id, team_b_id
+     FROM match_history
+     WHERE kind = 'pvp' AND (team_a_id = ? OR team_b_id = ?)
+     ORDER BY played_at DESC
+     LIMIT 1`,
+  );
+  function findLastPvpOpponent(teamId: string): string | null {
+    const row = findLastPvpOpponentStmt.get(teamId, teamId) as
+      | { team_a_id: string; team_b_id: string | null }
+      | undefined;
+    if (!row) return null;
+    return row.team_a_id === teamId ? row.team_b_id : row.team_a_id;
+  }
+
   // -------- Seasons + leaderboard --------
 
   interface SeasonRow {
@@ -3312,6 +3330,7 @@ export function openDb(path: string) {
     recordMatch,
     loadMatch,
     loadMatchesForTeam,
+    findLastPvpOpponent,
     currentSeason,
     recordSeasonOutcome,
     loadLeaderboard,
