@@ -160,7 +160,11 @@ export default function OnlineLiveReplayScreen() {
   const [mapIdx, setMapIdx] = useState(0);
   const [roundIdx, setRoundIdx] = useState(0);
   const [frameIdx, setFrameIdx] = useState(0);
-  const [speed, setSpeed] = useState<number>(locked ? 4 : 2);
+  // Default speed: AI-bet spectator replays stay at 4x so every bettor
+  // watches the same beat (synced payout reveal); PvP result auto-play
+  // drops to 2x so the analyst / matchup commentary is readable. Manual
+  // history rewatches (unlocked) also default to 2x.
+  const [speed, setSpeed] = useState<number>(aiBetReplayLocked ? 4 : 2);
   const [playing, setPlaying] = useState(true);
 
   // Nickname dictionary for the on-canvas player labels.
