@@ -386,7 +386,7 @@ import { DAILY_RACE_BOARD_LIMIT } from './dailyRace.ts';
 import type { DailyRaceEntryWire, DailyRacePayoutWire } from '../../src/online/protocol.ts';
 import { canTrain, loadTrainingWire, logLineFor, rollTrainingOutcome } from './training.ts';
 import { matchupBonusPct, resolveArchetypes } from '../../src/engine/tacticalMatchup.ts';
-import { emitInboxItem, generateMediaItem, generatePlayerMessageItem, resolveInboxChoice } from './inbox.ts';
+import { emitInboxItem, resolveInboxChoice, rollPostMatchInbox, type MatchContext } from './inbox.ts';
 import type { InboxItem } from '../../src/online/protocol.ts';
 import { TRAINING_DURATION_MS } from '../../src/online/protocol.ts';
 import { ATTRIBUTE_KEYS } from '../../src/types.ts';
@@ -1216,29 +1216,22 @@ export function handle(
       })) as Player[];
       const diagnostics = isScrim ? undefined : buildDuelDiagnostics(userStartersForDiag, duel.opponentPlayers.slice(0, 5));
 
-      // Post-match narrative — media on every non-scrim AI duel + a 40%
-      // roll for a player message. Scrims skip: they're practice sessions,
-      // no press-conference / player-drama context.
-      if (!isScrim) {
+      // Post-match narrative: at most ONE item per match (player quote /
+      // reporter recap / media question). ~55% of matches get something;
+      // 45% roll to nothing so the inbox stays valuable, not noise.
+      if (!isScrim && Math.random() < 0.55) {
         const teamWon = duel.result.winnerId === team.id;
-        const mood: 'win' | 'loss' = teamWon ? 'win' : 'loss';
-        const startersFresh = db.loadTeamPlayers(team.id).slice(0, 5);
-        if (Math.random() < 0.4) {
-          const gen = generatePlayerMessageItem(startersFresh, mood);
-          if (gen) {
-            emitInboxItem(db, notifyTeam, {
-              teamId: team.id, kind: 'player-message',
-              title: gen.title, body: gen.body, payload: gen.payload,
-            });
-          }
-        }
-        const media = generateMediaItem(duel.opponentTag, mood);
-        if (media) {
-          emitInboxItem(db, notifyTeam, {
-            teamId: team.id, kind: 'media',
-            title: media.title, body: media.body, payload: media.payload,
-          });
-        }
+        const mvp = computeMvpSnapshot(db, duel.result, team.id);
+        const ctx: MatchContext = {
+          myTag: team.tag,
+          oppTag: duel.opponentTag,
+          mood: teamWon ? 'win' : 'loss',
+          myMaps: teamWon ? Math.max(duel.result.mapsA, duel.result.mapsB) : Math.min(duel.result.mapsA, duel.result.mapsB),
+          oppMaps: teamWon ? Math.min(duel.result.mapsA, duel.result.mapsB) : Math.max(duel.result.mapsA, duel.result.mapsB),
+          mvp: mvp ? { ...mvp, isOwn: mvp.isOwn } : undefined,
+          starters: db.loadTeamPlayers(team.id).slice(0, 5),
+        };
+        rollPostMatchInbox(db, notifyTeam, team.id, ctx);
       }
 
       return {
@@ -1679,26 +1672,34 @@ export function handle(
       // Also tell the challenger their challenge resolved (so any list-challenges UI clears).
       notifyTeam(challenger.id, { kind: 'challenge-cancelled', challengeId: challenge.id });
 
-      // Post-match narrative for BOTH sides — media every match, player
-      // messages ~40%. Accepted challenges are consensual PvP so both
-      // parties get press coverage.
-      {
-        const chMood: 'win' | 'loss' = accepterWon ? 'loss' : 'win';
-        const acMood: 'win' | 'loss' = accepterWon ? 'win' : 'loss';
-        const chStartersFresh = db.loadTeamPlayers(challenger.id).slice(0, 5);
-        const acStartersFresh = db.loadTeamPlayers(accepter.id).slice(0, 5);
-        if (Math.random() < 0.4) {
-          const gen = generatePlayerMessageItem(chStartersFresh, chMood);
-          if (gen) emitInboxItem(db, notifyTeam, { teamId: challenger.id, kind: 'player-message', title: gen.title, body: gen.body, payload: gen.payload });
-        }
-        if (Math.random() < 0.4) {
-          const gen = generatePlayerMessageItem(acStartersFresh, acMood);
-          if (gen) emitInboxItem(db, notifyTeam, { teamId: accepter.id, kind: 'player-message', title: gen.title, body: gen.body, payload: gen.payload });
-        }
-        const chMedia = generateMediaItem(accepter.tag, chMood);
-        if (chMedia) emitInboxItem(db, notifyTeam, { teamId: challenger.id, kind: 'media', title: chMedia.title, body: chMedia.body, payload: chMedia.payload });
-        const acMedia = generateMediaItem(challenger.tag, acMood);
-        if (acMedia) emitInboxItem(db, notifyTeam, { teamId: accepter.id, kind: 'media', title: acMedia.title, body: acMedia.body, payload: acMedia.payload });
+      // Post-match narrative for BOTH sides — one item per side max,
+      // ~55% chance per side so a PvP loss doesn't automatically pile
+      // on with press coverage.
+      if (Math.random() < 0.55) {
+        const chMvp = computeMvpSnapshot(db, duel.result, challenger.id);
+        const ctx: MatchContext = {
+          myTag: challenger.tag, oppTag: accepter.tag,
+          mood: accepterWon ? 'loss' : 'win',
+          myMaps: accepterWon ? duel.result.mapsA : duel.result.mapsA,
+          oppMaps: accepterWon ? duel.result.mapsB : duel.result.mapsB,
+          mvp: chMvp,
+          starters: db.loadTeamPlayers(challenger.id).slice(0, 5),
+        };
+        rollPostMatchInbox(db, notifyTeam, challenger.id, ctx);
+      }
+      if (Math.random() < 0.55) {
+        const acMvp = computeMvpSnapshot(db, duel.result, accepter.id);
+        const ctx: MatchContext = {
+          myTag: accepter.tag, oppTag: challenger.tag,
+          mood: accepterWon ? 'win' : 'loss',
+          // From accepter's perspective, mapsA/mapsB flip based on who
+          // was assigned side A. duel.result.mapsA is challenger side.
+          myMaps: duel.result.mapsB,
+          oppMaps: duel.result.mapsA,
+          mvp: acMvp,
+          starters: db.loadTeamPlayers(accepter.id).slice(0, 5),
+        };
+        rollPostMatchInbox(db, notifyTeam, accepter.id, ctx);
       }
       // High-stakes PvP gets a news headline so the server feels alive.
       if (challenge.stake >= 10_000) {
@@ -2035,34 +2036,31 @@ export function handle(
         },
       });
 
-      // Post-match narrative: media fires on every match (FM-style press
-      // conference), player messages fire ~40% so they still feel earned
-      // rather than every-match spam.
-      const meMood: 'win' | 'loss' = meWon ? 'win' : 'loss';
-      const oppMood: 'win' | 'loss' = defenderWon ? 'win' : 'loss';
-      const myStartersFresh = db.loadTeamPlayers(me.id).slice(0, 5);
-      if (Math.random() < 0.4) {
-        const gen = generatePlayerMessageItem(myStartersFresh, meMood);
-        if (gen) {
-          emitInboxItem(db, notifyTeam, {
-            teamId: me.id, kind: 'player-message',
-            title: gen.title, body: gen.body, payload: gen.payload,
-          });
-        }
+      // Post-match narrative: one item per side max, ~55% chance per
+      // side so back-to-back Quick Matches don't drown the inbox.
+      if (Math.random() < 0.55) {
+        const myMvp = computeMvpSnapshot(db, duel.result, me.id);
+        const ctx: MatchContext = {
+          myTag: me.tag, oppTag: opp.tag,
+          mood: meWon ? 'win' : 'loss',
+          myMaps: duel.result.mapsA,
+          oppMaps: duel.result.mapsB,
+          mvp: myMvp,
+          starters: db.loadTeamPlayers(me.id).slice(0, 5),
+        };
+        rollPostMatchInbox(db, notifyTeam, me.id, ctx);
       }
-      const mediaMe = generateMediaItem(opp.tag, meMood);
-      if (mediaMe) {
-        emitInboxItem(db, notifyTeam, {
-          teamId: me.id, kind: 'media',
-          title: mediaMe.title, body: mediaMe.body, payload: mediaMe.payload,
-        });
-      }
-      const mediaOpp = generateMediaItem(me.tag, oppMood);
-      if (mediaOpp) {
-        emitInboxItem(db, notifyTeam, {
-          teamId: opp.id, kind: 'media',
-          title: mediaOpp.title, body: mediaOpp.body, payload: mediaOpp.payload,
-        });
+      if (Math.random() < 0.55) {
+        const oppMvp = computeMvpSnapshot(db, duel.result, opp.id);
+        const ctx: MatchContext = {
+          myTag: opp.tag, oppTag: me.tag,
+          mood: defenderWon ? 'win' : 'loss',
+          myMaps: duel.result.mapsB,
+          oppMaps: duel.result.mapsA,
+          mvp: oppMvp,
+          starters: db.loadTeamPlayers(opp.id).slice(0, 5),
+        };
+        rollPostMatchInbox(db, notifyTeam, opp.id, ctx);
       }
 
       if (stake >= 10_000) {
