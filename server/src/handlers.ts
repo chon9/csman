@@ -1680,8 +1680,10 @@ export function handle(
         const ctx: MatchContext = {
           myTag: challenger.tag, oppTag: accepter.tag,
           mood: accepterWon ? 'loss' : 'win',
-          myMaps: accepterWon ? duel.result.mapsA : duel.result.mapsA,
-          oppMaps: accepterWon ? duel.result.mapsB : duel.result.mapsB,
+          // In accept-challenge, challenger is side A, accepter is side B —
+          // so mapsA is the challenger's map wins regardless of who won.
+          myMaps: duel.result.mapsA,
+          oppMaps: duel.result.mapsB,
           mvp: chMvp,
           starters: db.loadTeamPlayers(challenger.id).slice(0, 5),
         };
