@@ -11,14 +11,8 @@ import { useOnline } from '../onlineStore';
 import type { Player, PlayerAttributes } from '../../types';
 import { findTrait, type PublicPlayer, type SkinInstanceWire } from '../protocol';
 import { TeamTag } from './TeamProfileModal';
-
-const RARITY_COLOR: Record<string, string> = {
-  'mil-spec': '#4b69ff',
-  'restricted': '#8847ff',
-  'classified': '#d32ce6',
-  'covert': '#eb4b4b',
-  'rare-special': '#ffd700',
-};
+import { RARITY_COLOR, RARITY_LABEL } from '../../sim/caseOpening';
+import { RarityBadge } from './OnlineCasesScreen';
 
 /** Clickable player nickname — drops into any roster/scoreboard cell. */
 export function PlayerName({ playerId, label, color }: { playerId: string; label: string; color?: string }): React.ReactElement {
@@ -338,21 +332,33 @@ function LoadoutPanel({ player }: { player: Player }): React.ReactElement {
             Pick a skin — equipping over the same weapon slot will swap the previous one out.
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
-            {available.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => { equipSkin(player.id, s.id); setPickerOpen(false); }}
-                style={{
-                  textAlign: 'left', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.08)',
-                  background: 'rgba(255,255,255,0.03)', color: 'var(--text)',
-                  borderRadius: 4, padding: '6px 8px', fontFamily: 'inherit',
-                }}
-              >
-                <div style={{ fontSize: 12, fontWeight: 700 }}>{s.weapon} <span className="muted">{s.name}</span></div>
-                {s.nametag && <div style={{ fontSize: 10, color: '#d9b344', fontStyle: 'italic' }}>🏷 "{s.nametag}"</div>}
-                <div className="muted small" style={{ fontSize: 10 }}>{s.wear}{s.statTrak ? ' · StatTrak™' : ''}</div>
-              </button>
-            ))}
+            {available.map((s) => {
+              const rc = RARITY_COLOR[s.rarity] ?? '#8b93a3';
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => { equipSkin(player.id, s.id); setPickerOpen(false); }}
+                  title={RARITY_LABEL[s.rarity]}
+                  style={{
+                    textAlign: 'left', cursor: 'pointer',
+                    border: `1px solid ${rc}44`, background: `${rc}18`,
+                    color: 'var(--text)', fontFamily: 'inherit',
+                    borderRadius: 4, padding: '6px 10px', paddingLeft: 12,
+                    boxShadow: `inset 4px 0 0 ${rc}`,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {s.weapon}
+                    </div>
+                    <RarityBadge rarity={s.rarity} />
+                  </div>
+                  <div className="muted small" style={{ fontSize: 11 }}>{s.name}</div>
+                  {s.nametag && <div style={{ fontSize: 10, color: '#d9b344', fontStyle: 'italic' }}>🏷 "{s.nametag}"</div>}
+                  <div className="muted small" style={{ fontSize: 10 }}>{s.wear}{s.statTrak ? ' · StatTrak™' : ''}</div>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -362,23 +368,33 @@ function LoadoutPanel({ player }: { player: Player }): React.ReactElement {
 
 function EquippedSkinCard({ skin, onUnequip }: { skin: SkinInstanceWire; onUnequip: () => void }): React.ReactElement {
   const rarityColor = RARITY_COLOR[skin.rarity] ?? '#8b93a3';
+  // Same visual language as the Cases inventory row: 4px inset left
+  // stripe, muted-hex background block, RarityBadge chip alongside
+  // the weapon name.
   return (
-    <div style={{
-      padding: 8, borderRadius: 6,
-      background: `linear-gradient(135deg, ${rarityColor}18, transparent)`,
-      border: `1px solid ${rarityColor}55`,
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
+    <div
+      title={RARITY_LABEL[skin.rarity]}
+      style={{
+        padding: '8px 10px',
+        paddingLeft: 14,
+        borderRadius: 4,
+        background: `${rarityColor}18`,
+        border: `1px solid ${rarityColor}44`,
+        boxShadow: `inset 4px 0 0 ${rarityColor}`,
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {skin.weapon}
           </div>
-          <div className="muted small" style={{ fontSize: 11 }}>{skin.name}</div>
-          {skin.nametag && <div style={{ fontSize: 11, color: '#d9b344', fontStyle: 'italic' }}>🏷 "{skin.nametag}"</div>}
-          <div className="muted small" style={{ fontSize: 10 }}>{skin.wear}{skin.statTrak ? ' · StatTrak™' : ''}</div>
+          <RarityBadge rarity={skin.rarity} />
         </div>
         <button className="btn btn-tiny" onClick={onUnequip} title="Remove from loadout">✕</button>
       </div>
+      <div className="muted small" style={{ fontSize: 11 }}>{skin.name}</div>
+      {skin.nametag && <div style={{ fontSize: 11, color: '#d9b344', fontStyle: 'italic' }}>🏷 "{skin.nametag}"</div>}
+      <div className="muted small" style={{ fontSize: 10 }}>{skin.wear}{skin.statTrak ? ' · StatTrak™' : ''}</div>
     </div>
   );
 }

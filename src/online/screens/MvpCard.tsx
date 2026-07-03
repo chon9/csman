@@ -7,16 +7,10 @@
 // touchpoints share the same look.
 
 import type { DuelOutcome, SkinInstanceWire } from '../protocol';
+import { RARITY_COLOR, RARITY_LABEL } from '../../sim/caseOpening';
+import { RarityBadge } from './OnlineCasesScreen';
 
 type MvpData = NonNullable<DuelOutcome['mvp']>;
-
-const RARITY_COLOR: Record<string, string> = {
-  'mil-spec': '#4b69ff',
-  'restricted': '#8847ff',
-  'classified': '#d32ce6',
-  'covert': '#eb4b4b',
-  'rare-special': '#ffd700',
-};
 
 export default function MvpCard({
   mvp, compact,
@@ -103,15 +97,26 @@ function MvpStat({ label, value, color }: { label: string; value: number | strin
 
 function SkinChip({ skin, compact }: { skin: SkinInstanceWire; compact?: boolean }): React.ReactElement {
   const rarityColor = RARITY_COLOR[skin.rarity] ?? '#8b93a3';
+  // Match the cases-screen visual language exactly: 4px inset left
+  // stripe (via boxShadow so it doesn't shrink the padding), a
+  // muted-hex background block, and the RarityBadge chip at top.
   return (
-    <div style={{
-      padding: compact ? '6px 8px' : '8px 10px',
-      borderRadius: 6,
-      background: `linear-gradient(135deg, ${rarityColor}22, transparent)`,
-      borderLeft: `3px solid ${rarityColor}`,
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {skin.weapon}
+    <div
+      title={RARITY_LABEL[skin.rarity]}
+      style={{
+        padding: compact ? '6px 10px' : '8px 12px',
+        paddingLeft: (compact ? 6 : 8) + 6, // extra room for the 4px stripe
+        borderRadius: 4,
+        background: `${rarityColor}18`,
+        border: `1px solid ${rarityColor}44`,
+        boxShadow: `inset 4px 0 0 ${rarityColor}`,
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {skin.weapon}
+        </div>
+        <RarityBadge rarity={skin.rarity} />
       </div>
       <div className="muted small" style={{ fontSize: 10 }}>{skin.name}</div>
       {skin.nametag && (
