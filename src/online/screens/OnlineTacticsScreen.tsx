@@ -4,8 +4,16 @@
 // only ship the fields you actually want to override.
 
 import { useEffect, useMemo, useState } from 'react';
-import type { CTSidePlaystyle, MapName, Tactics, TSidePlaystyle } from '../../types';
+import type {
+  CTSidePlaystyle, CtArchetype, MapName, Tactics,
+  TSidePlaystyle, TStratArchetype,
+} from '../../types';
 import { ALL_MAPS, DEFAULT_TACTICS } from '../../types';
+import {
+  CT_ARCHETYPES, CT_ARCHETYPE_BLURB, CT_ARCHETYPE_LABEL,
+  T_ARCHETYPES, T_ARCHETYPE_BLURB, T_ARCHETYPE_LABEL,
+  inferArchetypesFromRoster, matchupBonusPct,
+} from '../../engine/tacticalMatchup';
 import { useOnline } from '../onlineStore';
 import ToastStack from './ToastStack';
 
@@ -124,6 +132,8 @@ export default function OnlineTacticsScreen() {
     const sparse: Partial<Tactics> = {
       tPlaystyle: draft.tPlaystyle,
       ctPlaystyle: draft.ctPlaystyle,
+      tArchetype: draft.tArchetype,
+      ctArchetype: draft.ctArchetype,
       aggression: draft.aggression,
       utilityUsage: draft.utilityUsage,
       midRoundFlexibility: draft.midRoundFlexibility,
@@ -187,6 +197,16 @@ export default function OnlineTacticsScreen() {
         </div>
         <button className="btn" onClick={() => go('home')}>← Back</button>
       </div>
+
+      {/* ===== Tactical Archetypes (FM-style matchup rock-paper-scissors) ===== */}
+      <ArchetypePanel
+        players={Object.values(players)}
+        starterIds={team.playerIds.slice(0, 5)}
+        tArchetype={draft.tArchetype}
+        ctArchetype={draft.ctArchetype}
+        onPickT={(t) => setDraft((d) => ({ ...d, tArchetype: t }))}
+        onPickCt={(ct) => setDraft((d) => ({ ...d, ctArchetype: ct }))}
+      />
 
       {/* ===== Playstyles ===== */}
       <div className="panel" style={{ padding: 14 }}>
@@ -442,6 +462,175 @@ export default function OnlineTacticsScreen() {
       </div>
 
       <ToastStack />
+    </div>
+  );
+}
+
+// =====================================================================
+// Tactical Archetype Panel — FM-style matchup rock-paper-scissors
+// =====================================================================
+//
+// Two pickers (T archetype × CT archetype) with:
+//   - A row of five cards per side (Fast Rush, Slow Default, ...)
+//   - A "Roster tendency" hint showing what your five would default to
+//   - A live matchup heatmap for the picked T archetype against every
+//     possible opponent CT archetype (so you can immediately see when
+//     your pick is a good match / bad match)
+//
+// The user's choice is written to draft.tArchetype / draft.ctArchetype;
+// leaving them undefined falls back to roster inference at match time.
+
+function ArchetypePanel({
+  players, starterIds, tArchetype, ctArchetype, onPickT, onPickCt,
+}: {
+  players: import('../../types').Player[];
+  starterIds: string[];
+  tArchetype: TStratArchetype | undefined;
+  ctArchetype: CtArchetype | undefined;
+  onPickT: (t: TStratArchetype | undefined) => void;
+  onPickCt: (ct: CtArchetype | undefined) => void;
+}): React.ReactElement {
+  // Roster tendency — what the engine would infer if you set nothing.
+  const starters = useMemo(
+    () => starterIds
+      .map((id) => players.find((p) => p.id === id))
+      .filter((p): p is import('../../types').Player => !!p),
+    [players, starterIds],
+  );
+  const inferred = useMemo(() => inferArchetypesFromRoster(starters), [starters]);
+
+  const effectiveT = tArchetype ?? inferred.t;
+  const effectiveCt = ctArchetype ?? inferred.ct;
+
+  return (
+    <div className="panel" style={{ padding: 14 }}>
+      <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+        <span>Tactical Archetype <span className="muted small" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>— the meta-call your team leans on. Applies a matchup bonus vs the opponent's archetype every round.</span></span>
+        <span className="pill">
+          Roster tendency: <strong style={{ color: 'var(--accent-hi)' }}>{T_ARCHETYPE_LABEL[inferred.t]} · {CT_ARCHETYPE_LABEL[inferred.ct]}</strong>
+        </span>
+      </div>
+
+      {/* T-side pickers */}
+      <div className="section-title" style={{ margin: '10px 0 6px' }}>T-side archetype</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
+        {T_ARCHETYPES.map((t) => {
+          const isPicked = tArchetype === t;
+          const isEffective = effectiveT === t;
+          return (
+            <button
+              key={t}
+              onClick={() => onPickT(isPicked ? undefined : t)}
+              style={{
+                textAlign: 'left', padding: 10, cursor: 'pointer', border: 'none',
+                background: isPicked ? 'var(--accent-soft)' : (isEffective ? 'var(--bg-elev)' : 'var(--panel-2)'),
+                borderRadius: 'var(--radius-sm)',
+                borderLeft: isPicked ? '3px solid var(--accent)' : isEffective ? '3px solid var(--text-faint)' : '3px solid transparent',
+                color: 'var(--text)', fontFamily: 'inherit',
+                transition: 'background var(--motion-fast), border-color var(--motion-fast)',
+              }}
+              title={T_ARCHETYPE_BLURB[t]}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <strong>{T_ARCHETYPE_LABEL[t]}</strong>
+                {isPicked && <span className="pill pill-accent" style={{ padding: '1px 6px', fontSize: 10 }}>picked</span>}
+                {!isPicked && isEffective && <span className="pill" style={{ padding: '1px 6px', fontSize: 10 }}>roster</span>}
+              </div>
+              <div className="muted small" style={{ marginTop: 4, fontSize: 11, lineHeight: 1.4 }}>{T_ARCHETYPE_BLURB[t]}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* CT-side pickers */}
+      <div className="section-title" style={{ margin: '14px 0 6px' }}>CT-side archetype</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8 }}>
+        {CT_ARCHETYPES.map((ct) => {
+          const isPicked = ctArchetype === ct;
+          const isEffective = effectiveCt === ct;
+          return (
+            <button
+              key={ct}
+              onClick={() => onPickCt(isPicked ? undefined : ct)}
+              style={{
+                textAlign: 'left', padding: 10, cursor: 'pointer', border: 'none',
+                background: isPicked ? 'var(--accent-soft)' : (isEffective ? 'var(--bg-elev)' : 'var(--panel-2)'),
+                borderRadius: 'var(--radius-sm)',
+                borderLeft: isPicked ? '3px solid var(--accent)' : isEffective ? '3px solid var(--text-faint)' : '3px solid transparent',
+                color: 'var(--text)', fontFamily: 'inherit',
+                transition: 'background var(--motion-fast), border-color var(--motion-fast)',
+              }}
+              title={CT_ARCHETYPE_BLURB[ct]}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <strong>{CT_ARCHETYPE_LABEL[ct]}</strong>
+                {isPicked && <span className="pill pill-accent" style={{ padding: '1px 6px', fontSize: 10 }}>picked</span>}
+                {!isPicked && isEffective && <span className="pill" style={{ padding: '1px 6px', fontSize: 10 }}>roster</span>}
+              </div>
+              <div className="muted small" style={{ marginTop: 4, fontSize: 11, lineHeight: 1.4 }}>{CT_ARCHETYPE_BLURB[ct]}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Live matchup preview — for the effective T archetype, show your
+       *  advantage vs every possible opponent CT archetype. Users can eyeball
+       *  which opponents this call is favoured / punished by. */}
+      <div className="section-title" style={{ margin: '14px 0 6px' }}>
+        Matchup preview
+        <span className="muted small" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400, marginLeft: 8 }}>
+          — your <strong style={{ color: 'var(--accent-hi)' }}>{T_ARCHETYPE_LABEL[effectiveT]}</strong> (T) and <strong style={{ color: 'var(--accent-hi)' }}>{CT_ARCHETYPE_LABEL[effectiveCt]}</strong> (CT) vs every opponent archetype
+        </span>
+      </div>
+      <MatchupPreview t={effectiveT} ct={effectiveCt} />
+    </div>
+  );
+}
+
+function MatchupPreview({ t, ct }: { t: TStratArchetype; ct: CtArchetype }): React.ReactElement {
+  const colorFor = (pct: number): string => {
+    if (pct >= 6) return 'var(--win)';
+    if (pct >= 3) return 'rgba(76,175,125,0.6)';
+    if (pct <= -6) return 'var(--loss)';
+    if (pct <= -3) return 'rgba(226,85,85,0.6)';
+    return 'var(--text-dim)';
+  };
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div>
+        <div className="muted small" style={{ marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+          Your T vs opponent's CT
+        </div>
+        {CT_ARCHETYPES.map((oppCt) => {
+          const pct = matchupBonusPct(t, oppCt);
+          return (
+            <div key={oppCt} style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', padding: '4px 8px', borderBottom: '1px solid var(--border-soft)' }}>
+              <span>{CT_ARCHETYPE_LABEL[oppCt]}</span>
+              <strong style={{ color: colorFor(pct), fontVariantNumeric: 'tabular-nums' }}>
+                {pct > 0 ? `+${pct}%` : `${pct}%`}
+              </strong>
+            </div>
+          );
+        })}
+      </div>
+      <div>
+        <div className="muted small" style={{ marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+          Your CT vs opponent's T
+        </div>
+        {T_ARCHETYPES.map((oppT) => {
+          // From the CT team's perspective, matchupBonusPct is negated.
+          const pct = -matchupBonusPct(oppT, ct);
+          return (
+            <div key={oppT} style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', padding: '4px 8px', borderBottom: '1px solid var(--border-soft)' }}>
+              <span>{T_ARCHETYPE_LABEL[oppT]}</span>
+              <strong style={{ color: colorFor(pct), fontVariantNumeric: 'tabular-nums' }}>
+                {pct > 0 ? `+${pct}%` : `${pct}%`}
+              </strong>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

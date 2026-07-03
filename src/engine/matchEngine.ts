@@ -31,6 +31,7 @@ import {
 import { runVeto } from './veto';
 import { findTrait } from '../online/protocol';
 import { pickStrat, pickUtilityLineup, rollUtilityDamage, clockAt, TEMPO_TICKS, AWP_LANES } from './strats';
+import { matchupMultipliers, matchupCommentary, resolveArchetypes } from './tacticalMatchup';
 import { roleSkillModifier as analyticsRoleSkillModifier } from '../sim/playerAnalytics';
 
 // ============ Tunables ============
@@ -307,6 +308,11 @@ interface RoundCtx {
   tTeamIdx: 0 | 1;
   tRoundForm: number; // per-round momentum multiplier (mutated mid-round by opening-duel leverage)
   ctRoundForm: number;
+  /** Tactical archetype matchup multipliers — set once at map start from
+   *  the T-arch × CT-arch table. Applied on every duel score alongside
+   *  duty/positioning multipliers. Constant across the map. */
+  matchupTMult: number;
+  matchupCMult: number;
   isPistol: boolean;
   halfRoundNo: number; // 1-12 within the current half (for pistol/eco context lines)
 }
@@ -984,8 +990,12 @@ function resolveFight(
     const tDefending = t.holdTicks > c.holdTicks + 1;
     const ctDefending = c.holdTicks > t.holdTicks + 1;
 
-    let tScore = t.eff * equipMultiplier(sideBuy(ctx, t).type) * ctx.tRoundForm;
-    let cScore = c.eff * equipMultiplier(sideBuy(ctx, c).type) * ctx.ctRoundForm;
+    // Base duel score = effective skill × equipment × round-form momentum ×
+    // tactical archetype matchup. The matchup multiplier is constant across
+    // the map (set at simulateMap start from the T-arch × CT-arch table),
+    // so a favored tactical matchup pushes every duel slightly one way.
+    let tScore = t.eff * equipMultiplier(sideBuy(ctx, t).type) * ctx.tRoundForm * ctx.matchupTMult;
+    let cScore = c.eff * equipMultiplier(sideBuy(ctx, c).type) * ctx.ctRoundForm * ctx.matchupCMult;
     if (ctDefending) cScore *= 1 + (c.p.attributes.positioning / 20) * 0.18;
     if (tDefending) tScore *= 1 + (t.p.attributes.positioning / 20) * 0.18;
     // Duty modulation: aggressive duty wins more attacking duels but loses
@@ -1216,6 +1226,13 @@ function simulateMap(
   const simA = mkSim(a, profA, 0);
   const simB = mkSim(b, profB, 1);
 
+  // Resolve each team's tactical archetypes (explicit tactics setting →
+  // otherwise inferred from roster attrs). Both teams field both sides,
+  // so we compute all four archetype pairings once and pick the right
+  // one per round based on which team is on T.
+  const archA = resolveArchetypes(a.tactics.tArchetype, a.tactics.ctArchetype, a.players.slice(0, 5));
+  const archB = resolveArchetypes(b.tactics.tArchetype, b.tactics.ctArchetype, b.players.slice(0, 5));
+
   let scoreA = 0;
   let scoreB = 0;
   // A starts T or CT randomly (knife round abstracted)
@@ -1225,6 +1242,9 @@ function simulateMap(
   const rounds: RoundResult[] = [];
   let roundNo = 0;
   let otBlockStart = 0;
+  /** Fired once at the top of each half after the T/CT assignment settles,
+   *  so the commentary log mentions the current matchup. */
+  let matchupCalledForHalf = -1;
 
   while (true) {
     roundNo++;
@@ -1260,6 +1280,13 @@ function simulateMap(
     const tBuy = decideBuy(tEco, ((roundNo - 1) % HALF_ROUNDS) + 1, isPistol, tTeamE.tactics, ctEco.money > 4000, rng);
     const ctBuy = decideBuy(ctEco, ((roundNo - 1) % HALF_ROUNDS) + 1, isPistol, ctTeamE.tactics, tEco.money > 4000, rng);
 
+    // Tactical archetype matchup for the current side arrangement.
+    // T team brings their T-archetype, CT team brings their CT-archetype.
+    // Bonus is symmetric — one side's + is the other's -.
+    const tArch = aIsT ? archA.t : archB.t;
+    const ctArch = aIsT ? archB.ct : archA.ct;
+    const { tMult: matchupTMult, cMult: matchupCMult } = matchupMultipliers(tArch, ctArch);
+
     const killsBefore = new Map([...tSim, ...ctSim].map((s) => [s.p.id, s.kills]));
 
     const ctxR: RoundCtx = {
@@ -1277,10 +1304,22 @@ function simulateMap(
       tTeamIdx: aIsT ? 0 : 1,
       tRoundForm: rng.range(0.9, 1.1),
       ctRoundForm: rng.range(0.9, 1.1),
+      matchupTMult,
+      matchupCMult,
       isPistol,
       halfRoundNo: ((roundNo - 1) % HALF_ROUNDS) + 1,
     };
     const ro = simulateRound(ctxR);
+
+    // Analyst-style matchup callout — once at the top of each half so the
+    // user sees WHY they're being favored (or ganked). Prepend to this
+    // round's commentary so it shows above the round events.
+    const halfKey = inOT ? otBlockStart : (aIsT ? 0 : 1);
+    if (halfKey !== matchupCalledForHalf) {
+      matchupCalledForHalf = halfKey;
+      const line = matchupCommentary(tArch, ctArch, tTeamE.team.tag, ctTeamE.team.tag);
+      if (line) ro.commentary.unshift(line);
+    }
 
     // multikill tracking
     for (const s of [...tSim, ...ctSim]) {
@@ -1398,6 +1437,11 @@ export function resimulateMapFromRound(
   const profB = b.team.mapPool.find((m) => m.map === map)?.proficiency ?? 10;
   const mapFormA = rng.range(0.88, 1.12);
   const mapFormB = rng.range(0.88, 1.12);
+
+  // Resolve tactical archetypes for the tactical-matchup multiplier.
+  // Uses potentially-updated tactics (a re-sim may swap the archetype).
+  const archA = resolveArchetypes(a.tactics.tArchetype, a.tactics.ctArchetype, a.players.slice(0, 5));
+  const archB = resolveArchetypes(b.tactics.tArchetype, b.tactics.ctArchetype, b.players.slice(0, 5));
 
   // Re-build sim players from scratch with NEW tactics (role fits may have changed)
   function mkSim(team: EngineTeam, prof: number, idx: 0 | 1): SimPlayer[] {
@@ -1532,6 +1576,10 @@ export function resimulateMapFromRound(
     const tBuy = decideBuy(tEco, ((curRound - 1) % HALF_ROUNDS) + 1, isPistol, tTeamE.tactics, ctEco.money > 4000, rng);
     const ctBuy = decideBuy(ctEco, ((curRound - 1) % HALF_ROUNDS) + 1, isPistol, ctTeamE.tactics, tEco.money > 4000, rng);
 
+    const tArch = aIsT ? archA.t : archB.t;
+    const ctArch = aIsT ? archB.ct : archA.ct;
+    const { tMult: matchupTMult, cMult: matchupCMult } = matchupMultipliers(tArch, ctArch);
+
     const killsBefore = new Map([...tSim, ...ctSim].map((s) => [s.p.id, s.kills]));
 
     const ctxR: RoundCtx = {
@@ -1540,6 +1588,8 @@ export function resimulateMapFromRound(
       tTeamIdx: aIsT ? 0 : 1,
       tRoundForm: rng.range(0.9, 1.1),
       ctRoundForm: rng.range(0.9, 1.1),
+      matchupTMult,
+      matchupCMult,
       isPistol,
       halfRoundNo: ((curRound - 1) % HALF_ROUNDS) + 1,
     };

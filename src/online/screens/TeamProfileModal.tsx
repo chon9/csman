@@ -8,6 +8,7 @@ import type { PublicPlayer, PublicTeamProfile } from '../protocol';
 import { PlayerName } from './PlayerProfileModal';
 import { publicOrigin } from '../serverUrl';
 import RankBadge from './RankBadge';
+import { CT_ARCHETYPE_LABEL, T_ARCHETYPE_LABEL } from '../../engine/tacticalMatchup';
 
 /** Clickable team-tag chip — every team tag anywhere in the app links
  *  to the public Facebook-style profile page in a new tab. Renders the
@@ -96,6 +97,32 @@ export default function TeamProfileModal(): React.ReactElement | null {
           <ProfileStat label="Trophies" value={String(profile.achievementsUnlocked)} color="#ffd700" />
           <ProfileStat label="Roster" value={String(profile.starters.length + profile.reserves.length)} />
         </div>
+
+        {/* ===== Tactical tendency (scouting hook) ===== */}
+        {profile.tendency && (
+          <div style={{
+            display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
+            padding: '8px 12px', marginBottom: 12,
+            background: 'var(--bg-elev)', border: '1px solid var(--border)',
+            borderLeft: '3px solid var(--accent)',
+            borderRadius: 'var(--radius-sm)', fontSize: 12,
+          }}>
+            <span className="muted" style={{ textTransform: 'uppercase', letterSpacing: 1, fontSize: 10, fontWeight: 700 }}>
+              🎯 Tactical tendency
+            </span>
+            <span className="pill" style={{ background: 'var(--accent-soft)', borderColor: 'var(--border-accent)', color: 'var(--accent-hi)' }}>
+              T · {T_ARCHETYPE_LABEL[profile.tendency.t]}
+            </span>
+            <span className="pill" style={{ background: 'var(--accent-soft)', borderColor: 'var(--border-accent)', color: 'var(--accent-hi)' }}>
+              CT · {CT_ARCHETYPE_LABEL[profile.tendency.ct]}
+            </span>
+            <span className="muted small" style={{ marginLeft: 'auto' }}>
+              {profile.tendency.source === 'explicit' && 'Committed pick'}
+              {profile.tendency.source === 'inferred' && 'Inferred from roster attributes'}
+              {profile.tendency.source === 'mixed' && 'Partial pick · rest inferred'}
+            </span>
+          </div>
+        )}
 
         {/* ===== Social links ===== */}
         {(profile.twitchUrl || profile.twitterUrl || profile.youtubeUrl) && (

@@ -383,6 +383,7 @@ import { utcDateKey } from './db.ts';
 import { DAILY_RACE_BOARD_LIMIT } from './dailyRace.ts';
 import type { DailyRaceEntryWire, DailyRacePayoutWire } from '../../src/online/protocol.ts';
 import { canTrain, loadTrainingWire, logLineFor, rollTrainingOutcome } from './training.ts';
+import { resolveArchetypes } from '../../src/engine/tacticalMatchup.ts';
 import { TRAINING_DURATION_MS } from '../../src/online/protocol.ts';
 import { ATTRIBUTE_KEYS } from '../../src/types.ts';
 import {
@@ -3696,6 +3697,14 @@ export function handle(
       const starters = roster.slice(0, 5).map(scrub);
       const reserves = roster.slice(5).map(scrub);
       const totalStarterCA = starters.reduce((s, p) => s + p.currentAbility, 0);
+      // Tactical tendency for scouting — explicit tactics setting first,
+      // else roster inference. Ships regardless of opt-in since public
+      // profiles are already how you scout an opponent's roster.
+      const tendency = resolveArchetypes(
+        target.tactics?.tArchetype,
+        target.tactics?.ctArchetype,
+        roster.slice(0, 5),
+      );
       const fans = fansForRoster(roster);
       const season = db.currentSeason();
       const seasonStandings = db.loadTeamStandings(season.seasonNo, target.id);
@@ -3728,6 +3737,7 @@ export function handle(
           ageInDays,
           mmr: target.mmr,
           peakMmr: target.peakMmr,
+          tendency,
         },
       };
     }

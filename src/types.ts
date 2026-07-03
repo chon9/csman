@@ -334,6 +334,41 @@ export const STAFF_ROLE_HINT: Record<StaffRole, string> = {
 export type TSidePlaystyle = 'default' | 'explosive' | 'slow-default' | 'mixed';
 export type CTSidePlaystyle = 'standard' | 'aggressive-info' | 'passive-retake' | 'stacked-gambles';
 
+/**
+ * Tactical archetype — the FM-style rock-paper-scissors layer above the
+ * existing positioning system. Each round the engine computes a matchup
+ * bonus from (T archetype × CT archetype) and applies it as a duel-score
+ * multiplier + execute-success modifier. See engine/tacticalMatchup.ts.
+ *
+ * T archetypes:
+ *  - fast-rush     — swarm one site early; beats slow setup, dies to stack
+ *  - slow-default  — spread map wide, farm info; beats aggro push, loses to passive
+ *  - fake-execute  — bait one site then hit the other; wrecks rotators + stack
+ *  - mid-control   — win mid, snowball; beats passive/weak-mid, loses to heavy-mid contest
+ *  - contact-play  — close-range peek fights; punishes passive holds, dies into stacks
+ */
+export type TStratArchetype =
+  | 'fast-rush'
+  | 'slow-default'
+  | 'fake-execute'
+  | 'mid-control'
+  | 'contact-play';
+
+/**
+ * CT archetypes:
+ *  - aggressive-push  — early peek/flank for info; beats slow default, loses to anti-push
+ *  - passive-hold     — set up deep, retake with util; beats fast rush, loses to map control
+ *  - stack-site       — 3-1-1 stack one site; beats fast execute, loses to fake
+ *  - retake-setup     — give the plant, win the retake; beats util execute, loses to contact
+ *  - heavy-mid        — 3+ bodies to mid; beats mid default, loses to fast side hit
+ */
+export type CtArchetype =
+  | 'aggressive-push'
+  | 'passive-hold'
+  | 'stack-site'
+  | 'retake-setup'
+  | 'heavy-mid';
+
 export type TempoPreset = 'patient' | 'balanced' | 'aggressive';
 
 /**
@@ -396,6 +431,12 @@ export type TacticalCall =
 export interface Tactics {
   tPlaystyle: TSidePlaystyle;
   ctPlaystyle: CTSidePlaystyle;
+  /** Tactical archetype for T side — layered on top of tPlaystyle. Drives
+   *  the matchup-vs-CT bonus. Optional so pre-feature saves keep working
+   *  (engine treats missing as inferred-from-roster). */
+  tArchetype?: TStratArchetype;
+  /** Tactical archetype for CT side — layered on top of ctPlaystyle. */
+  ctArchetype?: CtArchetype;
   aggression: number; // 1-20 slider
   utilityUsage: number; // 1-20: how much util dumped per execute
   midRoundFlexibility: number; // 1-20: weight on IGL adapting

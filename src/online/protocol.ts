@@ -123,6 +123,15 @@ export interface PublicTeamProfile {
   /** Competitive MMR + peak — same fields as OnlineTeam, shown public. */
   mmr?: number;
   peakMmr?: number;
+  /** Tactical tendency — the archetype the opponent leans on. Explicit
+   *  if they've picked one in their tactics screen; otherwise the engine's
+   *  inferred pick from their starting five. Drives the scouting hook:
+   *  users can peek at an opponent's tendency and prep a counter. */
+  tendency?: {
+    t: import('../types').TStratArchetype;
+    ct: import('../types').CtArchetype;
+    source: 'explicit' | 'inferred' | 'mixed';
+  };
 }
 
 // ============ Daily bonus + case opening ============
@@ -2101,7 +2110,7 @@ export interface TrainingOutcome {
   newPA?: number;
 }
 
-export const PROTOCOL_VERSION = 51;
+export const PROTOCOL_VERSION = 52;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past
