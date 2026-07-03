@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import { classifyCommentary, COMMENTARY_STYLE } from './commentaryStyles';
+import MvpCard from './MvpCard';
 import { MAP_LAYOUTS } from '../../data/maps';
 import MapCanvas from '../../ui/match/MapCanvas';
 import type { Player, RoundFrame, RoundResult } from '../../types';
@@ -173,6 +174,10 @@ export default function OnlineLiveReplayScreen() {
   // history rewatches (unlocked) also default to 2x.
   const [speed, setSpeed] = useState<number>(2);
   const [playing, setPlaying] = useState(true);
+  /** MVP celebration overlay — pops when the last frame plays out, if
+   *  the pending duel result carried an mvp payload. Dismissing routes
+   *  into the normal drain path (result modal on home). */
+  const [mvpOverlay, setMvpOverlay] = useState(false);
 
   // Nickname dictionary for the on-canvas player labels.
   const nicknames = useMemo(() => {
@@ -206,12 +211,18 @@ export default function OnlineLiveReplayScreen() {
         }
         setPlaying(false);
         // Locked-mode hand-off:
-        //   PvP: drain pending duel result → result modal on 'home'
+        //   PvP: if the outcome carries an MVP, pop the celebration
+        //     overlay first — user dismisses to reach the result modal.
+        //     Otherwise drain straight through (legacy path).
         //   AI bet: end the replay → route back to 'ai-bets' (settlement
         //     toast already landed; nothing extra to show)
         // Brief delay so the user sees the final frame before swap.
         if (pendingDuelResult) {
-          window.setTimeout(() => drainPendingDuelResult(), 500);
+          if (pendingDuelResult.mvp) {
+            window.setTimeout(() => setMvpOverlay(true), 500);
+          } else {
+            window.setTimeout(() => drainPendingDuelResult(), 500);
+          }
         } else if (aiBetReplayLocked) {
           window.setTimeout(() => endAiBetReplay(), 500);
         }
@@ -424,6 +435,12 @@ export default function OnlineLiveReplayScreen() {
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {mvpOverlay && pendingDuelResult?.mvp && (
+        <MvpOverlay
+          mvp={pendingDuelResult.mvp}
+          onDismiss={() => { setMvpOverlay(false); drainPendingDuelResult(); }}
+        />
+      )}
       <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <h2 style={{ margin: '0 0 4px' }}>
@@ -664,6 +681,44 @@ export default function OnlineLiveReplayScreen() {
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+// =====================================================================
+// MvpOverlay — full-screen celebration frame after the last replay tick.
+// =====================================================================
+
+function MvpOverlay({
+  mvp, onDismiss,
+}: {
+  mvp: NonNullable<import('../protocol').DuelOutcome['mvp']>;
+  onDismiss: () => void;
+}): React.ReactElement {
+  return (
+    <div
+      onClick={onDismiss}
+      style={{
+        position: 'fixed', inset: 0,
+        background: 'rgba(0,0,0,0.72)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 150, padding: 20,
+        animation: 'fadeIn 250ms ease-out',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 560, width: '100%', display: 'flex', flexDirection: 'column', gap: 12 }}
+      >
+        <MvpCard mvp={mvp} />
+        <button
+          className="btn btn-accent"
+          onClick={onDismiss}
+          style={{ padding: '10px 22px', fontWeight: 700, fontSize: 14 }}
+        >
+          Continue →
+        </button>
+      </div>
     </div>
   );
 }

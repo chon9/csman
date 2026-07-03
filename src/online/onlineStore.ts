@@ -363,6 +363,8 @@ interface OnlineState {
   listSkins: () => void;
   sellSkin: (skinId: string) => void;
   renameSkin: (skinInstanceId: string, nametag: string) => void;
+  equipSkin: (playerId: string, skinInstanceId: string) => void;
+  unequipSkin: (playerId: string, skinInstanceId: string) => void;
   dismissCaseOpening: () => void;
   // Peer skin market
   refreshSkinMarket: () => void;
@@ -1426,6 +1428,25 @@ export const useOnline = create<OnlineState>((set, get) => ({
           pushToast('success', `🏷 Renamed to "${msg.nametag}" (−$${msg.cost.toLocaleString()}).`);
           break;
         }
+        case 'skin-equipped': {
+          // Fold the updated player back into state so the loadout
+          // renders immediately. If a prior skin was swapped out of the
+          // same weapon slot, mention it so the user sees what changed.
+          set({
+            players: { ...get().players, [msg.player.id]: msg.player },
+          });
+          pushToast('success', msg.replacedSkinInstanceId
+            ? `🔫 Equipped — swapped previous slot.`
+            : `🔫 Skin equipped.`);
+          break;
+        }
+        case 'skin-unequipped': {
+          set({
+            players: { ...get().players, [msg.player.id]: msg.player },
+          });
+          pushToast('info', `🧤 Skin unequipped.`);
+          break;
+        }
         case 'skin-market': {
           set({ skinMarketListings: msg.listings });
           break;
@@ -1847,6 +1868,12 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   renameSkin(skinInstanceId, nametag) {
     get().client?.send({ kind: 'rename-skin', skinInstanceId, nametag });
+  },
+  equipSkin(playerId, skinInstanceId) {
+    get().client?.send({ kind: 'equip-skin', playerId, skinInstanceId });
+  },
+  unequipSkin(playerId, skinInstanceId) {
+    get().client?.send({ kind: 'unequip-skin', playerId, skinInstanceId });
   },
   dismissCaseOpening() {
     set({ caseOpening: null });

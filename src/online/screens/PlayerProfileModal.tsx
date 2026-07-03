@@ -6,11 +6,19 @@
 // effectiveSkill formula, plus the role's match-engine effect (IGL
 // boosts morale, AWPer covers long range, etc.).
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import type { Player, PlayerAttributes } from '../../types';
-import { findTrait, type PublicPlayer } from '../protocol';
+import { findTrait, type PublicPlayer, type SkinInstanceWire } from '../protocol';
 import { TeamTag } from './TeamProfileModal';
+
+const RARITY_COLOR: Record<string, string> = {
+  'mil-spec': '#4b69ff',
+  'restricted': '#8847ff',
+  'classified': '#d32ce6',
+  'covert': '#eb4b4b',
+  'rare-special': '#ffd700',
+};
 
 /** Clickable player nickname — drops into any roster/scoreboard cell. */
 export function PlayerName({ playerId, label, color }: { playerId: string; label: string; color?: string }): React.ReactElement {
@@ -177,6 +185,9 @@ export default function PlayerProfileModal(): React.ReactElement | null {
           </div>
         )}
 
+        {/* ===== Loadout — equipped skins per weapon slot ===== */}
+        {ownPlayer && <LoadoutPanel player={ownPlayer} />}
+
         {/* ===== Role impact ===== */}
         {roleImpact && (
           <div
@@ -254,6 +265,120 @@ function ProfileStat({ label, value, color, big }: { label: string; value: strin
     <div style={{ background: 'rgba(255,255,255,0.04)', padding: 8, borderRadius: 6, textAlign: 'center' }}>
       <div className="muted small" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</div>
       <div style={{ fontSize: big ? 20 : 15, fontWeight: 700, color: color ?? '#e8eaf0' }}>{value}</div>
+    </div>
+  );
+}
+
+// =====================================================================
+// LoadoutPanel — equipped skin list + picker.
+// =====================================================================
+//
+// Shows all currently-equipped skins as cards, plus an inline "Equip skin"
+// picker that lets the manager assign anything from their team inventory
+// (except skins listed on the peer market). Weapon-slot uniqueness is
+// enforced server-side — swapping a rifle skin auto-drops the previous
+// rifle skin. The panel updates instantly on the `skin-equipped` /
+// `skin-unequipped` responses.
+
+function LoadoutPanel({ player }: { player: Player }): React.ReactElement {
+  const skins = useOnline((s) => s.skins);
+  const listings = useOnline((s) => s.skinMarketListings);
+  const equipSkin = useOnline((s) => s.equipSkin);
+  const unequipSkin = useOnline((s) => s.unequipSkin);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const equippedIds = useMemo(
+    () => new Set(player.equippedSkins ?? []),
+    [player.equippedSkins],
+  );
+  const equippedSkins = useMemo(
+    () => skins.filter((s) => equippedIds.has(s.id)),
+    [skins, equippedIds],
+  );
+  const listedIds = useMemo(
+    () => new Set(listings.map((l) => l.skinInstanceId)),
+    [listings],
+  );
+  const available = useMemo(
+    () => skins.filter((s) => !equippedIds.has(s.id) && !listedIds.has(s.id)),
+    [skins, equippedIds, listedIds],
+  );
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span>🔫 Loadout <span className="muted small" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400, marginLeft: 6 }}>— max one skin per weapon type</span></span>
+        <button
+          className="btn btn-tiny"
+          onClick={() => setPickerOpen((p) => !p)}
+          disabled={available.length === 0}
+          title={available.length === 0 ? 'No unequipped skins available' : ''}
+        >
+          {pickerOpen ? 'Close picker' : '+ Equip skin'}
+        </button>
+      </div>
+      {equippedSkins.length === 0 ? (
+        <div className="muted small" style={{ padding: '8px 12px', background: 'rgba(255,255,255,0.02)', borderRadius: 6 }}>
+          No skins equipped. Attach a rifle, pistol, or knife from your inventory.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8 }}>
+          {equippedSkins.map((s) => (
+            <EquippedSkinCard
+              key={s.id}
+              skin={s}
+              onUnequip={() => unequipSkin(player.id, s.id)}
+            />
+          ))}
+        </div>
+      )}
+      {pickerOpen && (
+        <div style={{ marginTop: 8, padding: 8, background: 'rgba(255,255,255,0.02)', borderRadius: 6, border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="muted small" style={{ marginBottom: 6 }}>
+            Pick a skin — equipping over the same weapon slot will swap the previous one out.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+            {available.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => { equipSkin(player.id, s.id); setPickerOpen(false); }}
+                style={{
+                  textAlign: 'left', cursor: 'pointer', border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'rgba(255,255,255,0.03)', color: 'var(--text)',
+                  borderRadius: 4, padding: '6px 8px', fontFamily: 'inherit',
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 700 }}>{s.weapon} <span className="muted">{s.name}</span></div>
+                {s.nametag && <div style={{ fontSize: 10, color: '#d9b344', fontStyle: 'italic' }}>🏷 "{s.nametag}"</div>}
+                <div className="muted small" style={{ fontSize: 10 }}>{s.wear}{s.statTrak ? ' · StatTrak™' : ''}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EquippedSkinCard({ skin, onUnequip }: { skin: SkinInstanceWire; onUnequip: () => void }): React.ReactElement {
+  const rarityColor = RARITY_COLOR[skin.rarity] ?? '#8b93a3';
+  return (
+    <div style={{
+      padding: 8, borderRadius: 6,
+      background: `linear-gradient(135deg, ${rarityColor}18, transparent)`,
+      border: `1px solid ${rarityColor}55`,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 6 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {skin.weapon}
+          </div>
+          <div className="muted small" style={{ fontSize: 11 }}>{skin.name}</div>
+          {skin.nametag && <div style={{ fontSize: 11, color: '#d9b344', fontStyle: 'italic' }}>🏷 "{skin.nametag}"</div>}
+          <div className="muted small" style={{ fontSize: 10 }}>{skin.wear}{skin.statTrak ? ' · StatTrak™' : ''}</div>
+        </div>
+        <button className="btn btn-tiny" onClick={onUnequip} title="Remove from loadout">✕</button>
+      </div>
     </div>
   );
 }

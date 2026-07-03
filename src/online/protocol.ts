@@ -1642,6 +1642,28 @@ export interface DuelOutcome {
   /** True iff this match was inside the placement window. UI uses this
    *  to label the K-factor as doubled. */
   wasPlacement?: boolean;
+  /** MVP snapshot — top-rated player on the WINNING side, with their
+   *  equipped skin loadout. Populated server-side because opponent
+   *  skin data isn't available to the client. Shown in the result
+   *  modal + the end-of-replay MVP screen. */
+  mvp?: {
+    playerId: string;
+    nickname: string;
+    role: string;
+    teamTag: string;
+    /** Whether the MVP is on the viewer's own roster. Drives styling
+     *  (celebration vs "opponent MVP" tone). */
+    isOwn: boolean;
+    /** Average HLTV rating across all maps. */
+    avgRating: number;
+    /** Total K/D/A across the match. */
+    kills: number;
+    deaths: number;
+    assists: number;
+    /** Equipped skins snapshot at match time. Empty when the MVP had
+     *  nothing equipped. */
+    equippedSkins: SkinInstanceWire[];
+  };
 }
 
 export interface DuelDiagnostics {
@@ -1829,6 +1851,8 @@ export type ClientMessage =
   | { kind: 'list-skins' }
   | { kind: 'sell-skin'; skinId: string }
   | { kind: 'rename-skin'; skinInstanceId: string; nametag: string }
+  | { kind: 'equip-skin'; playerId: string; skinInstanceId: string }
+  | { kind: 'unequip-skin'; playerId: string; skinInstanceId: string }
   // ----- Peer skin market -----
   | { kind: 'list-skin-market' }
   | { kind: 'list-skin'; skinInstanceId: string; askingPrice: number }
@@ -1973,6 +1997,8 @@ export type ServerMessage =
   | { kind: 'skin-inventory'; skins: SkinInstanceWire[] }
   | { kind: 'skin-sold'; skinId: string; payout: number; newMoney: number }
   | { kind: 'skin-renamed'; skinInstanceId: string; nametag: string; cost: number; newMoney: number }
+  | { kind: 'skin-equipped'; playerId: string; skinInstanceId: string; player: Player; replacedSkinInstanceId?: string }
+  | { kind: 'skin-unequipped'; playerId: string; skinInstanceId: string; player: Player }
   | { kind: 'skin-market'; listings: SkinListingWire[] }
   | { kind: 'skin-listed'; listing: SkinListingWire }
   | { kind: 'skin-unlisted'; listingId: string }
@@ -2129,7 +2155,7 @@ export interface TrainingOutcome {
   newPA?: number;
 }
 
-export const PROTOCOL_VERSION = 53;
+export const PROTOCOL_VERSION = 54;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

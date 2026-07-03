@@ -444,6 +444,80 @@ const LEGACY_BOOST_TARGETS: BoostAttrKey[] = ['aim', 'reflexes', 'positioning', 
 /** Build the post-match diagnostics block shipped inside DuelOutcome.
  *  Caller passes the BASELINE (un-boosted) starter slices so the panel
  *  reflects actual player condition, not boost-inflated numbers. */
+/** Compute the MVP snapshot for a completed match. MVP = highest
+ *  average rating on the winning side across all maps. Returns
+ *  undefined when the result has no player stats (shouldn't happen
+ *  in production but defensively guards). Populated with the MVP's
+ *  equipped skins so the client can render the loadout without
+ *  needing opponent inventory access. */
+function computeMvpSnapshot(
+  db: DB,
+  result: import('../../src/types.ts').MatchResult,
+  viewerTeamId: string,
+): import('../../src/online/protocol.ts').DuelOutcome['mvp'] {
+  // Aggregate rating + K/D/A per player across the maps.
+  const agg = new Map<string, { rating: number; n: number; kills: number; deaths: number; assists: number }>();
+  for (const m of result.maps) {
+    for (const s of Object.values(m.playerStats)) {
+      const cur = agg.get(s.playerId) ?? { rating: 0, n: 0, kills: 0, deaths: 0, assists: 0 };
+      cur.rating += s.rating;
+      cur.n++;
+      cur.kills += s.kills;
+      cur.deaths += s.deaths;
+      cur.assists += s.assists;
+      agg.set(s.playerId, cur);
+    }
+  }
+  if (agg.size === 0) return undefined;
+  // Find the winning side by loading players and matching against
+  // result.winnerId (which is a team id).
+  let best: { id: string; player: Player; avgRating: number; kills: number; deaths: number; assists: number } | null = null;
+  for (const [pid, stats] of agg) {
+    const p = db.loadPlayer(pid);
+    if (!p || p.teamId !== result.winnerId) continue;
+    const avg = stats.rating / Math.max(1, stats.n);
+    if (!best || avg > best.avgRating) {
+      best = { id: pid, player: p, avgRating: avg, kills: stats.kills, deaths: stats.deaths, assists: stats.assists };
+    }
+  }
+  if (!best) return undefined;
+  const team = db.loadTeam(best.player.teamId!);
+  const teamTag = team?.tag ?? '?';
+  // Resolve the MVP's equipped skins to full wire records so the
+  // client doesn't need cross-team inventory access.
+  const equippedSkins: import('../../src/online/protocol.ts').SkinInstanceWire[] = [];
+  for (const skinId of best.player.equippedSkins ?? []) {
+    const skin = db.loadSkin(best.player.teamId!, skinId) as import('../../src/types.ts').SkinInstance | null;
+    if (skin) equippedSkins.push(skin as import('../../src/online/protocol.ts').SkinInstanceWire);
+  }
+  return {
+    playerId: best.id,
+    nickname: best.player.nickname,
+    role: best.player.role,
+    teamTag,
+    isOwn: best.player.teamId === viewerTeamId,
+    avgRating: Math.round(best.avgRating * 100) / 100,
+    kills: best.kills,
+    deaths: best.deaths,
+    assists: best.assists,
+    equippedSkins,
+  };
+}
+
+/** Prune a skin from any player on the given team who has it in their
+ *  equippedSkins array. Called whenever a skin is about to leave the
+ *  team's inventory (sell, send, list, buy). Idempotent — no-op when
+ *  the skin isn't equipped. */
+function unequipSkinFromRoster(db: DB, teamId: string, skinInstanceId: string): void {
+  const teamPlayers = db.loadTeamPlayers(teamId);
+  for (const p of teamPlayers) {
+    if (!p.equippedSkins || p.equippedSkins.length === 0) continue;
+    if (!p.equippedSkins.includes(skinInstanceId)) continue;
+    p.equippedSkins = p.equippedSkins.filter((id) => id !== skinInstanceId);
+    db.persistPlayer(p);
+  }
+}
+
 function buildDuelDiagnostics(
   userStarters: Player[],
   oppStarters: Player[],
@@ -1144,6 +1218,7 @@ export function handle(
           // The result modal uses this to colour the scoreboard correctly.
           userLineupIds: players.slice(0, 5).map((p) => p.id),
           diagnostics,
+          mvp: computeMvpSnapshot(db, duel.result, team.id),
         },
       };
     }
@@ -1539,6 +1614,7 @@ export function handle(
           : `Beat ${accepter.tag} ${duel.result.mapsA}-${duel.result.mapsB}. +$${challenge.stake.toLocaleString()}.`,
         userLineupIds: challengerLineupIds,
         diagnostics: challengerDiag,
+        mvp: computeMvpSnapshot(db, duel.result, challenger.id),
       };
       const accepterOutcome = {
         result: duel.result,
@@ -1556,6 +1632,7 @@ export function handle(
           : `Lost to ${challenger.tag} ${duel.result.mapsB}-${duel.result.mapsA}. -$${challenge.stake.toLocaleString()}.`,
         userLineupIds: accepterLineupIds,
         diagnostics: accepterDiag,
+        mvp: computeMvpSnapshot(db, duel.result, accepter.id),
       };
       notifyTeam(challenger.id, { kind: 'duel-result', outcome: challengerOutcome });
       // Also tell the challenger their challenge resolved (so any list-challenges UI clears).
@@ -1851,6 +1928,7 @@ export function handle(
           : `Quick Match — lost to ${opp.tag} ${duel.result.mapsA}-${duel.result.mapsB}. -$${stake.toLocaleString()}.`,
         userLineupIds: myLineupIds,
         diagnostics: myDiag,
+        mvp: computeMvpSnapshot(db, duel.result, me.id),
       };
       const oppOutcome = {
         result: duel.result,
@@ -1868,6 +1946,7 @@ export function handle(
           : `${me.tag} found you in Quick Match — beat them ${duel.result.mapsB}-${duel.result.mapsA}. +$${defenderBonus.toLocaleString()} defender bonus, no fatigue / contract impact.`,
         userLineupIds: oppLineupIds,
         diagnostics: oppDiag,
+        mvp: computeMvpSnapshot(db, duel.result, opp.id),
       };
       notifyTeam(opp.id, { kind: 'duel-result', outcome: oppOutcome });
 
@@ -2789,12 +2868,80 @@ export function handle(
       if (db.hasOpenListingForSkin(msg.skinId)) {
         return { kind: 'error', code: 'on-market', message: 'Skin is listed on the peer market — unlist first.' };
       }
+      // Auto-unequip the skin from any player who has it equipped —
+      // the physical asset is about to leave the roster.
+      unequipSkinFromRoster(db, conn.teamId, msg.skinId);
       const payout = Math.max(0, Math.round(skin.marketValue));
       db.removeSkin(conn.teamId, msg.skinId);
       team.money += payout;
       db.setTeamMoneyDay(team.id, team.money, team.day);
       log(`skin sold: ${team.tag} +$${payout.toLocaleString()} (${skin.weapon} ${skin.name})`);
       return { kind: 'skin-sold', skinId: msg.skinId, payout, newMoney: team.money };
+    }
+
+    case 'equip-skin': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const player = db.loadPlayer(msg.playerId);
+      if (!player || player.teamId !== conn.teamId) {
+        return { kind: 'error', code: 'not-your-player', message: 'Player not on your roster.' };
+      }
+      const skin = db.loadSkin(conn.teamId, msg.skinInstanceId) as SkinInstance | null;
+      if (!skin) return { kind: 'error', code: 'no-skin', message: 'Skin not in your inventory.' };
+      if (db.hasOpenListingForSkin(msg.skinInstanceId)) {
+        return { kind: 'error', code: 'on-market', message: 'Skin is listed on the peer market — unlist to equip.' };
+      }
+      // Prune anyone else on the team who had this exact skin equipped
+      // (a skin can only sit on one player at a time). Also enforce the
+      // one-per-weapon-slot rule for the target player.
+      const teamPlayers = db.loadTeamPlayers(conn.teamId);
+      let replacedSkinInstanceId: string | undefined;
+      for (const p of teamPlayers) {
+        if (!p.equippedSkins || p.equippedSkins.length === 0) continue;
+        if (p.id === player.id) continue;
+        if (p.equippedSkins.includes(msg.skinInstanceId)) {
+          p.equippedSkins = p.equippedSkins.filter((id) => id !== msg.skinInstanceId);
+          db.persistPlayer(p);
+        }
+      }
+      const currentIds = player.equippedSkins ?? [];
+      // Drop any prior skin of the SAME weapon type — one per slot.
+      const nextIds: string[] = [];
+      for (const id of currentIds) {
+        if (id === msg.skinInstanceId) continue; // avoid duplicate
+        const prior = db.loadSkin(conn.teamId, id) as SkinInstance | null;
+        if (prior && prior.weapon === skin.weapon) {
+          replacedSkinInstanceId = id;
+          continue;
+        }
+        nextIds.push(id);
+      }
+      nextIds.push(msg.skinInstanceId);
+      player.equippedSkins = nextIds;
+      db.persistPlayer(player);
+      log(`skin equipped: ${player.nickname} ← ${skin.weapon} ${skin.name}${replacedSkinInstanceId ? ' (swapped)' : ''}`);
+      return {
+        kind: 'skin-equipped',
+        playerId: player.id,
+        skinInstanceId: msg.skinInstanceId,
+        player,
+        replacedSkinInstanceId,
+      };
+    }
+
+    case 'unequip-skin': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const player = db.loadPlayer(msg.playerId);
+      if (!player || player.teamId !== conn.teamId) {
+        return { kind: 'error', code: 'not-your-player', message: 'Player not on your roster.' };
+      }
+      const currentIds = player.equippedSkins ?? [];
+      if (!currentIds.includes(msg.skinInstanceId)) {
+        return { kind: 'error', code: 'not-equipped', message: 'Skin not equipped on that player.' };
+      }
+      player.equippedSkins = currentIds.filter((id) => id !== msg.skinInstanceId);
+      db.persistPlayer(player);
+      log(`skin unequipped: ${player.nickname} → ${msg.skinInstanceId}`);
+      return { kind: 'skin-unequipped', playerId: player.id, skinInstanceId: msg.skinInstanceId, player };
     }
 
     case 'rename-skin': {
@@ -2935,6 +3082,9 @@ export function handle(
       const history = [...(skin.history ?? []), { teamId: buyer.id, teamTag: buyer.tag, at: Date.now() }];
       skin.history = history.slice(-10);
       db.updateSkin(listing.skin_instance_id, JSON.stringify(skin));
+      // If the seller had this skin equipped on any of their players,
+      // strip it before the transfer so their roster JSON stays honest.
+      unequipSkinFromRoster(db, seller.id, listing.skin_instance_id);
       db.transferSkin(listing.skin_instance_id, buyer.id);
       db.removeSkinListing(listing.id);
 
@@ -2997,7 +3147,10 @@ export function handle(
         return { kind: 'error', code: 'no-upgrade', message: 'Cannot trade up at this rarity tier.' };
       }
       // Burn the inputs, mint the output, stamp first-owner history.
+      // Auto-unequip each input from whichever player was carrying it
+      // — they're about to cease existing.
       for (const id of ids) {
+        unequipSkinFromRoster(db, team.id, id);
         db.removeListingForSkin(id);
         db.removeSkin(team.id, id);
       }
@@ -4300,6 +4453,7 @@ export function handle(
       if (db.hasOpenListingForSkin(msg.skinInstanceId)) {
         return { kind: 'error', code: 'listed', message: `Skin is listed on the market — unlist first.` };
       }
+      unequipSkinFromRoster(db, sender.id, msg.skinInstanceId);
       db.transferSkin(msg.skinInstanceId, recipient.id);
       const desc = skin.skinName ?? 'a skin';
       log(`ewallet: ${sender.tag} → ${recipient.tag} skin ${msg.skinInstanceId}`);

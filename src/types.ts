@@ -236,6 +236,12 @@ export interface Player {
    *  These NEVER age and NEVER retire — they're evergreen fixtures of
    *  the online economy. Newgens + scout pulls default to false. */
   isRealName?: boolean;
+  /** Skin instance IDs equipped by this player, at most one per weapon
+   *  type (server enforces uniqueness by replacing prior entries for
+   *  the same weapon). Rendered on player cards + the MVP screen.
+   *  Auto-cleared when the underlying skin leaves the roster's
+   *  inventory (send, sell, buy). */
+  equippedSkins?: string[];
 }
 
 export interface MapPoolRating {

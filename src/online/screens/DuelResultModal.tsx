@@ -7,6 +7,7 @@ import type { DuelOutcome } from '../protocol';
 import { rankForMmr } from '../protocol';
 import { TeamTag } from './TeamProfileModal';
 import { CT_ARCHETYPE_LABEL, T_ARCHETYPE_LABEL } from '../../engine/tacticalMatchup';
+import MvpCard from './MvpCard';
 
 export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
   const dismiss = useOnline((s) => s.dismissDuelResult);
@@ -72,6 +73,12 @@ export default function DuelResultModal({ outcome }: { outcome: DuelOutcome }) {
               </span>
               {' '}<span className="muted small">→ {outcome.newMmr} ({rankForMmr(outcome.newMmr).name})</span>
               {outcome.wasPlacement && <span className="muted small" style={{ marginLeft: 6 }}>· 2× placement K</span>}
+            </div>
+          )}
+
+          {outcome.mvp && (
+            <div style={{ marginBottom: 12 }}>
+              <MvpCard mvp={outcome.mvp} compact />
             </div>
           )}
 
