@@ -203,7 +203,7 @@ function formatRelative(ms: number): string {
 function renderTeamPage(
   db: DB,
   teamId: string,
-  opts: { errorText?: string; postedJustNow?: boolean } = {},
+  opts: { errorText?: string; postedJustNow?: boolean; prefillAuthor?: string } = {},
 ): { status: number; body: string; contentType: string } {
   const team = db.loadTeam(teamId);
   if (!team) {
@@ -306,17 +306,41 @@ function renderTeamPage(
   // Comments wall.
   const errBlock = opts.errorText ? `<div class="err">${escapeHtml(opts.errorText)}</div>` : '';
   const postedBlock = opts.postedJustNow ? `<div style="color:#6ed09a;font-size:12px;margin-bottom:6px">Comment posted ✓</div>` : '';
+  const prefill = escapeHtml((opts.prefillAuthor ?? '').slice(0, 24));
+  // If we already have a URL-provided team tag, hide the label since it's
+  // obvious what will be posted. Otherwise show the placeholder + hint.
   const commentForm = `
-    <form class="comment-form" method="post" action="/team/${encodeURIComponent(team.id)}/comment">
+    <form class="comment-form" method="post" action="/team/${encodeURIComponent(team.id)}/comment" id="commentForm">
       ${errBlock}
       ${postedBlock}
       <textarea name="text" maxlength="280" required placeholder="Write something..."></textarea>
       <div class="row">
-        <input name="author" maxlength="24" required placeholder="Your name" />
+        <input name="author" maxlength="24" required placeholder="Your team tag" value="${prefill}" />
         <button class="btn" type="submit">Post</button>
       </div>
-      <div class="hint">Comments are public. Max 280 chars · max 24-char name · rate-limited.</div>
-    </form>`;
+      <div class="hint">Comments are public. Max 280 chars · 24-char team tag · rate-limited.</div>
+    </form>
+    <script>
+      // Remember the team tag across visits. Priority order:
+      //   1. Server-provided prefill (?as=TAG in the URL — set by the app)
+      //   2. Previously-used tag from localStorage
+      //   3. Empty (user types manually)
+      (function () {
+        try {
+          var f = document.getElementById('commentForm');
+          if (!f) return;
+          var input = f.querySelector('input[name="author"]');
+          if (!input) return;
+          if (!input.value) {
+            var saved = localStorage.getItem('csm-comment-as');
+            if (saved) input.value = saved;
+          }
+          f.addEventListener('submit', function () {
+            try { localStorage.setItem('csm-comment-as', input.value); } catch (e) {}
+          });
+        } catch (e) {}
+      })();
+    </script>`;
   const commentList = comments.length === 0
     ? `<div class="empty">No comments yet. Be the first.</div>`
     : `<div class="comments">
@@ -642,7 +666,17 @@ export function handleHttp(db: DB, req: IncomingMessage, res: ServerResponse): b
   if (req.method === 'GET' && teamMatch) {
     const teamId = teamMatch[1];
     const posted = url.includes('posted=1');
-    const rendered = renderTeamPage(db, teamId, { postedJustNow: posted });
+    // ?as=TAG — pre-fill the comment author with the viewer's team tag.
+    // Trimmed + capped at 24 chars to match the input field, sanitised
+    // to alphanumeric + a few symbols so tag URLs can't inject markup.
+    let prefillAuthor: string | undefined;
+    const qIdx = url.indexOf('?');
+    if (qIdx >= 0) {
+      const params = new URLSearchParams(url.slice(qIdx));
+      const raw = params.get('as');
+      if (raw) prefillAuthor = raw.replace(/[^A-Za-z0-9._-]/g, '').slice(0, 24);
+    }
+    const rendered = renderTeamPage(db, teamId, { postedJustNow: posted, prefillAuthor });
     res.writeHead(rendered.status, { 'content-type': rendered.contentType, 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
     res.end(rendered.body);
     return true;

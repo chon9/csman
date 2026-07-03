@@ -1048,6 +1048,48 @@ export function openDb(path: string) {
     return r?.lifetime_tournaments_won ?? 0;
   }
 
+  /** Server-wide player leaderboard sorted by career HLTV rating desc,
+   *  gated on `minMaps` for statistical significance. O(N players) but
+   *  simple + acceptable at current scale. Tag/name are pulled from
+   *  the players' team row so the client can render TeamTag links. */
+  const playerLeaderJoinStmt = db.prepare(
+    `SELECT p.json AS pjson, t.id AS tid, t.tag AS ttag
+     FROM players p
+     LEFT JOIN teams t ON t.id = p.team_id
+     WHERE p.team_id IS NOT NULL`,
+  );
+  function loadPlayerLeaderboard(minMaps: number, limit: number): Array<{
+    rank: number; playerId: string; nickname: string; role: string;
+    nationality: string; teamId: string; teamTag: string;
+    maps: number; kills: number; deaths: number; assists: number; rating: number;
+  }> {
+    const rows = playerLeaderJoinStmt.all() as Array<{ pjson: string; tid: string | null; ttag: string | null }>;
+    interface Row { playerId: string; nickname: string; role: string; nationality: string; teamId: string; teamTag: string; maps: number; kills: number; deaths: number; assists: number; rating: number; }
+    const filtered: Row[] = [];
+    for (const r of rows) {
+      if (!r.tid) continue;
+      let p: Player;
+      try { p = JSON.parse(r.pjson) as Player; } catch { continue; }
+      if (!p.stats || p.stats.maps < minMaps) continue;
+      if (p.retired) continue;
+      filtered.push({
+        playerId: p.id,
+        nickname: p.nickname,
+        role: p.role,
+        nationality: p.nationality,
+        teamId: r.tid,
+        teamTag: r.ttag ?? '?',
+        maps: p.stats.maps,
+        kills: p.stats.kills,
+        deaths: p.stats.deaths,
+        assists: p.stats.assists,
+        rating: p.stats.rating,
+      });
+    }
+    filtered.sort((a, b) => b.rating - a.rating);
+    return filtered.slice(0, limit).map((r, i) => ({ rank: i + 1, ...r }));
+  }
+
   // -------- Daily quests + login streak --------
 
   const getLoginStreakRow = db.prepare(`SELECT login_streak, last_streak_date FROM teams WHERE id = ?`);
@@ -3276,6 +3318,7 @@ export function openDb(path: string) {
     residencyOf,
     applyMmrChange,
     loadMmrLeaderboard,
+    loadPlayerLeaderboard,
     getAutoTickAnchor,
     setAutoTickAnchor,
     getLastMassageDay,

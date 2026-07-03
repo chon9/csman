@@ -48,6 +48,8 @@ import {
   MINES_MIN_BET,
   MINES_MIN_MINES,
   SKIN_MARKET_COMMISSION,
+  PLAYER_LEADER_LIMIT,
+  PLAYER_LEADER_MIN_MAPS,
   SKIN_MARKET_MAX_PRICE,
   SKIN_MARKET_MIN_PRICE,
   SKIN_NAMETAG_COST,
@@ -3381,6 +3383,16 @@ export function handle(
       return { kind: 'ranked-leaderboard', rows };
     }
 
+    case 'list-player-leaderboard': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      // Iterate every persisted player, filter for qualifying maps count,
+      // sort by career rating desc, cap to the wire limit. The players
+      // table isn't astronomically large; an O(N) scan on the hot path
+      // is acceptable and simpler than a materialised view.
+      const rows = db.loadPlayerLeaderboard(PLAYER_LEADER_MIN_MAPS, PLAYER_LEADER_LIMIT);
+      return { kind: 'player-leaderboard', rows };
+    }
+
     // ---------- Phase 5: live replays ----------
 
     case 'fetch-live-replay': {
@@ -3887,6 +3899,14 @@ export function handle(
         age: Math.round(p.age * 100) / 100,
         currentAbility: p.currentAbility,
         potentialAbility: p.potentialAbility,
+        // Career stats — pulled from the running p.stats aggregate so
+        // scouts can compare talent at a glance. Only include when the
+        // player has played at least one map (avoids "0/0 · 0.00" noise).
+        careerKills: p.stats.maps > 0 ? p.stats.kills : undefined,
+        careerDeaths: p.stats.maps > 0 ? p.stats.deaths : undefined,
+        careerAssists: p.stats.maps > 0 ? p.stats.assists : undefined,
+        careerRating: p.stats.maps > 0 ? p.stats.rating : undefined,
+        careerMaps: p.stats.maps > 0 ? p.stats.maps : undefined,
       });
       const starters = roster.slice(0, 5).map(scrub);
       const reserves = roster.slice(5).map(scrub);
@@ -3932,6 +3952,20 @@ export function handle(
           mmr: target.mmr,
           peakMmr: target.peakMmr,
           tendency,
+          // Public tactics snapshot — playstyle labels + slider positions.
+          // Only shipped when the team has actually saved tactics (i.e.
+          // beyond the DEFAULT_TACTICS baseline).
+          tactics: target.tactics && Object.keys(target.tactics).length > 0
+            ? {
+                tPlaystyle: (target.tactics.tPlaystyle ?? 'default') as import('../../src/types.ts').TSidePlaystyle,
+                ctPlaystyle: (target.tactics.ctPlaystyle ?? 'standard') as import('../../src/types.ts').CTSidePlaystyle,
+                aggression: target.tactics.aggression ?? 10,
+                utilityUsage: target.tactics.utilityUsage ?? 12,
+                midRoundFlexibility: target.tactics.midRoundFlexibility ?? 10,
+                ecoDiscipline: target.tactics.ecoDiscipline ?? 12,
+                forceBuyTendency: target.tactics.forceBuyTendency ?? 8,
+              }
+            : undefined,
         },
       };
     }

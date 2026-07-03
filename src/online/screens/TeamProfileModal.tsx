@@ -14,7 +14,11 @@ import { CT_ARCHETYPE_LABEL, T_ARCHETYPE_LABEL } from '../../engine/tacticalMatc
  *  to the public Facebook-style profile page in a new tab. Renders the
  *  tag in the team's accent if available, else the global accent. */
 export function TeamTag({ teamId, tag, accent }: { teamId: string; tag: string; accent?: string }): React.ReactElement {
-  const href = `${publicOrigin()}/team/${encodeURIComponent(teamId)}`;
+  // Pre-fill the profile-page comment form with the viewer's team tag when
+  // logged in. The public HTML page reads `?as=` and auto-fills the field.
+  const myTeam = useOnline((s) => s.team);
+  const asParam = myTeam?.tag ? `?as=${encodeURIComponent(myTeam.tag)}` : '';
+  const href = `${publicOrigin()}/team/${encodeURIComponent(teamId)}${asParam}`;
   return (
     <a
       href={href}
@@ -98,6 +102,32 @@ export default function TeamProfileModal(): React.ReactElement | null {
           <ProfileStat label="Roster" value={String(profile.starters.length + profile.reserves.length)} />
         </div>
 
+        {/* ===== Tactics snapshot ===== */}
+        {profile.tactics && (
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: 6,
+            padding: '10px 12px', marginBottom: 12,
+            background: 'var(--bg-elev)', border: '1px solid var(--border)',
+            borderLeft: '3px solid #5aa4e6',
+            borderRadius: 'var(--radius-sm)', fontSize: 12,
+          }}>
+            <div className="muted" style={{ textTransform: 'uppercase', letterSpacing: 1, fontSize: 10, fontWeight: 700 }}>
+              📋 Tactics
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <span className="pill" title="T-side playstyle">T · {profile.tactics.tPlaystyle}</span>
+              <span className="pill" title="CT-side playstyle">CT · {profile.tactics.ctPlaystyle}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6, marginTop: 4 }}>
+              <TacticsSlider label="Aggression" value={profile.tactics.aggression} />
+              <TacticsSlider label="Utility usage" value={profile.tactics.utilityUsage} />
+              <TacticsSlider label="Mid-round adapt" value={profile.tactics.midRoundFlexibility} />
+              <TacticsSlider label="Eco discipline" value={profile.tactics.ecoDiscipline} />
+              <TacticsSlider label="Force-buy" value={profile.tactics.forceBuyTendency} />
+            </div>
+          </div>
+        )}
+
         {/* ===== Tactical tendency (scouting hook) ===== */}
         {profile.tendency && (
           <div style={{
@@ -156,6 +186,9 @@ export default function TeamProfileModal(): React.ReactElement | null {
 }
 
 function RosterTable({ players, accent }: { players: PublicPlayer[]; accent: string }): React.ReactElement {
+  // Show K/D/A/Rating columns only when at least one player on this list
+  // has recorded career stats. Keeps early-game rosters uncluttered.
+  const anyStats = players.some((p) => typeof p.careerMaps === 'number' && p.careerMaps > 0);
   return (
     <table className="table table-dense" style={{ marginTop: 6 }}>
       <thead>
@@ -166,19 +199,33 @@ function RosterTable({ players, accent }: { players: PublicPlayer[]; accent: str
           <th>Age</th>
           <th className="num">CA</th>
           <th className="num">PA</th>
+          {anyStats && <th className="num" title="Maps played">Mp</th>}
+          {anyStats && <th className="num">K</th>}
+          {anyStats && <th className="num">D</th>}
+          {anyStats && <th className="num">A</th>}
+          {anyStats && <th className="num" title="HLTV rating">Rtg</th>}
         </tr>
       </thead>
       <tbody>
-        {players.map((p) => (
-          <tr key={p.id}>
-            <td><PlayerName playerId={p.id} label={p.nickname} color={accent} /> <span className="muted small">{p.firstName} {p.lastName}</span></td>
-            <td>{p.role}</td>
-            <td className="muted">{p.nationality}</td>
-            <td>{p.age.toFixed(0)}</td>
-            <td className="num">{p.currentAbility}</td>
-            <td className="num">{p.potentialAbility}</td>
-          </tr>
-        ))}
+        {players.map((p) => {
+          const rating = p.careerRating ?? 0;
+          const ratingCls = rating >= 1.1 ? 'text-win' : rating > 0 && rating < 0.9 ? 'text-loss' : '';
+          return (
+            <tr key={p.id}>
+              <td><PlayerName playerId={p.id} label={p.nickname} color={accent} /> <span className="muted small">{p.firstName} {p.lastName}</span></td>
+              <td>{p.role}</td>
+              <td className="muted">{p.nationality}</td>
+              <td>{p.age.toFixed(0)}</td>
+              <td className="num">{p.currentAbility}</td>
+              <td className="num">{p.potentialAbility}</td>
+              {anyStats && <td className="num muted">{p.careerMaps ?? '—'}</td>}
+              {anyStats && <td className="num">{p.careerKills ?? '—'}</td>}
+              {anyStats && <td className="num">{p.careerDeaths ?? '—'}</td>}
+              {anyStats && <td className="num">{p.careerAssists ?? '—'}</td>}
+              {anyStats && <td className={`num ${ratingCls}`} style={{ fontWeight: 700 }}>{typeof p.careerRating === 'number' ? p.careerRating.toFixed(2) : '—'}</td>}
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -189,6 +236,22 @@ function ProfileStat({ label, value, color, big }: { label: string; value: strin
     <div style={{ background: 'rgba(255,255,255,0.04)', padding: 8, borderRadius: 6, textAlign: 'center' }}>
       <div className="muted small" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</div>
       <div style={{ fontSize: big ? 20 : 15, fontWeight: 700, color: color ?? '#e8eaf0' }}>{value}</div>
+    </div>
+  );
+}
+
+function TacticsSlider({ label, value }: { label: string; value: number }): React.ReactElement {
+  const pct = Math.max(0, Math.min(100, (value / 20) * 100));
+  const color = value >= 15 ? '#e25555' : value >= 12 ? '#f2c443' : value >= 8 ? '#d4d8e1' : value >= 5 ? '#6ed09a' : '#5aa4e6';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
+        <span className="muted" style={{ textTransform: 'uppercase', letterSpacing: 0.6 }}>{label}</span>
+        <strong style={{ color, fontVariantNumeric: 'tabular-nums' }}>{value}/20</strong>
+      </div>
+      <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: color }} />
+      </div>
     </div>
   );
 }

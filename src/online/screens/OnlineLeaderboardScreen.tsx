@@ -10,7 +10,7 @@ import ToastStack from './ToastStack';
 import { TeamTag } from './TeamProfileModal';
 import RankBadge from './RankBadge';
 
-type Tab = 'rank' | 'pvp' | 'overall';
+type Tab = 'rank' | 'pvp' | 'overall' | 'players';
 
 function fmtDuration(ms: number): string {
   if (ms <= 0) return 'now';
@@ -46,8 +46,10 @@ export default function OnlineLeaderboardScreen() {
   const pvpRows = useOnline((s) => s.pvpLeaderRows);
   const myPvp = useOnline((s) => s.myPvpStandings);
   const rankedRows = useOnline((s) => s.rankedLeaderRows);
+  const playerRows = useOnline((s) => s.playerLeaderRows);
   const refresh = useOnline((s) => s.refreshLeaderboard);
   const refreshRanked = useOnline((s) => s.refreshRankedLeaderboard);
+  const refreshPlayers = useOnline((s) => s.refreshPlayerLeaderboard);
   const go = useOnline((s) => s.go);
 
   const [tab, setTab] = useState<Tab>('rank');
@@ -55,9 +57,10 @@ export default function OnlineLeaderboardScreen() {
   useEffect(() => {
     refresh();
     refreshRanked();
-    const id = setInterval(() => { refresh(); refreshRanked(); }, 10_000);
+    refreshPlayers();
+    const id = setInterval(() => { refresh(); refreshRanked(); refreshPlayers(); }, 10_000);
     return () => clearInterval(id);
-  }, [refresh, refreshRanked]);
+  }, [refresh, refreshRanked, refreshPlayers]);
 
   if (!team) return null;
   const myOverallRow = rows.find((r) => r.teamId === team.id);
@@ -104,6 +107,13 @@ export default function OnlineLeaderboardScreen() {
           style={{ flex: '1 1 160px', padding: '10px 14px' }}
         >
           📊 Overall (AI + PvP) <span className="muted small">{rows.length}</span>
+        </button>
+        <button
+          className={`btn ${tab === 'players' ? 'btn-accent' : ''}`}
+          onClick={() => setTab('players')}
+          style={{ flex: '1 1 160px', padding: '10px 14px' }}
+        >
+          🎯 Players <span className="muted small">{playerRows.length}</span>
         </button>
       </div>
 
@@ -319,6 +329,58 @@ export default function OnlineLeaderboardScreen() {
             )}
           </div>
         </>
+      )}
+
+      {/* ===== Players tab ===== */}
+      {tab === 'players' && (
+        <div className="panel" style={{ padding: 12 }}>
+          <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>🎯 Top rated players <span className="muted small" style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400, marginLeft: 6 }}>· career HLTV rating · requires 10+ maps</span></span>
+          </div>
+          {playerRows.length === 0 ? (
+            <div className="muted small" style={{ padding: 12, textAlign: 'center' }}>
+              No qualifying players yet — top rated fillers appear here once a player has 10+ maps.
+            </div>
+          ) : (
+            <table className="table table-dense">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Player</th>
+                  <th>Team</th>
+                  <th>Role</th>
+                  <th className="num" title="Maps played">Mp</th>
+                  <th className="num">K</th>
+                  <th className="num">D</th>
+                  <th className="num">A</th>
+                  <th className="num" title="K/D ratio">K/D</th>
+                  <th className="num" title="HLTV rating">Rtg</th>
+                </tr>
+              </thead>
+              <tbody>
+                {playerRows.map((r) => {
+                  const isMine = team && r.teamId === team.id;
+                  const kd = r.kills / Math.max(1, r.deaths);
+                  const ratingCls = r.rating >= 1.1 ? 'text-win' : r.rating < 0.9 ? 'text-loss' : '';
+                  return (
+                    <tr key={r.playerId} className={isMine ? 'row-user' : ''}>
+                      <td style={{ fontWeight: 700 }}>{rankBadge(r.rank)}</td>
+                      <td><strong>{r.nickname}</strong></td>
+                      <td><TeamTag teamId={r.teamId} tag={r.teamTag} /></td>
+                      <td className="muted">{r.role}</td>
+                      <td className="num muted">{r.maps}</td>
+                      <td className="num">{r.kills}</td>
+                      <td className="num">{r.deaths}</td>
+                      <td className="num">{r.assists}</td>
+                      <td className={`num ${kd >= 1 ? 'text-win' : 'text-loss'}`} style={{ fontWeight: 600 }}>{kd.toFixed(2)}</td>
+                      <td className={`num ${ratingCls}`} style={{ fontWeight: 800, fontSize: 13 }}>{r.rating.toFixed(2)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
 
       <ToastStack />

@@ -17,6 +17,7 @@ import type {
   PvpLeaderRow,
   QuestSnapshot,
   RankedLeaderRow,
+  PlayerLeaderRow,
   LiveFeedEntry,
   LoanOffer,
   ActiveBoostWire,
@@ -132,6 +133,9 @@ interface OnlineState {
   myPvpStandings: MyPvpStandings | null;
   /** MMR-sorted ranked ladder — top 100 teams by competitive MMR. */
   rankedLeaderRows: RankedLeaderRow[];
+  /** Player-rating leaderboard — top qualifying players (≥10 maps) by
+   *  career HLTV rating. Refreshes on the Leaderboard screen. */
+  playerLeaderRows: PlayerLeaderRow[];
   /** Pop-up team profile (any team — your own or an enemy's). Set by
    *  clicking a team tag anywhere in the app; cleared on dismiss. */
   viewingTeamProfile: PublicTeamProfile | null;
@@ -428,6 +432,7 @@ interface OnlineState {
   reorderLineup: (playerIds: string[]) => void;
   refreshLeaderboard: () => void;
   refreshRankedLeaderboard: () => void;
+  refreshPlayerLeaderboard: () => void;
 
   // Phase 5 actions
   fetchLiveReplay: (matchId: string) => void;
@@ -552,6 +557,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   pvpLeaderRows: [],
   myPvpStandings: null,
   rankedLeaderRows: [],
+  playerLeaderRows: [],
   viewingTeamProfile: null,
   teamProfileLoading: null,
   viewingPlayerId: null,
@@ -877,6 +883,10 @@ export const useOnline = create<OnlineState>((set, get) => ({
         }
         case 'ranked-leaderboard': {
           set({ rankedLeaderRows: msg.rows });
+          break;
+        }
+        case 'player-leaderboard': {
+          set({ playerLeaderRows: msg.rows });
           break;
         }
         case 'live-replay': {
@@ -2093,6 +2103,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   refreshRankedLeaderboard() {
     get().client?.send({ kind: 'list-ranked-leaderboard' });
+  },
+  refreshPlayerLeaderboard() {
+    get().client?.send({ kind: 'list-player-leaderboard' });
   },
 
   fetchLiveReplay(matchId) {

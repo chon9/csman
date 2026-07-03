@@ -21,6 +21,29 @@ function formatTime(ts: number): string {
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 }
 
+/** YYYY-MM-DD key for grouping messages by calendar day (local time). */
+function dayKey(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+}
+
+/** Human-friendly day label for the divider between message groups —
+ *  Today / Yesterday / weekday for the last week, otherwise full date.
+ *  Matches the pattern most modern chat apps use (IG, WhatsApp, Slack). */
+function formatDayLabel(ts: number): string {
+  const now = new Date();
+  const d = new Date(ts);
+  const startOf = (x: Date): number => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const diffDays = Math.floor((startOf(now) - startOf(d)) / dayMs);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays > 1 && diffDays < 7) {
+    return d.toLocaleDateString(undefined, { weekday: 'long' });
+  }
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
 export default function ChatWidget() {
   const open = useOnline((s) => s.chatOpen);
   const messages = useOnline((s) => s.chatHistory);
@@ -56,10 +79,15 @@ export default function ChatWidget() {
       const next = messages[i + 1];
       const sameAsPrev = !!prev && prev.from === m.from && (m.at - prev.at) < 5 * 60 * 1000;
       const sameAsNext = !!next && next.from === m.from && (next.at - m.at) < 5 * 60 * 1000;
+      // Insert a day divider whenever this message falls on a different
+      // calendar day than the previous one. First message always gets one.
+      const showDayDivider = !prev || dayKey(prev.at) !== dayKey(m.at);
       return {
         m,
         groupStart: !sameAsPrev,
         groupEnd: !sameAsNext,
+        showDayDivider,
+        dayLabel: showDayDivider ? formatDayLabel(m.at) : '',
       };
     });
   }, [messages]);
@@ -143,28 +171,40 @@ export default function ChatWidget() {
             <span className="em">💬</span>
             No messages yet. Say hi!
           </div>
-        ) : grouped.map(({ m, groupStart, groupEnd }) => {
+        ) : grouped.map(({ m, groupStart, groupEnd, showDayDivider, dayLabel }) => {
           const mine = m.from.toLowerCase() === myNick.toLowerCase();
           return (
-            <div
-              key={m.id}
-              className={`chat-msg-row ${mine ? 'mine' : ''} ${groupStart ? 'group-start' : ''} ${groupEnd ? 'group-end' : ''}`}
-            >
-              {/* Avatar only on the LAST message of a group (visual anchor). */}
+            <div key={m.id}>
+              {showDayDivider && (
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  margin: '10px 8px 6px', color: 'var(--muted)', fontSize: 11,
+                  textTransform: 'uppercase', letterSpacing: 1, fontWeight: 700,
+                }}>
+                  <span style={{ flex: 1, height: 1, background: 'var(--border-soft)' }} />
+                  <span>{dayLabel}</span>
+                  <span style={{ flex: 1, height: 1, background: 'var(--border-soft)' }} />
+                </div>
+              )}
               <div
-                className={`chat-avatar ${groupEnd ? '' : 'avatar-hidden'}`}
-                style={{ background: avatarColorFor(m.from) }}
-                title={m.from}
-              >{m.from.slice(0, 2).toUpperCase()}</div>
-              <div className="chat-bubble-col">
-                {groupStart && !mine && (
-                  <div className="chat-msg-author">
-                    {m.teamTag && <span className="chat-tag">{m.teamTag}</span>}
-                    <span>{m.from}</span>
-                  </div>
-                )}
-                <div className="chat-bubble">{m.text}</div>
-                <div className="chat-time">{formatTime(m.at)}</div>
+                className={`chat-msg-row ${mine ? 'mine' : ''} ${groupStart ? 'group-start' : ''} ${groupEnd ? 'group-end' : ''}`}
+              >
+                {/* Avatar only on the LAST message of a group (visual anchor). */}
+                <div
+                  className={`chat-avatar ${groupEnd ? '' : 'avatar-hidden'}`}
+                  style={{ background: avatarColorFor(m.from) }}
+                  title={m.from}
+                >{m.from.slice(0, 2).toUpperCase()}</div>
+                <div className="chat-bubble-col">
+                  {groupStart && !mine && (
+                    <div className="chat-msg-author">
+                      {m.teamTag && <span className="chat-tag">{m.teamTag}</span>}
+                      <span>{m.from}</span>
+                    </div>
+                  )}
+                  <div className="chat-bubble">{m.text}</div>
+                  <div className="chat-time" title={new Date(m.at).toLocaleString()}>{formatTime(m.at)}</div>
+                </div>
               </div>
             </div>
           );

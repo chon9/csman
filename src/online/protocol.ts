@@ -87,6 +87,14 @@ export interface PublicPlayer {
   age: number;
   currentAbility: number;
   potentialAbility: number;
+  /** Career K/D/A + running-avg HLTV rating. Shown on the public
+   *  profile so scouts can compare talent without a friend request.
+   *  Values are lifetime totals across every recorded match. */
+  careerKills?: number;
+  careerDeaths?: number;
+  careerAssists?: number;
+  careerRating?: number;
+  careerMaps?: number;
 }
 
 /** Scrubbed snapshot of any team — what a manager sees when they click
@@ -131,6 +139,19 @@ export interface PublicTeamProfile {
     t: import('../types').TStratArchetype;
     ct: import('../types').CtArchetype;
     source: 'explicit' | 'inferred' | 'mixed';
+  };
+  /** Tactics snapshot — playstyle labels + slider positions the owner
+   *  has committed to. Shown alongside the tendency chip so scouts can
+   *  see the full picture. Fields omitted when the team is running the
+   *  engine defaults (all sliders at their neutral midpoint). */
+  tactics?: {
+    tPlaystyle: import('../types').TSidePlaystyle;
+    ctPlaystyle: import('../types').CTSidePlaystyle;
+    aggression: number;
+    utilityUsage: number;
+    midRoundFlexibility: number;
+    ecoDiscipline: number;
+    forceBuyTendency: number;
   };
 }
 
@@ -1537,6 +1558,29 @@ export interface RankedLeaderRow {
   placementMatchesPlayed: number;
 }
 
+/** Server-wide player ranking row — top HLTV-rating on the season, with
+ *  K/D headline stats. Requires at least PLAYER_LEADER_MIN_MAPS maps
+ *  to qualify so single-match blowouts don't dominate. */
+export interface PlayerLeaderRow {
+  rank: number;
+  playerId: string;
+  nickname: string;
+  role: string;
+  nationality: string;
+  teamId: string;
+  teamTag: string;
+  maps: number;
+  kills: number;
+  deaths: number;
+  assists: number;
+  rating: number;
+}
+
+/** Minimum maps played to appear on the player leaderboard. */
+export const PLAYER_LEADER_MIN_MAPS = 10;
+/** Max rows returned on the player leaderboard. */
+export const PLAYER_LEADER_LIMIT = 50;
+
 /** Per-player change captured during a time-skip, used for the dev-arc
  *  growth report toast. Only players who actually moved are reported. */
 export interface DevChange {
@@ -1840,6 +1884,7 @@ export type ClientMessage =
   | { kind: 'collect-lot-interest'; lotId: string }
   // ----- MMR rank leaderboard -----
   | { kind: 'list-ranked-leaderboard' }
+  | { kind: 'list-player-leaderboard' }
   // ----- Contract renewal: extend a starter's duels-remaining -----
   | { kind: 'renew-contract'; playerId: string }
   // ----- Release a player to free agency (pays severance) -----
@@ -1957,6 +2002,7 @@ export type ServerMessage =
   | { kind: 'lot-updated'; lot: LotDetailWire; newMoney: number }
   | { kind: 'lot-leaderboard'; entries: LotLeaderboardEntry[] }
   | { kind: 'ranked-leaderboard'; rows: RankedLeaderRow[] }
+  | { kind: 'player-leaderboard'; rows: PlayerLeaderRow[] }
   | { kind: 'loan-offers'; incoming: LoanOffer[]; outgoing: LoanOffer[] }
   | { kind: 'loan-event'; loan: LoanOffer }
   // ----- Phase 9 -----
@@ -2155,7 +2201,7 @@ export interface TrainingOutcome {
   newPA?: number;
 }
 
-export const PROTOCOL_VERSION = 54;
+export const PROTOCOL_VERSION = 55;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past
