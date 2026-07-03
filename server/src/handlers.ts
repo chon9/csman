@@ -508,6 +508,34 @@ function computeMvpSnapshot(
   };
 }
 
+/** Count highlight events (ACEs, clutches) per team from a match result.
+ *  ACE lines are pattern-scanned from round commentary; clutches come
+ *  from the structured round.clutch payload. Team attribution: ACEs
+ *  go to whichever side won the round (an ACE = all 5 opponents dead,
+ *  and the acing player is always on the round winner's side); clutches
+ *  are attributed by looking up the clutch playerId in the roster. */
+function extractMatchHighlights(
+  result: import('../../src/types.ts').MatchResult,
+  ownTeamId: string,
+  ownPlayerIds: Set<string>,
+): { ownAces: number; oppAces: number; ownClutches: number; oppClutches: number } {
+  let ownAces = 0, oppAces = 0, ownClutches = 0, oppClutches = 0;
+  for (const map of result.maps) {
+    for (const round of map.rounds) {
+      for (const line of round.commentary) {
+        if (!line.includes('🏆 ACE!')) continue;
+        if (round.winnerTeamId === ownTeamId) ownAces++;
+        else oppAces++;
+      }
+      if (round.clutch?.won) {
+        if (ownPlayerIds.has(round.clutch.playerId)) ownClutches++;
+        else oppClutches++;
+      }
+    }
+  }
+  return { ownAces, oppAces, ownClutches, oppClutches };
+}
+
 /** Prune a skin from any player on the given team who has it in their
  *  equippedSkins array. Called whenever a skin is about to leave the
  *  team's inventory (sell, send, list, buy). Idempotent — no-op when
@@ -1222,6 +1250,10 @@ export function handle(
       if (!isScrim && Math.random() < 0.55) {
         const teamWon = duel.result.winnerId === team.id;
         const mvp = computeMvpSnapshot(db, duel.result, team.id);
+        const teamStarters = db.loadTeamPlayers(team.id).slice(0, 5);
+        const highlights = extractMatchHighlights(
+          duel.result, team.id, new Set(teamStarters.map((p) => p.id)),
+        );
         const ctx: MatchContext = {
           myTag: team.tag,
           oppTag: duel.opponentTag,
@@ -1229,7 +1261,8 @@ export function handle(
           myMaps: teamWon ? Math.max(duel.result.mapsA, duel.result.mapsB) : Math.min(duel.result.mapsA, duel.result.mapsB),
           oppMaps: teamWon ? Math.min(duel.result.mapsA, duel.result.mapsB) : Math.max(duel.result.mapsA, duel.result.mapsB),
           mvp: mvp ? { ...mvp, isOwn: mvp.isOwn } : undefined,
-          starters: db.loadTeamPlayers(team.id).slice(0, 5),
+          starters: teamStarters,
+          ...highlights,
         };
         rollPostMatchInbox(db, notifyTeam, team.id, ctx);
       }
@@ -1677,29 +1710,35 @@ export function handle(
       // on with press coverage.
       if (Math.random() < 0.55) {
         const chMvp = computeMvpSnapshot(db, duel.result, challenger.id);
+        const chStarters = db.loadTeamPlayers(challenger.id).slice(0, 5);
+        const chHighlights = extractMatchHighlights(
+          duel.result, challenger.id, new Set(chStarters.map((p) => p.id)),
+        );
         const ctx: MatchContext = {
           myTag: challenger.tag, oppTag: accepter.tag,
           mood: accepterWon ? 'loss' : 'win',
-          // In accept-challenge, challenger is side A, accepter is side B —
-          // so mapsA is the challenger's map wins regardless of who won.
           myMaps: duel.result.mapsA,
           oppMaps: duel.result.mapsB,
           mvp: chMvp,
-          starters: db.loadTeamPlayers(challenger.id).slice(0, 5),
+          starters: chStarters,
+          ...chHighlights,
         };
         rollPostMatchInbox(db, notifyTeam, challenger.id, ctx);
       }
       if (Math.random() < 0.55) {
         const acMvp = computeMvpSnapshot(db, duel.result, accepter.id);
+        const acStarters = db.loadTeamPlayers(accepter.id).slice(0, 5);
+        const acHighlights = extractMatchHighlights(
+          duel.result, accepter.id, new Set(acStarters.map((p) => p.id)),
+        );
         const ctx: MatchContext = {
           myTag: accepter.tag, oppTag: challenger.tag,
           mood: accepterWon ? 'win' : 'loss',
-          // From accepter's perspective, mapsA/mapsB flip based on who
-          // was assigned side A. duel.result.mapsA is challenger side.
           myMaps: duel.result.mapsB,
           oppMaps: duel.result.mapsA,
           mvp: acMvp,
-          starters: db.loadTeamPlayers(accepter.id).slice(0, 5),
+          starters: acStarters,
+          ...acHighlights,
         };
         rollPostMatchInbox(db, notifyTeam, accepter.id, ctx);
       }
@@ -2042,25 +2081,35 @@ export function handle(
       // side so back-to-back Quick Matches don't drown the inbox.
       if (Math.random() < 0.55) {
         const myMvp = computeMvpSnapshot(db, duel.result, me.id);
+        const myStartersFresh = db.loadTeamPlayers(me.id).slice(0, 5);
+        const myHighlights = extractMatchHighlights(
+          duel.result, me.id, new Set(myStartersFresh.map((p) => p.id)),
+        );
         const ctx: MatchContext = {
           myTag: me.tag, oppTag: opp.tag,
           mood: meWon ? 'win' : 'loss',
           myMaps: duel.result.mapsA,
           oppMaps: duel.result.mapsB,
           mvp: myMvp,
-          starters: db.loadTeamPlayers(me.id).slice(0, 5),
+          starters: myStartersFresh,
+          ...myHighlights,
         };
         rollPostMatchInbox(db, notifyTeam, me.id, ctx);
       }
       if (Math.random() < 0.55) {
         const oppMvp = computeMvpSnapshot(db, duel.result, opp.id);
+        const oppStartersFresh = db.loadTeamPlayers(opp.id).slice(0, 5);
+        const oppHighlights = extractMatchHighlights(
+          duel.result, opp.id, new Set(oppStartersFresh.map((p) => p.id)),
+        );
         const ctx: MatchContext = {
           myTag: opp.tag, oppTag: me.tag,
           mood: defenderWon ? 'win' : 'loss',
           myMaps: duel.result.mapsB,
           oppMaps: duel.result.mapsA,
           mvp: oppMvp,
-          starters: db.loadTeamPlayers(opp.id).slice(0, 5),
+          starters: oppStartersFresh,
+          ...oppHighlights,
         };
         rollPostMatchInbox(db, notifyTeam, opp.id, ctx);
       }

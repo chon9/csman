@@ -36,14 +36,9 @@ interface ChoiceEffect {
 
 /** Everything the generators need to write match-specific copy. */
 export interface MatchContext {
-  /** Viewer's team tag — used only when the copy needs to reference
-   *  their own team by name (rare — most templates use pronouns). */
   myTag: string;
-  /** Opponent tag — shows up in titles + body copy. */
   oppTag: string;
-  /** Series outcome from THIS team's perspective. */
   mood: 'win' | 'loss';
-  /** Score by side (map wins). Used to compute close/sweep. */
   myMaps: number;
   oppMaps: number;
   /** MVP snapshot from computeMvpSnapshot — undefined for legacy paths. */
@@ -57,19 +52,38 @@ export interface MatchContext {
     kills: number;
     deaths: number;
   };
-  /** The team's starting five (for player-quote generation). */
   starters: Player[];
+  /** ACE count on the viewer's own team (across all maps). Extracted
+   *  from the round commentary strings by counting `🏆 ACE!` lines. */
+  ownAces?: number;
+  /** ACE count on the opponent's team. */
+  oppAces?: number;
+  /** Clutch wins by the viewer's own team (any 1vX). Extracted from
+   *  the round.clutch payload when the winner was on our side. */
+  ownClutches?: number;
+  oppClutches?: number;
+  /** Highest single-map rating on OWN team (may exceed MVP if series
+   *  MVP had a quieter final map). */
+  peakOwnRating?: number;
+  /** Player who put up the peak-rating map (nickname). */
+  peakOwnPlayer?: string;
 }
 
 interface Situation {
-  /** ≥2 map differential — dominant. */
   sweep: boolean;
-  /** 1-map differential — heartbreak or nail-biter. */
   close: boolean;
-  /** MVP is on the viewer's own team. */
   ownMvp: boolean;
-  /** Multiplier applied to fans deltas so dramatic matches pay more.
-   *  Ranges 1.0–2.0 depending on close/sweep/upset. */
+  /** MVP had a monster series (rating ≥ 1.3). */
+  monsterMvp: boolean;
+  /** OWN team dropped at least one ACE. */
+  ownAce: boolean;
+  /** Opponent dropped at least one ACE — signals a rough loss or one to admire. */
+  oppAce: boolean;
+  /** OWN team won at least one clutch. */
+  ownClutch: boolean;
+  /** MVP has extreme K/D (≥ 2.0). */
+  hyperFragger: boolean;
+  /** Match significance multiplier for fans swings. */
   significance: number;
 }
 
@@ -78,12 +92,22 @@ function situation(ctx: MatchContext): Situation {
   const sweep = diff >= 2;
   const close = diff === 1;
   const ownMvp = ctx.mvp?.isOwn ?? false;
-  // Sweeps + comeback wins + MVP performances all bump significance.
+  const monsterMvp = ownMvp && (ctx.mvp?.avgRating ?? 0) >= 1.3;
+  const ownAce = (ctx.ownAces ?? 0) > 0;
+  const oppAce = (ctx.oppAces ?? 0) > 0;
+  const ownClutch = (ctx.ownClutches ?? 0) > 0;
+  const hyperFragger = ownMvp
+    && (ctx.mvp?.kills ?? 0) >= (ctx.mvp?.deaths ?? 1) * 2;
   let significance = 1.0;
   if (sweep) significance += 0.4;
   if (close) significance += 0.3;
-  if (ownMvp && ctx.mood === 'win') significance += 0.3;
-  return { sweep, close, ownMvp, significance: Math.min(2.0, significance) };
+  if (monsterMvp) significance += 0.3;
+  if (ownAce) significance += 0.2;
+  return {
+    sweep, close, ownMvp, monsterMvp,
+    ownAce, oppAce, ownClutch, hyperFragger,
+    significance: Math.min(2.0, significance),
+  };
 }
 
 // =====================================================================
@@ -124,73 +148,145 @@ function pickNonMvpStarter(ctx: MatchContext): Player | null {
 }
 
 const PLAYER_QUOTES: PlayerQuoteTemplate[] = [
-  // ----- Win + own MVP (star player speaks) -----
+  // ===== ACE moments — highest priority when ACE landed =====
+  {
+    when: (s) => s.ownAce && s.ownMvp,
+    title: '{nick} on the ACE: "The flick just felt right"',
+    body: `"When it went to a 1v5 I saw the smoke coming and just committed to the peek. Sometimes the game gives you those moments." — {nick} after posting {rating} with an ACE in {myTag}'s series.`,
+    speaker: pickMvpOrRandom,
+  },
+  {
+    when: (s) => s.ownAce,
+    title: '"Watched it back three times" — {nick} on the ACE',
+    body: `"We were all screaming in comms. I had to rewatch it after the map to believe it happened." — {nick} on the round that flipped momentum in {myTag} vs {opp}.`,
+    speaker: pickMvpOrRandom,
+  },
+
+  // ===== Monster MVP performance (win) =====
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.monsterMvp,
+    title: '{nick} on his {rating} series',
+    body: `"Sometimes you feel the game before it happens. Every peek felt automatic — {kills} frags, {deaths} deaths, but I honestly couldn\'t tell you which one was the best." — {nick} after the win.`,
+    speaker: pickMvpOrRandom,
+  },
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.hyperFragger,
+    title: '{nick}: "Everything clicked today"',
+    body: `"Aim was there, reads were there, the team set me up. When it all lines up you get {kills}/{deaths} series like this one." — {nick} after the win over {opp}.`,
+    speaker: pickMvpOrRandom,
+  },
   {
     when: (s, ctx) => ctx.mood === 'win' && s.ownMvp,
     title: '{nick}: "Best series in months"',
     body: `"That was probably my cleanest performance of the split — {rating} rating, {kills}/{deaths} on the day. The reads just came." — {nick} after {myTag}'s {myMaps}-{oppMaps} win over {opp}.`,
     speaker: pickMvpOrRandom,
   },
+
+  // ===== Clutch talk (win) =====
   {
-    when: (s, ctx) => ctx.mood === 'win' && s.ownMvp && s.sweep,
-    title: '{nick} on the sweep',
-    body: `"I felt locked in from the pistol. When you go up early it snowballs — {opp} never got their footing. Now we push for a title." — {nick}, MVP of the {myMaps}-{oppMaps} series.`,
+    when: (s, ctx) => ctx.mood === 'win' && s.ownClutch,
+    title: '{nick} on the clutch: "Time slows down"',
+    body: `"When it goes to a 1vX you stop thinking about the series and just play the round. Muscle memory takes over." — {nick} after {myTag}'s comeback win.`,
     speaker: pickMvpOrRandom,
   },
 
-  // ----- Win + own MVP → teammate gives them credit -----
+  // ===== Teammate credits the MVP =====
   {
     when: (s, ctx) => ctx.mood === 'win' && s.ownMvp,
     title: 'Teammate praises {mvpNick}',
     body: `"{mvpNick} carried us today. I just did my job — the reads, the entries, that was all him." — {nick} after {myTag}'s win.`,
     speaker: pickNonMvpStarter,
   },
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.monsterMvp,
+    title: 'Teammate: "Just clear the smoke and let {mvpNick} cook"',
+    body: `"When he's on that {rating}-rating pace we just try not to get in the way. Flash, clear the smoke, {mvpNick} does the rest." — {nick} after the win over {opp}.`,
+    speaker: pickNonMvpStarter,
+  },
 
-  // ----- Win + close series -----
+  // ===== Close-win drama =====
   {
     when: (s, ctx) => ctx.mood === 'win' && s.close,
     title: '{nick}: "We had to earn every round"',
     body: `"Series like that build the team room. {opp} pushed us to the last map — but we found the answers." — {nick} after the {myMaps}-{oppMaps} nailbiter.`,
     speaker: pickMvpOrRandom,
   },
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.close,
+    title: '{nick} on the comeback',
+    body: `"Down at half we told ourselves it\'s just fifteen rounds. Reset the head, trust the plan, take it one at a time. And here we are." — {nick} after {myTag} edged {opp}.`,
+    speaker: pickMvpOrRandom,
+  },
 
-  // ----- Win + sweep -----
+  // ===== Sweep confidence =====
   {
     when: (s, ctx) => ctx.mood === 'win' && s.sweep,
     title: '{nick}: "Feels good to be dominant"',
     body: `"That\'s the standard now. When we execute like that, no team in the region beats us." — {nick} after the {myMaps}-{oppMaps} sweep of {opp}.`,
     speaker: pickMvpOrRandom,
   },
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.sweep,
+    title: '{nick} plays down the sweep',
+    body: `"A sweep\'s a sweep — {opp} still had good rounds. We just executed the plan and the map score reflected that." — {nick}, measured after the win.`,
+    speaker: pickMvpOrRandom,
+  },
 
-  // ----- Loss + individual played well -----
+  // ===== Losses — MVP played well but team lost =====
   {
     when: (s, ctx) => ctx.mood === 'loss' && s.ownMvp,
     title: '{nick} takes it hard despite the {rating} rating',
     body: `"I had the frags but we couldn\'t close together. {rating} rating means nothing if the series went the other way. On me to step up in clutch." — {nick} after the loss to {opp}.`,
     speaker: pickMvpOrRandom,
   },
+  {
+    when: (s, ctx) => ctx.mood === 'loss' && s.monsterMvp,
+    title: '{nick}: "Frags don\'t matter if we lose"',
+    body: `"Nice K/D, we lost the series. That\'s not a highlight — it\'s a stat sheet. Team wins matter." — {nick}, blunt after the {oppMaps}-{myMaps} defeat to {opp}.`,
+    speaker: pickMvpOrRandom,
+  },
 
-  // ----- Loss + close -----
+  // ===== Losses — close =====
   {
     when: (s, ctx) => ctx.mood === 'loss' && s.close,
     title: '{nick}: "One round away"',
     body: `"That\'s what stings the most — we had them. One round the other way and we\'re celebrating." — {nick} after the {myMaps}-{oppMaps} loss to {opp}.`,
     speaker: pickMvpOrRandom,
   },
+  {
+    when: (s, ctx) => ctx.mood === 'loss' && s.close,
+    title: 'Teammate on the loss',
+    body: `"The scoreline says close, but they were the better team in the important moments. We got outplayed in the clutches." — {nick} being honest about the loss to {opp}.`,
+    speaker: pickNonMvpStarter,
+  },
 
-  // ----- Loss + blowout -----
+  // ===== Losses — blowout =====
   {
     when: (s, ctx) => ctx.mood === 'loss' && s.sweep,
     title: '{nick} on the loss',
     body: `"Got outclassed today. {opp} played the better tactical series and we didn\'t adjust. Back to the practice server — no excuses." — {nick} after the {oppMaps}-{myMaps} defeat.`,
     speaker: pickMvpOrRandom,
   },
+  {
+    when: (s, ctx) => ctx.mood === 'loss' && s.sweep,
+    title: '{nick}: "Time to reset the room"',
+    body: `"Series like that hurt but they\'re fixable. VOD review, own the mistakes, come in Monday ready to work." — {nick} being professional after the sweep.`,
+    speaker: pickMvpOrRandom,
+  },
 
-  // ----- Fallback for any mood -----
+  // ===== Opponent ACE (loss — respect) =====
+  {
+    when: (s, ctx) => ctx.mood === 'loss' && s.oppAce,
+    title: '{nick} tips his cap: "Their guy went crazy"',
+    body: `"You have to respect a series with an ACE in it. Their guy showed up. We\'ll be ready when we play them next time." — {nick} after the loss to {opp}.`,
+    speaker: pickMvpOrRandom,
+  },
+
+  // ===== Universal fallback =====
   {
     when: () => true,
-    title: '{nick} on the {mood}',
-    body: `"Every series is a lesson. We\'ll take the reps and get better." — {nick} after {myTag} vs {opp}.`,
+    title: '{nick} on {myTag} vs {opp}',
+    body: `"Every series is a lesson. We\'ll take the reps and get better." — {nick} after the {mood}.`,
     speaker: pickMvpOrRandom,
   },
 ];
@@ -206,43 +302,122 @@ interface RecapTemplate {
 }
 
 const RECAPS: RecapTemplate[] = [
-  // Own team wins ---
+  // ===== ACE-driven headlines (highest priority — real highlight moments) =====
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.ownAce && s.ownMvp,
+    title: 'ACE alert: {mvpNick} carries {myTag} past {opp}',
+    body: `HLTV recap: A jaw-dropping ACE from {mvpNick} punctuated {myTag}'s {myMaps}-{oppMaps} series win over {opp}. Final stat line — {rating} rating, {kills}/{deaths}. Highlight desks are cutting the clip already.`,
+  },
+  {
+    when: (s, ctx) => ctx.mood === 'loss' && s.oppAce,
+    title: 'ACE from {opp} sinks {myTag}',
+    body: `HLTV recap: {opp} took the series {oppMaps}-{myMaps} on the back of a highlight-reel ACE. {myTag} had answers on paper but not in the deciding round. The clip is already trending.`,
+  },
+  {
+    when: (s) => s.ownAce && s.close,
+    title: 'ACE + a nailbiter: {myTag} vs {opp} was must-watch',
+    body: `HLTV recap: One of the most watchable series of the week — an ACE, six clutch rounds, {myMaps}-{oppMaps} on the boards. Highlight reels basically wrote themselves.`,
+  },
+
+  // ===== Clutch-driven headlines =====
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.ownClutch && s.close,
+    title: 'Clutch masters: {myTag} steal it late from {opp}',
+    body: `HLTV recap: {myTag} took the series {myMaps}-{oppMaps} on the strength of the clutch rounds — the deciding moments went their way when they had to. {mvpNick} was in the middle of every last stand ({rating} rating).`,
+  },
+  {
+    when: (s) => s.ownClutch,
+    title: 'Nerves of steel: {myTag} lock down the clutches',
+    body: `HLTV recap: A masterclass in composure from {myTag}. When the rounds got tight, they closed. {mvpNick} led the charge at {rating}.`,
+  },
+
+  // ===== Monster MVP performances =====
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.monsterMvp,
+    title: '{mvpNick} posts a {rating} — {myTag} take down {opp}',
+    body: `HLTV recap: {mvpNick} was on a different level today. {rating} rating over the series with {kills}/{deaths} on the day. {myTag} take it {myMaps}-{oppMaps}; every top-8 ranking analyst is going to be re-jigging their list this week.`,
+  },
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.hyperFragger,
+    title: '{mvpNick} on a rampage: {kills} frags in the win',
+    body: `HLTV recap: {kills} kills, {deaths} deaths, {rating} rating. {mvpNick} was everywhere for {myTag} in their {myMaps}-{oppMaps} win over {opp}. Series like this are why the sport pays for tape review.`,
+  },
+
+  // ===== Sweeps =====
   {
     when: (s, ctx) => ctx.mood === 'win' && s.sweep && s.ownMvp,
     title: '{myTag} steamroll {opp} — {mvpNick} the difference',
     body: `HLTV recap: {myTag} put down {opp} {myMaps}-{oppMaps} in a dominant series. {mvpNick} led all fraggers with a {rating} rating ({kills}/{deaths}), doing the heavy lifting round after round. Ranking watchers are already pushing {myTag} up their tier lists.`,
   },
   {
-    when: (s, ctx) => ctx.mood === 'win' && s.close,
-    title: '{myTag} edge {opp} in a thriller',
-    body: `Recap: {myTag} take the series {myMaps}-{oppMaps} in a nailbiter that went the distance. Every map came down to the final rounds; {mvpNick} was the difference with a {rating} rating. Scenes in the studio when the last kill dropped.`,
+    when: (s, ctx) => ctx.mood === 'win' && s.sweep,
+    title: '{myTag} dispatch {opp} without breaking a sweat',
+    body: `HLTV recap: Clinical from {myTag} — a {myMaps}-{oppMaps} series win with the outcome rarely in doubt. Tactical execution was sharp; frags followed. {opp} will want to forget this one quickly.`,
   },
   {
     when: (s, ctx) => ctx.mood === 'win' && s.sweep,
-    title: '{myTag} sweep {opp} {myMaps}-{oppMaps}',
-    body: `Recap: A clinical performance from {myTag} — {myMaps}-{oppMaps} over {opp} without ever really being threatened. The tactical playbook was working, the frags followed, and the crowd left happy.`,
+    title: 'Statement win: {myTag} dominate {opp}',
+    body: `HLTV recap: A statement result. {myTag} take the series {myMaps}-{oppMaps} with rounds to spare, sending a message to the rest of the field.`,
   },
+
+  // ===== Close wins =====
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.close,
+    title: '{myTag} edge {opp} in a thriller',
+    body: `HLTV recap: {myTag} take the series {myMaps}-{oppMaps} in a nailbiter that went the distance. Every map came down to the final rounds; {mvpNick} was the difference with a {rating} rating. Scenes in the studio when the last kill dropped.`,
+  },
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.close,
+    title: '{myTag} escape with the {myMaps}-{oppMaps} win over {opp}',
+    body: `HLTV recap: A series {myTag} had to earn. {opp} were the better team on paper for stretches, but the closing rounds went the other way. {mvpNick}'s {rating} rating was quietly decisive.`,
+  },
+
+  // ===== Solid wins (fallback for wins) =====
   {
     when: (s, ctx) => ctx.mood === 'win',
     title: 'Solid win: {myTag} take down {opp}',
-    body: `Recap: {myTag} take the series {myMaps}-{oppMaps} over {opp}. {mvpNick} topped the scoreboard ({rating} rating, {kills}/{deaths}); the team looked composed in the important moments.`,
+    body: `HLTV recap: {myTag} take the series {myMaps}-{oppMaps} over {opp}. {mvpNick} topped the scoreboard ({rating} rating, {kills}/{deaths}); the team looked composed in the important moments.`,
+  },
+  {
+    when: (s, ctx) => ctx.mood === 'win',
+    title: '{myTag} book the win vs {opp}',
+    body: `HLTV recap: A workmanlike win from {myTag}, {myMaps}-{oppMaps} on the boards. Nothing flashy, nothing headline-worthy — just the two points they came for.`,
   },
 
-  // Own team loses ---
+  // ===== Blowout losses =====
   {
     when: (s, ctx) => ctx.mood === 'loss' && s.sweep,
     title: 'Rough day: {opp} sweep {myTag}',
-    body: `Recap: {opp} took {myTag} down {oppMaps}-{myMaps} in a series that got away early. Analysts point to the mid-round adjustments as the gap. Time to hit the tape review.`,
+    body: `HLTV recap: {opp} took {myTag} down {oppMaps}-{myMaps} in a series that got away early. Analysts point to the mid-round adjustments as the gap. Time to hit the tape review.`,
   },
+  {
+    when: (s, ctx) => ctx.mood === 'loss' && s.sweep,
+    title: '{opp} humble {myTag} in a straight-sets defeat',
+    body: `HLTV recap: {opp} take the series {oppMaps}-{myMaps} in a series where {myTag} never quite found their rhythm. Off-days happen — but this one was ugly.`,
+  },
+
+  // ===== Close losses =====
   {
     when: (s, ctx) => ctx.mood === 'loss' && s.close,
     title: '{myTag} fall {oppMaps}-{myMaps} in a heartbreaker',
-    body: `Recap: {opp} took the deciding map in a {oppMaps}-{myMaps} series that could have gone either way. {mvpNick} was quietly among the top performers on the map — the series was decided in the small margins.`,
+    body: `HLTV recap: {opp} took the deciding map in a {oppMaps}-{myMaps} series that could have gone either way. {mvpNick} was quietly among the top performers on the map — the series was decided in the small margins.`,
   },
+  {
+    when: (s, ctx) => ctx.mood === 'loss' && s.close,
+    title: 'Coin-flip series: {opp} take it {oppMaps}-{myMaps}',
+    body: `HLTV recap: Not much separated {myTag} and {opp} today, but the closing rounds went {opp}'s way. {mvpNick} carried the fight ({rating} rating) — the team just couldn't turn it into map wins.`,
+  },
+
+  // ===== Losses (fallback) =====
   {
     when: (s, ctx) => ctx.mood === 'loss',
     title: '{opp} take the series over {myTag}',
-    body: `Recap: {opp} take it {oppMaps}-{myMaps}. Not the day {myTag} wanted; back to the drawing board.`,
+    body: `HLTV recap: {opp} take it {oppMaps}-{myMaps}. Not the day {myTag} wanted; back to the drawing board.`,
+  },
+  {
+    when: (s, ctx) => ctx.mood === 'loss',
+    title: '{myTag} drop the series to {opp}',
+    body: `HLTV recap: A quiet loss for {myTag} — {opp} took it {oppMaps}-{myMaps} without much drama. VOD-review Monday awaits.`,
   },
 ];
 
