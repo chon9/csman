@@ -1245,9 +1245,11 @@ export function handle(
       const diagnostics = isScrim ? undefined : buildDuelDiagnostics(userStartersForDiag, duel.opponentPlayers.slice(0, 5));
 
       // Post-match narrative: at most ONE item per match (player quote /
-      // reporter recap / media question). ~55% of matches get something;
-      // 45% roll to nothing so the inbox stays valuable, not noise.
-      if (!isScrim && Math.random() < 0.55) {
+      // reporter recap / media question). Every non-scrim match spawns
+      // narrative — the roll INSIDE rollPostMatchInbox controls the mix
+      // (55% quote, 40% recap, 5% question) with bulletproof fallbacks
+      // so no match goes silent.
+      if (!isScrim) {
         const teamWon = duel.result.winnerId === team.id;
         const mvp = computeMvpSnapshot(db, duel.result, team.id);
         const teamStarters = db.loadTeamPlayers(team.id).slice(0, 5);
@@ -1705,10 +1707,10 @@ export function handle(
       // Also tell the challenger their challenge resolved (so any list-challenges UI clears).
       notifyTeam(challenger.id, { kind: 'challenge-cancelled', challengeId: challenge.id });
 
-      // Post-match narrative for BOTH sides — one item per side max,
-      // ~55% chance per side so a PvP loss doesn't automatically pile
-      // on with press coverage.
-      if (Math.random() < 0.55) {
+      // Post-match narrative for BOTH sides — every PvP series produces
+      // narrative on both ends. Rate + type mix live in
+      // rollPostMatchInbox.
+      if (Math.random() < 1.0) {
         const chMvp = computeMvpSnapshot(db, duel.result, challenger.id);
         const chStarters = db.loadTeamPlayers(challenger.id).slice(0, 5);
         const chHighlights = extractMatchHighlights(
@@ -1725,7 +1727,7 @@ export function handle(
         };
         rollPostMatchInbox(db, notifyTeam, challenger.id, ctx);
       }
-      if (Math.random() < 0.55) {
+      if (Math.random() < 1.0) {
         const acMvp = computeMvpSnapshot(db, duel.result, accepter.id);
         const acStarters = db.loadTeamPlayers(accepter.id).slice(0, 5);
         const acHighlights = extractMatchHighlights(
@@ -2077,9 +2079,9 @@ export function handle(
         },
       });
 
-      // Post-match narrative: one item per side max, ~55% chance per
-      // side so back-to-back Quick Matches don't drown the inbox.
-      if (Math.random() < 0.55) {
+      // Post-match narrative: every Quick Match spawns narrative on both
+      // sides. Rate + type mix live in rollPostMatchInbox.
+      if (Math.random() < 1.0) {
         const myMvp = computeMvpSnapshot(db, duel.result, me.id);
         const myStartersFresh = db.loadTeamPlayers(me.id).slice(0, 5);
         const myHighlights = extractMatchHighlights(
@@ -2096,7 +2098,7 @@ export function handle(
         };
         rollPostMatchInbox(db, notifyTeam, me.id, ctx);
       }
-      if (Math.random() < 0.55) {
+      if (Math.random() < 1.0) {
         const oppMvp = computeMvpSnapshot(db, duel.result, opp.id);
         const oppStartersFresh = db.loadTeamPlayers(opp.id).slice(0, 5);
         const oppHighlights = extractMatchHighlights(

@@ -684,22 +684,34 @@ export function rollPostMatchInbox(
   const r = Math.random();
   let gen: { title: string; body: string; payload: Record<string, unknown> } | null = null;
   let kind: 'player-message' | 'media' = 'player-message';
+  // Weighted split — reasoning:
+  //   55% Player Quote (falls through to Recap if no eligible speaker,
+  //      e.g. all-real-name rosters where no newgen can be quoted).
+  //   40% Match Recap (never null in practice — universal fallback
+  //      templates gate only on mood).
+  //   5% Media Question (interactive; only when a match-specific
+  //      template gates open).
   if (r < 0.55) {
     gen = generatePlayerQuoteItem(ctx);
     kind = 'player-message';
-  } else if (r < 0.85) {
+  } else if (r < 0.95) {
     gen = generateMatchRecapItem(ctx);
     kind = 'media'; // "reporter recap" uses the media icon/colour
   } else {
     gen = generateMediaQuestionItem(ctx);
     kind = 'media';
   }
+  // Bulletproof fallback chain — no null items ever leak through when
+  // any narrative content is possible for this mood.
   if (!gen) {
-    // Fall back to a recap if the specific type had no eligible template.
     gen = generateMatchRecapItem(ctx);
     kind = 'media';
-    if (!gen) return null;
   }
+  if (!gen) {
+    gen = generatePlayerQuoteItem(ctx);
+    kind = 'player-message';
+  }
+  if (!gen) return null;
   return emitInboxItem(db, notifyTeam, {
     teamId, kind,
     title: gen.title,
