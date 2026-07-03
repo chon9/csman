@@ -1216,6 +1216,31 @@ export function handle(
       })) as Player[];
       const diagnostics = isScrim ? undefined : buildDuelDiagnostics(userStartersForDiag, duel.opponentPlayers.slice(0, 5));
 
+      // Post-match narrative — media on every non-scrim AI duel + a 40%
+      // roll for a player message. Scrims skip: they're practice sessions,
+      // no press-conference / player-drama context.
+      if (!isScrim) {
+        const teamWon = duel.result.winnerId === team.id;
+        const mood: 'win' | 'loss' = teamWon ? 'win' : 'loss';
+        const startersFresh = db.loadTeamPlayers(team.id).slice(0, 5);
+        if (Math.random() < 0.4) {
+          const gen = generatePlayerMessageItem(startersFresh, mood);
+          if (gen) {
+            emitInboxItem(db, notifyTeam, {
+              teamId: team.id, kind: 'player-message',
+              title: gen.title, body: gen.body, payload: gen.payload,
+            });
+          }
+        }
+        const media = generateMediaItem(duel.opponentTag, mood);
+        if (media) {
+          emitInboxItem(db, notifyTeam, {
+            teamId: team.id, kind: 'media',
+            title: media.title, body: media.body, payload: media.payload,
+          });
+        }
+      }
+
       return {
         kind: 'duel-result',
         outcome: {
@@ -1653,6 +1678,28 @@ export function handle(
       notifyTeam(challenger.id, { kind: 'duel-result', outcome: challengerOutcome });
       // Also tell the challenger their challenge resolved (so any list-challenges UI clears).
       notifyTeam(challenger.id, { kind: 'challenge-cancelled', challengeId: challenge.id });
+
+      // Post-match narrative for BOTH sides — media every match, player
+      // messages ~40%. Accepted challenges are consensual PvP so both
+      // parties get press coverage.
+      {
+        const chMood: 'win' | 'loss' = accepterWon ? 'loss' : 'win';
+        const acMood: 'win' | 'loss' = accepterWon ? 'win' : 'loss';
+        const chStartersFresh = db.loadTeamPlayers(challenger.id).slice(0, 5);
+        const acStartersFresh = db.loadTeamPlayers(accepter.id).slice(0, 5);
+        if (Math.random() < 0.4) {
+          const gen = generatePlayerMessageItem(chStartersFresh, chMood);
+          if (gen) emitInboxItem(db, notifyTeam, { teamId: challenger.id, kind: 'player-message', title: gen.title, body: gen.body, payload: gen.payload });
+        }
+        if (Math.random() < 0.4) {
+          const gen = generatePlayerMessageItem(acStartersFresh, acMood);
+          if (gen) emitInboxItem(db, notifyTeam, { teamId: accepter.id, kind: 'player-message', title: gen.title, body: gen.body, payload: gen.payload });
+        }
+        const chMedia = generateMediaItem(accepter.tag, chMood);
+        if (chMedia) emitInboxItem(db, notifyTeam, { teamId: challenger.id, kind: 'media', title: chMedia.title, body: chMedia.body, payload: chMedia.payload });
+        const acMedia = generateMediaItem(challenger.tag, acMood);
+        if (acMedia) emitInboxItem(db, notifyTeam, { teamId: accepter.id, kind: 'media', title: acMedia.title, body: acMedia.body, payload: acMedia.payload });
+      }
       // High-stakes PvP gets a news headline so the server feels alive.
       if (challenge.stake >= 10_000) {
         const winnerTag = duel.winnerTeamId === challenger.id ? challenger.tag : accepter.tag;
@@ -1988,13 +2035,13 @@ export function handle(
         },
       });
 
-      // Post-match roll: 15% chance a player wants words, 8% chance a
-      // reporter shows up. Kept low so the inbox doesn't spam after
-      // every match — narrative moments should feel earned.
+      // Post-match narrative: media fires on every match (FM-style press
+      // conference), player messages fire ~40% so they still feel earned
+      // rather than every-match spam.
       const meMood: 'win' | 'loss' = meWon ? 'win' : 'loss';
       const oppMood: 'win' | 'loss' = defenderWon ? 'win' : 'loss';
-      if (Math.random() < 0.15) {
-        const myStartersFresh = db.loadTeamPlayers(me.id).slice(0, 5);
+      const myStartersFresh = db.loadTeamPlayers(me.id).slice(0, 5);
+      if (Math.random() < 0.4) {
         const gen = generatePlayerMessageItem(myStartersFresh, meMood);
         if (gen) {
           emitInboxItem(db, notifyTeam, {
@@ -2003,23 +2050,19 @@ export function handle(
           });
         }
       }
-      if (Math.random() < 0.08) {
-        const gen = generateMediaItem(opp.tag, meMood);
-        if (gen) {
-          emitInboxItem(db, notifyTeam, {
-            teamId: me.id, kind: 'media',
-            title: gen.title, body: gen.body, payload: gen.payload,
-          });
-        }
+      const mediaMe = generateMediaItem(opp.tag, meMood);
+      if (mediaMe) {
+        emitInboxItem(db, notifyTeam, {
+          teamId: me.id, kind: 'media',
+          title: mediaMe.title, body: mediaMe.body, payload: mediaMe.payload,
+        });
       }
-      if (Math.random() < 0.08) {
-        const gen = generateMediaItem(me.tag, oppMood);
-        if (gen) {
-          emitInboxItem(db, notifyTeam, {
-            teamId: opp.id, kind: 'media',
-            title: gen.title, body: gen.body, payload: gen.payload,
-          });
-        }
+      const mediaOpp = generateMediaItem(me.tag, oppMood);
+      if (mediaOpp) {
+        emitInboxItem(db, notifyTeam, {
+          teamId: opp.id, kind: 'media',
+          title: mediaOpp.title, body: mediaOpp.body, payload: mediaOpp.payload,
+        });
       }
 
       if (stake >= 10_000) {
