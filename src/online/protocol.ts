@@ -1863,6 +1863,7 @@ export type ClientMessage =
   // ----- Inbox -----
   | { kind: 'list-inbox' }
   | { kind: 'mark-inbox-read'; itemId: number }
+  | { kind: 'mark-all-inbox-read' }
   | { kind: 'respond-inbox'; itemId: number; choiceId: string }
   // ----- Training Center (5-min idle · high-risk / high-return) -----
   | { kind: 'list-training' }
@@ -2026,6 +2027,8 @@ export type ServerMessage =
   /** Push a single new inbox item — either fresh (unread) or resolved
    *  (interactive response applied). Client folds it into local state. */
   | { kind: 'inbox-item'; item: InboxItem; unread: number }
+  /** Bulk read-flag response — client wipes unread across all items. */
+  | { kind: 'inbox-all-read'; flippedCount: number; unread: number }
   /** Feedback line + updated fans/morale after resolving an interactive
    *  item — surfaced as a toast alongside the folded-in item. */
   | { kind: 'inbox-resolved'; item: InboxItem; effectSummary: string; newFans?: number; unread: number }
@@ -2255,7 +2258,7 @@ export interface InboxItem {
   createdAt: number;
 }
 
-export const PROTOCOL_VERSION = 57;
+export const PROTOCOL_VERSION = 58;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

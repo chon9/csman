@@ -36,8 +36,10 @@ function fmtAgo(ts: number): string {
 export default function InboxScreen(): React.ReactElement | null {
   const team = useOnline((s) => s.team);
   const items = useOnline((s) => s.inboxItems);
+  const unread = useOnline((s) => s.inboxUnread);
   const refresh = useOnline((s) => s.refreshInbox);
   const markRead = useOnline((s) => s.markInboxRead);
+  const markAllRead = useOnline((s) => s.markAllInboxRead);
   const respond = useOnline((s) => s.respondInbox);
   const go = useOnline((s) => s.go);
 
@@ -72,7 +74,17 @@ export default function InboxScreen(): React.ReactElement | null {
           <h2>📬 Inbox</h2>
           <div className="hero-sub">Last 30 items · events, missed battles, sponsors, player messages, media, training, e-wallet transfers, and bet results</div>
         </div>
-        <button className="btn" onClick={() => go('home')}>← Back</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="btn"
+            disabled={unread === 0}
+            onClick={() => markAllRead()}
+            title={unread === 0 ? 'Nothing unread' : `Mark ${unread} unread item${unread === 1 ? '' : 's'} as read`}
+          >
+            ✓ Mark all as read{unread > 0 ? ` (${unread})` : ''}
+          </button>
+          <button className="btn" onClick={() => go('home')}>← Back</button>
+        </div>
       </div>
 
       {/* Filter chips */}

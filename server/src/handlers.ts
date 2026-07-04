@@ -353,6 +353,7 @@ import type { DB, TeamRow } from './db.ts';
 import { spawnInitialRoster } from './spawn.ts';
 import { runAiDuel, runPvpDuel, stripFrames } from './duels.ts';
 import { skipTime } from './timeskip.ts';
+import { runTimeSkipEventBurst } from './randomEvents.ts';
 import { buildWageMap, ensureFreeAgentPool, mintWonderkid, suggestedWage } from './freeAgents.ts';
 import { CASES, DAILY_FREE_CASE_ID } from '../../src/data/cs2Cases.ts';
 import { openCase as rollCaseOpen, tradeUpContract as rollTradeUp } from '../../src/sim/caseOpening.ts';
@@ -1346,7 +1347,13 @@ export function handle(
         tryUnlock(db, notifyTeam, team.id, 'first_retire', ACHIEVEMENT_LABELS.first_retire);
       }
       for (const p of players) db.persistPlayer(p);
-      log(`time-skip: +${ts.daysAdvanced}d, -$${ts.cost} (day ${ts.newDay}), ${ts.devChanges.length} dev moves, ${ts.goalsReached.length} goals reached, ${ret.retired.length} retired`);
+      // Fire a burst of random events so the world visibly moves during
+      // the skip — scales with days (ceil(days/2), capped at 10). Some
+      // land on the caller's team (inbox item), others hit other rosters
+      // (news ticker). Uses the existing tickRandomEvents flow so all
+      // notification + inbox wiring is reused.
+      const eventsFired = runTimeSkipEventBurst(db, broadcast, notifyTeam, ts.daysAdvanced);
+      log(`time-skip: +${ts.daysAdvanced}d, -$${ts.cost} (day ${ts.newDay}), ${ts.devChanges.length} dev moves, ${ts.goalsReached.length} goals reached, ${ret.retired.length} retired, ${eventsFired} events`);
       return {
         kind: 'time-skipped',
         newDay: ts.newDay,
@@ -3679,6 +3686,13 @@ export function handle(
       const unread = db.inboxUnreadCount(conn.teamId);
       if (!item) return { kind: 'error', code: 'no-inbox-item', message: 'Item not found.' };
       return { kind: 'inbox-item', item, unread };
+    }
+
+    case 'mark-all-inbox-read': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const flipped = db.markAllInboxRead(conn.teamId);
+      const unread = db.inboxUnreadCount(conn.teamId);
+      return { kind: 'inbox-all-read', flippedCount: flipped, unread };
     }
 
     case 'respond-inbox': {

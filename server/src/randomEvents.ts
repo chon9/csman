@@ -41,6 +41,9 @@ interface EventContext {
    *  for server-wide events). Reset on server restart, which is fine —
    *  a hot reload occasionally lets an extra event slip through, harmless. */
   cooldowns: Map<string, number>;
+  /** When set, overrides the EVENT_TICK_CHANCE gate — used by time-skip
+   *  bursts (pass 1.0 to force every roll to fire). */
+  chanceOverride?: number;
 }
 
 interface RandomEvent {
@@ -365,7 +368,8 @@ export function tickRandomEvents(ctx: EventContext): NewsItem | null {
   // to teams that are actually in the window. Prevents deleted / churned
   // teams from leaving orphan keys.
   pruneCooldowns(ctx.cooldowns);
-  if (ctx.rng() > EVENT_TICK_CHANCE) return null;
+  const chance = typeof ctx.chanceOverride === 'number' ? ctx.chanceOverride : EVENT_TICK_CHANCE;
+  if (ctx.rng() > chance) return null;
   // Weighted-random draw across the whole registry.
   const totalWeight = EVENTS.reduce((s, e) => s + e.weight, 0);
   // Try up to 3 event types before giving up on this tick (the first
@@ -448,6 +452,34 @@ export function tickRandomEvents(ctx: EventContext): NewsItem | null {
     return item;
   }
   return null;
+}
+
+/**
+ * Fire a burst of random events during a time-skip so the user sees the
+ * world moving as their days advance. Each round is a normal event roll
+ * with the chance gate forced to 1.0 — a fresh cooldown map means the
+ * burst can hit different teams without stepping on the live ticker's
+ * cooldowns. Rounds scale with days skipped, capped so 30-day skips
+ * don't dump 15 items into the inbox.
+ */
+export function runTimeSkipEventBurst(
+  db: DB,
+  broadcastAll: (msg: ServerMessage) => void,
+  notifyTeam: (teamId: string, msg: ServerMessage) => void,
+  days: number,
+): number {
+  const rounds = Math.max(1, Math.min(10, Math.ceil(days / 2)));
+  const cooldowns = new Map<string, number>();
+  const rng = () => Math.random();
+  let fired = 0;
+  for (let i = 0; i < rounds; i++) {
+    const item = tickRandomEvents({
+      db, broadcastAll, notifyTeam, rng, cooldowns,
+      chanceOverride: 1.0,
+    });
+    if (item) fired++;
+  }
+  return fired;
 }
 
 /** Wire the ticker on server boot. */

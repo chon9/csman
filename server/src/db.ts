@@ -3038,6 +3038,9 @@ export function openDb(path: string) {
   const markInboxRead = db.prepare(
     `UPDATE inbox_items SET read_at = ? WHERE id = ? AND team_id = ? AND read_at IS NULL`,
   );
+  const markAllInboxReadStmt = db.prepare(
+    `UPDATE inbox_items SET read_at = ? WHERE team_id = ? AND read_at IS NULL`,
+  );
   const markInboxResolved = db.prepare(
     `UPDATE inbox_items SET resolved_at = ?, read_at = COALESCE(read_at, ?) WHERE id = ? AND team_id = ?`,
   );
@@ -3098,6 +3101,13 @@ export function openDb(path: string) {
   function markInboxItemRead(teamId: string, itemId: number): boolean {
     const at = Date.now();
     return markInboxRead.run(at, itemId, teamId).changes > 0;
+  }
+
+  /** Bulk-mark every unread item for a team as read. Returns how many
+   *  rows flipped so the caller can decide whether to broadcast. */
+  function markAllInboxRead(teamId: string): number {
+    const at = Date.now();
+    return markAllInboxReadStmt.run(at, teamId).changes;
   }
 
   function markInboxItemResolved(teamId: string, itemId: number): boolean {
@@ -3559,6 +3569,7 @@ export function openDb(path: string) {
     loadInbox,
     loadInboxItem,
     markInboxItemRead,
+    markAllInboxRead,
     markInboxItemResolved,
     inboxUnreadCount,
     getTeamBonusFans,

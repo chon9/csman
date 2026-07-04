@@ -443,6 +443,7 @@ interface OnlineState {
   refreshPlayerLeaderboard: () => void;
   refreshInbox: () => void;
   markInboxRead: (itemId: number) => void;
+  markAllInboxRead: () => void;
   respondInbox: (itemId: number, choiceId: string) => void;
 
   // Phase 5 actions
@@ -930,6 +931,13 @@ export const useOnline = create<OnlineState>((set, get) => ({
           const next = existing.map((it) => (it.id === msg.item.id ? msg.item : it));
           set({ inboxItems: next, inboxUnread: msg.unread });
           pushToast('success', `📬 ${msg.effectSummary}`);
+          break;
+        }
+        case 'inbox-all-read': {
+          const now = Date.now();
+          const next = get().inboxItems.map((it) => (it.readAt ? it : { ...it, readAt: now }));
+          set({ inboxItems: next, inboxUnread: msg.unread });
+          if (msg.flippedCount > 0) pushToast('info', `📬 Marked ${msg.flippedCount} item${msg.flippedCount === 1 ? '' : 's'} as read`);
           break;
         }
         case 'live-replay': {
@@ -2155,6 +2163,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
   },
   markInboxRead(itemId) {
     get().client?.send({ kind: 'mark-inbox-read', itemId });
+  },
+  markAllInboxRead() {
+    get().client?.send({ kind: 'mark-all-inbox-read' });
   },
   respondInbox(itemId, choiceId) {
     get().client?.send({ kind: 'respond-inbox', itemId, choiceId });
