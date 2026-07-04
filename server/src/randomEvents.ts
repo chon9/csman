@@ -50,6 +50,12 @@ interface EventContext {
    *  random rival team's roster. Falls back to the global pool if the
    *  preferred team has no eligible player for the event. */
   preferTeamId?: string;
+  /** Cross-round set of player ids that have already been targeted in
+   *  the current burst. Prevents the same star getting +1 attribute
+   *  from three back-to-back breakthrough rolls. Only enforced for
+   *  players on the preferTeamId roster — global-pool picks can still
+   *  hit anyone. */
+  burstHitPlayers?: Set<string>;
 }
 
 interface RandomEvent {
@@ -137,9 +143,15 @@ function findQualifyingPlayer(
   if (ctx.preferTeamId) {
     const preferred = rosters.find((r) => r.teamId === ctx.preferTeamId);
     if (preferred) {
-      const eligible = newgenStarters(preferred.starters).filter(guard);
+      // Exclude players already targeted this burst so one star doesn't
+      // hoover up every roll on the preferred team.
+      const already = ctx.burstHitPlayers;
+      const eligible = newgenStarters(preferred.starters)
+        .filter((p) => !already || !already.has(p.id))
+        .filter(guard);
       if (eligible.length > 0) {
         const player = pickRandom(eligible, ctx.rng)!;
+        already?.add(player.id);
         return { teamId: preferred.teamId, teamTag: preferred.teamTag, player };
       }
     }
@@ -167,7 +179,8 @@ const EVENTS: RandomEvent[] = [
   // ---- Player-scoped ----
   {
     id: 'breakthrough',
-    weight: 8,
+    // RARE — attribute +1 is the rarest reward class (user tuning).
+    weight: 2,
     resolve(ctx) {
       // Young newgen with headroom under PA — a "breakthrough performance."
       const target = findQualifyingPlayer(ctx, (p) =>
@@ -191,7 +204,8 @@ const EVENTS: RandomEvent[] = [
   },
   {
     id: 'slump',
-    weight: 6,
+    // MEDIUM — form -2, no attribute change.
+    weight: 5,
     resolve(ctx) {
       // Any newgen currently on form ≥12 — the taller they stand, the harder they fall.
       const target = findQualifyingPlayer(ctx, (p) => p.form >= 12);
@@ -207,7 +221,8 @@ const EVENTS: RandomEvent[] = [
   },
   {
     id: 'media_appearance',
-    weight: 5,
+    // MEDIUM — morale +1, no attribute change.
+    weight: 7,
     resolve(ctx) {
       // Anyone — the star gets airtime, morale gets a small lift.
       const target = findQualifyingPlayer(ctx, () => true);
@@ -224,7 +239,8 @@ const EVENTS: RandomEvent[] = [
   },
   {
     id: 'viral_clip',
-    weight: 4,
+    // SPONSOR-ish (cash + morale, no attrs) — part of the ~20% sponsor bucket.
+    weight: 6,
     resolve(ctx) {
       // A random newgen catches lightning in a bottle. Small $ + morale.
       const target = findQualifyingPlayer(ctx, () => true);
@@ -251,7 +267,8 @@ const EVENTS: RandomEvent[] = [
   },
   {
     id: 'personal_issue',
-    weight: 4,
+    // MEDIUM — morale -2, no attribute change.
+    weight: 6,
     resolve(ctx) {
       // Off-server drama tanks morale on a random player.
       const target = findQualifyingPlayer(ctx, (p) => (p.morale ?? 12) > 6);
@@ -275,7 +292,8 @@ const EVENTS: RandomEvent[] = [
   },
   {
     id: 'aim_lab_grind',
-    weight: 6,
+    // RARE — aim +1 attribute boost.
+    weight: 2,
     resolve(ctx) {
       // Young newgen dumps hours into Aim Lab; small aim bump.
       const target = findQualifyingPlayer(ctx, (p) => p.age < 22 && p.attributes.aim < 18);
@@ -293,7 +311,9 @@ const EVENTS: RandomEvent[] = [
   // ---- Team-scoped ----
   {
     id: 'sponsor_bonus',
-    weight: 5,
+    // SPONSOR — one-shot cash. User asked for ~20% total sponsor share;
+    // combined with viral_clip (6), this weight lands the bucket near ~24%.
+    weight: 8,
     resolve(ctx) {
       // Random team gets a small ad-hoc sponsor bonus. Team must be off-cooldown.
       // Bias toward the caller's team on time-skip bursts.
@@ -319,6 +339,7 @@ const EVENTS: RandomEvent[] = [
   },
   {
     id: 'bootcamp',
+    // MEDIUM — morale +1 team-wide, no attrs.
     weight: 4,
     resolve(ctx) {
       // Team burns cash for a bootcamp; morale + form boost on all starters.
@@ -342,7 +363,8 @@ const EVENTS: RandomEvent[] = [
   },
   {
     id: 'coach_insight',
-    weight: 4,
+    // RARE — gameSense +1 attribute boost.
+    weight: 2,
     resolve(ctx) {
       // Coach video-review session sharpens a random starter's game sense.
       const target = findQualifyingPlayer(ctx, (p) => p.attributes.gameSense < 18);
@@ -357,25 +379,46 @@ const EVENTS: RandomEvent[] = [
     },
   },
 
-  // ---- Server-wide meta ----
+  // ---- Server-wide meta / unrelated news ----
+  // User asked for MORE unrelated flavour to feel like the world is
+  // moving — weight bumped hard so meta_shift outpaces personal-boost
+  // events. During time-skip bursts these also route into the caller's
+  // inbox (see tickRandomEvents) so they're actually visible to the
+  // user, not just parked in the world ticker.
   {
     id: 'meta_shift',
-    weight: 2,
+    // MORE — unrelated world news. Highest weight so bursts read like
+    // a news feed rather than a personal buff shower.
+    weight: 15,
     resolve(ctx) {
-      // Purely narrative for now — flavour to establish there's a wider
-      // metagame moving. Cooldown consumes the '_world' key so this
-      // stays rare (roughly once a real hour at max).
-      if ((ctx.cooldowns.get('_world') ?? 0) > Date.now()) return null;
+      // No cooldown during bursts — we WANT this to fire repeatedly to
+      // fill the inbox with world flavour. The live ticker still has a
+      // per-tick roll gate so it doesn't spam in real-time.
       const SHIFTS = [
         `Valve nerf the M4A1-S rate of fire — riflers scramble to relearn spray patterns.`,
         `Overpass rotates back into the active duty map pool.`,
         `Community patches a Mirage smoke lineup — coaches rebuild the playbook.`,
         `Anti-cheat wave bans a wave of matchmaking smurfs — practice servers empty out.`,
         `A new Major venue is announced — teams look for early qualifiers.`,
+        `HLTV drops fresh Top 30 — several fringe teams break into the tier list.`,
+        `A major sponsor pulls out of the scene mid-season, roiling the free-agent market.`,
+        `A new demo-review tool ships — analysts say midround adjustments just got sharper.`,
+        `Rumours swirl about a lineup shakeup at one of the top-5 orgs.`,
+        `Prize pool for the next qualifier gets doubled after a viral fan campaign.`,
+        `Twitch outage takes the practice streams offline for an evening.`,
+        `A famous coach announces a farewell tour — retirement watch heats up.`,
+        `Community suspends a well-known caster over a hot-mic incident.`,
+        `A new anti-strat leak site goes live — teams scramble to change comms.`,
+        `Valve tweak the Vertigo B site — coaches rewrite executes overnight.`,
+        `A wildcard invite is dropped — a low-tier team gets a Major shot.`,
+        `Player transfer window rules get overhauled — GMs check the fine print.`,
+        `A minor tournament dodges disaster after a last-minute venue swap.`,
+        `A pro debut trailer trends worldwide — the newgen inherits the hype.`,
+        `An old veteran unretires — the scene erupts online.`,
       ];
       const line = pickRandom(SHIFTS, ctx.rng)!;
       // Use the world key so per-team cooldowns aren't stolen.
-      return { newsBody: `🌍 Meta shift — ${line}`, affectedTeamId: '_world' };
+      return { newsBody: `🌍 Scene news — ${line}`, affectedTeamId: '_world' };
     },
   },
 ];
@@ -411,8 +454,19 @@ export function tickRandomEvents(ctx: EventContext): NewsItem | null {
     const item = ctx.db.publishNews('event', outcome.newsBody) as NewsItem;
     ctx.broadcastAll({ kind: 'news-item', item });
     // Also drop into the affected team's inbox so the manager sees the
-    // personal impact without needing to scan the ticker. Skip for the
-    // '_world' sentinel — nobody owns it.
+    // personal impact without needing to scan the ticker. World-scope
+    // events ('_world') normally have no owner — but if a preferTeamId
+    // is set (time-skip burst) we route them into the CALLER's inbox
+    // so unrelated scene news actually surfaces to them instead of
+    // getting lost in the ticker.
+    const inboxTeamId = outcome.affectedTeamId === '_world' && ctx.preferTeamId
+      ? ctx.preferTeamId
+      : outcome.affectedTeamId;
+    if (inboxTeamId && inboxTeamId !== '_world' && ctx.notifyTeam) {
+      // Point the rest of the block at the resolved recipient — same
+      // shape as before, just with the world-fallback swap applied.
+      outcome.affectedTeamId = inboxTeamId;
+    }
     if (outcome.affectedTeamId && outcome.affectedTeamId !== '_world' && ctx.notifyTeam) {
       const team = ctx.db.loadTeam(outcome.affectedTeamId);
       if (team) {
@@ -495,16 +549,18 @@ export function runTimeSkipEventBurst(
 ): number {
   const rounds = Math.max(1, Math.min(10, Math.ceil(days / 2)));
   const rng = () => Math.random();
+  // Persist "already hit" across ALL rounds so the same star doesn't get
+  // three consecutive attribute bumps. Cooldowns still reset per round
+  // so different teams / different players CAN chain.
+  const burstHitPlayers = new Set<string>();
   let fired = 0;
   for (let i = 0; i < rounds; i++) {
-    // Fresh cooldowns per round so the caller's team can be hit again
-    // and again through the burst (each round would otherwise cooldown
-    // itself out after the first hit).
     const cooldowns = new Map<string, number>();
     const item = tickRandomEvents({
       db, broadcastAll, notifyTeam, rng, cooldowns,
       chanceOverride: 1.0,
       preferTeamId,
+      burstHitPlayers,
     });
     if (item) fired++;
   }
