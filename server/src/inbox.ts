@@ -73,6 +73,10 @@ interface Situation {
   sweep: boolean;
   close: boolean;
   ownMvp: boolean;
+  /** MVP data is populated — required by templates that reference
+   *  {mvpNick} / {rating} / {kills} / {deaths}. False for AI duels
+   *  where the losing (opponent) side's players aren't in the DB. */
+  hasMvp: boolean;
   /** MVP had a monster series (rating ≥ 1.3). */
   monsterMvp: boolean;
   /** OWN team dropped at least one ACE. */
@@ -92,6 +96,7 @@ function situation(ctx: MatchContext): Situation {
   const sweep = diff >= 2;
   const close = diff === 1;
   const ownMvp = ctx.mvp?.isOwn ?? false;
+  const hasMvp = !!ctx.mvp && !!ctx.mvp.nickname;
   const monsterMvp = ownMvp && (ctx.mvp?.avgRating ?? 0) >= 1.3;
   const ownAce = (ctx.ownAces ?? 0) > 0;
   const oppAce = (ctx.oppAces ?? 0) > 0;
@@ -104,7 +109,7 @@ function situation(ctx: MatchContext): Situation {
   if (monsterMvp) significance += 0.3;
   if (ownAce) significance += 0.2;
   return {
-    sweep, close, ownMvp, monsterMvp,
+    sweep, close, ownMvp, hasMvp, monsterMvp,
     ownAce, oppAce, ownClutch, hyperFragger,
     significance: Math.min(2.0, significance),
   };
@@ -321,14 +326,24 @@ const RECAPS: RecapTemplate[] = [
 
   // ===== Clutch-driven headlines =====
   {
-    when: (s, ctx) => ctx.mood === 'win' && s.ownClutch && s.close,
+    when: (s, ctx) => ctx.mood === 'win' && s.ownClutch && s.close && s.hasMvp,
     title: 'Clutch masters: {myTag} steal it late from {opp}',
     body: `HLTV recap: {myTag} took the series {myMaps}-{oppMaps} on the strength of the clutch rounds — the deciding moments went their way when they had to. {mvpNick} was in the middle of every last stand ({rating} rating).`,
   },
   {
-    when: (s) => s.ownClutch,
+    when: (s, ctx) => ctx.mood === 'win' && s.ownClutch && s.close,
+    title: 'Clutch masters: {myTag} steal it late from {opp}',
+    body: `HLTV recap: {myTag} took the series {myMaps}-{oppMaps} on the strength of the clutch rounds — the deciding moments went their way when they had to.`,
+  },
+  {
+    when: (s) => s.ownClutch && s.hasMvp,
     title: 'Nerves of steel: {myTag} lock down the clutches',
     body: `HLTV recap: A masterclass in composure from {myTag}. When the rounds got tight, they closed. {mvpNick} led the charge at {rating}.`,
+  },
+  {
+    when: (s) => s.ownClutch,
+    title: 'Nerves of steel: {myTag} lock down the clutches',
+    body: `HLTV recap: A masterclass in composure from {myTag}. When the rounds got tight, they closed — no matter how many bodies were on the map.`,
   },
 
   // ===== Monster MVP performances =====
@@ -362,21 +377,31 @@ const RECAPS: RecapTemplate[] = [
 
   // ===== Close wins =====
   {
-    when: (s, ctx) => ctx.mood === 'win' && s.close,
+    when: (s, ctx) => ctx.mood === 'win' && s.close && s.hasMvp,
     title: '{myTag} edge {opp} in a thriller',
     body: `HLTV recap: {myTag} take the series {myMaps}-{oppMaps} in a nailbiter that went the distance. Every map came down to the final rounds; {mvpNick} was the difference with a {rating} rating. Scenes in the studio when the last kill dropped.`,
   },
   {
     when: (s, ctx) => ctx.mood === 'win' && s.close,
+    title: '{myTag} edge {opp} in a nailbiter',
+    body: `HLTV recap: {myTag} take the series {myMaps}-{oppMaps} in a series that had to be earned. Every map came down to the final rounds — scenes in the studio when the last kill dropped.`,
+  },
+  {
+    when: (s, ctx) => ctx.mood === 'win' && s.close && s.hasMvp,
     title: '{myTag} escape with the {myMaps}-{oppMaps} win over {opp}',
     body: `HLTV recap: A series {myTag} had to earn. {opp} were the better team on paper for stretches, but the closing rounds went the other way. {mvpNick}'s {rating} rating was quietly decisive.`,
   },
 
   // ===== Solid wins (fallback for wins) =====
   {
-    when: (s, ctx) => ctx.mood === 'win',
+    when: (s, ctx) => ctx.mood === 'win' && s.hasMvp,
     title: 'Solid win: {myTag} take down {opp}',
     body: `HLTV recap: {myTag} take the series {myMaps}-{oppMaps} over {opp}. {mvpNick} topped the scoreboard ({rating} rating, {kills}/{deaths}); the team looked composed in the important moments.`,
+  },
+  {
+    when: (s, ctx) => ctx.mood === 'win',
+    title: 'Solid win: {myTag} take down {opp}',
+    body: `HLTV recap: {myTag} take the series {myMaps}-{oppMaps} over {opp} — composed in the important moments, took care of business.`,
   },
   {
     when: (s, ctx) => ctx.mood === 'win',
@@ -398,14 +423,24 @@ const RECAPS: RecapTemplate[] = [
 
   // ===== Close losses =====
   {
-    when: (s, ctx) => ctx.mood === 'loss' && s.close,
+    when: (s, ctx) => ctx.mood === 'loss' && s.close && s.hasMvp,
     title: '{myTag} fall {oppMaps}-{myMaps} in a heartbreaker',
     body: `HLTV recap: {opp} took the deciding map in a {oppMaps}-{myMaps} series that could have gone either way. {mvpNick} was quietly among the top performers on the map — the series was decided in the small margins.`,
   },
   {
     when: (s, ctx) => ctx.mood === 'loss' && s.close,
+    title: '{myTag} fall {oppMaps}-{myMaps} in a heartbreaker',
+    body: `HLTV recap: {opp} took the deciding map in a {oppMaps}-{myMaps} series that could have gone either way. The series was decided in the small margins.`,
+  },
+  {
+    when: (s, ctx) => ctx.mood === 'loss' && s.close && s.hasMvp,
     title: 'Coin-flip series: {opp} take it {oppMaps}-{myMaps}',
     body: `HLTV recap: Not much separated {myTag} and {opp} today, but the closing rounds went {opp}'s way. {mvpNick} carried the fight ({rating} rating) — the team just couldn't turn it into map wins.`,
+  },
+  {
+    when: (s, ctx) => ctx.mood === 'loss' && s.close,
+    title: 'Coin-flip series: {opp} take it {oppMaps}-{myMaps}',
+    body: `HLTV recap: Not much separated {myTag} and {opp} today, but the closing rounds went {opp}'s way. A series to file under "what if" — every round mattered.`,
   },
 
   // ===== Losses (fallback) =====
@@ -469,7 +504,24 @@ const MEDIA_QUESTIONS: MediaQuestionTemplate[] = [
     ],
   },
 
-  // Loss + close
+  // Loss + close (with named opponent MVP)
+  {
+    when: (s, ctx) => ctx.mood === 'loss' && s.close && s.hasMvp,
+    title: 'Close loss — reporter presses',
+    body: `The mic finds you after the {oppMaps}-{myMaps} loss to {opp}. "One round the other way and you win the series. What went wrong?"`,
+    choices: [
+      { id: 'clean', label: 'Small margins. We\'ll clean it up.',
+        hint: 'professional',
+        effect: { fansMin: 100, fansMax: 300, summary: 'Neutral. Standard.' } },
+      { id: 'credit', label: '{opp} played us well — {mvpNick} was on a different level.',
+        hint: 'credit opponent',
+        effect: { fansMin: 200, fansMax: 500, rosterMorale: 1, summary: 'The room appreciates you not throwing them under.' } },
+      { id: 'excuse', label: 'The tick rate was off — hard to aim in that server.',
+        hint: 'deflect',
+        effect: { fansMin: -600, fansMax: -200, summary: 'Excuses read badly. Fans notice.' } },
+    ],
+  },
+  // Loss + close (no MVP data — AI duel fallback)
   {
     when: (s, ctx) => ctx.mood === 'loss' && s.close,
     title: 'Close loss — reporter presses',
@@ -478,7 +530,7 @@ const MEDIA_QUESTIONS: MediaQuestionTemplate[] = [
       { id: 'clean', label: 'Small margins. We\'ll clean it up.',
         hint: 'professional',
         effect: { fansMin: 100, fansMax: 300, summary: 'Neutral. Standard.' } },
-      { id: 'credit', label: '{opp} played us well — {mvpNick} was on a different level.',
+      { id: 'credit', label: '{opp} had our number today. Fair play.',
         hint: 'credit opponent',
         effect: { fansMin: 200, fansMax: 500, rosterMorale: 1, summary: 'The room appreciates you not throwing them under.' } },
       { id: 'excuse', label: 'The tick rate was off — hard to aim in that server.',
@@ -516,6 +568,13 @@ function fill(text: string, vars: Record<string, string | number | undefined>): 
     if (v === undefined) continue;
     out = out.split(`{${k}}`).join(String(v));
   }
+  // Safety net: strip any remaining {placeholder} tokens so we never
+  // ship raw braces to users. If a template still has an unresolved
+  // token here it's a gating bug — but the reader shouldn't have to
+  // see the raw source.
+  out = out.replace(/\{[a-zA-Z]+\}/g, '');
+  // Collapse whitespace runs left behind by stripped tokens.
+  out = out.replace(/ {2,}/g, ' ').replace(/ ([,.!?])/g, '$1');
   return out;
 }
 
