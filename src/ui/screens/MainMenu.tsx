@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
-import { getSoundSettings, setSoundSettings, startBackgroundMusic, toggleMusicMuted, unlockAudio } from '../../sound/soundManager';
+import {
+  getSoundSettings, setSoundSettings, startBackgroundMusic,
+  toggleMusicMuted, unlockAudio, setMusicTrack, MUSIC_TRACKS,
+  type MusicTrack,
+} from '../../sound/soundManager';
 
 type Panel = 'main' | 'settings' | 'about';
 
@@ -146,9 +150,33 @@ function SettingsPanel({ onBack }: { onBack: () => void }) {
         </div>
       </label>
 
+      {/* ===== Music track picker ===== */}
+      <label className="menu-field" style={{ marginTop: 12 }}>
+        <span className="menu-field-label">Music track</span>
+        <select
+          value={sound.musicTrack}
+          disabled={sound.musicMuted}
+          onChange={(e) => {
+            unlockAudio();
+            startBackgroundMusic();
+            setMusicTrack(e.target.value as MusicTrack);
+            setSound(getSoundSettings());
+          }}
+          style={{
+            width: '100%', padding: '8px 10px', borderRadius: 6,
+            background: 'var(--panel)', color: 'var(--text)',
+            border: '1px solid var(--border)',
+          }}
+        >
+          {MUSIC_TRACKS.map((t) => (
+            <option key={t.id} value={t.id}>{t.label}</option>
+          ))}
+        </select>
+      </label>
+
       <p className="menu-panel-note">
-        Effects fire on round wins, bomb plants, defuses, and atmosphere cues. Music loops in the background.
-        Toggle either from the sidebar at any time.
+        Effects fire on round wins, bomb plants, defuses, and atmosphere cues. Random rotation
+        shuffles through five tracks; pick a specific one to loop it. Toggle from the sidebar at any time.
       </p>
       <button className="menu-btn-back" onClick={onBack}>← Back</button>
     </div>

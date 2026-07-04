@@ -19,15 +19,31 @@ export type SoundEvent =
   | 'case-reveal'      // strip lands on winner (bright stinger)
   | 'case-rare';       // extra fanfare layered on covert/knife drops
 
+/** Which BGM track to play. 'random' rotates uniformly through the pool
+ *  between plays. Named tracks loop that single file. */
+export type MusicTrack = 'random' | 'bg' | 'bg2' | 'bg3' | 'bg4' | 'bg5';
+
+/** Ordered pool for random rotation. bg maps to the original bgmusic.mp3;
+ *  bg2..bg5 are additional files dropped by the user into public/. */
+export const MUSIC_TRACKS: { id: MusicTrack; label: string; url: string }[] = [
+  { id: 'random', label: 'Random rotation', url: '' },
+  { id: 'bg',     label: 'Track 1 — Menu theme', url: '/bgmusic.mp3' },
+  { id: 'bg2',    label: 'Track 2', url: '/bg2.mp3' },
+  { id: 'bg3',    label: 'Track 3', url: '/bg3.mp3' },
+  { id: 'bg4',    label: 'Track 4', url: '/bg4.mp3' },
+  { id: 'bg5',    label: 'Track 5', url: '/bg5.mp3' },
+];
+
 interface SoundSettings {
   muted: boolean;
   volume: number;       // 0-1 master (SFX)
   musicVolume: number;  // 0-1 BGM volume
   musicMuted: boolean;  // separate mute for BGM so users can silence music without killing SFX
+  musicTrack: MusicTrack; // active track choice ('random' rotates)
 }
 
 const SETTINGS_KEY = 'cs2manager-sound-settings';
-const DEFAULT_SETTINGS: SoundSettings = { muted: false, volume: 0.5, musicVolume: 0.25, musicMuted: false };
+const DEFAULT_SETTINGS: SoundSettings = { muted: false, volume: 0.5, musicVolume: 0.25, musicMuted: false, musicTrack: 'random' };
 
 let ctx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
@@ -90,10 +106,30 @@ export function setSoundSettings(patch: Partial<SoundSettings>): void {
 
 let musicEl: HTMLAudioElement | null = null;
 let musicStarted = false;
+/** The last random track played — so we don't repeat back-to-back when
+ *  the pool has >1 concrete file. */
+let lastRandomTrack: MusicTrack | null = null;
 
-/** Path served from public/. Drop `bgmusic.mp3` (or .ogg) in there and
- *  it'll auto-loop on first user gesture. */
-const BG_MUSIC_URL_CANDIDATES = ['/bgmusic.mp3', '/bgmusic.ogg'];
+/** Concrete (non-random) track ids, in URL-list order. */
+const CONCRETE_TRACKS: { id: MusicTrack; url: string }[] = MUSIC_TRACKS
+  .filter((t) => t.id !== 'random')
+  .map((t) => ({ id: t.id, url: t.url }));
+
+/** Resolve a URL for the current track setting. 'random' picks a
+ *  concrete track that isn't the one we just finished. */
+function pickTrackUrl(): string {
+  const setting = settings.musicTrack;
+  if (setting !== 'random') {
+    const hit = CONCRETE_TRACKS.find((t) => t.id === setting);
+    if (hit) return hit.url;
+  }
+  // Random rotation — avoid repeat.
+  const candidates = CONCRETE_TRACKS.filter((t) => t.id !== lastRandomTrack);
+  const pool = candidates.length > 0 ? candidates : CONCRETE_TRACKS;
+  const pick = pool[Math.floor(Math.random() * pool.length)]!;
+  lastRandomTrack = pick.id;
+  return pick.url;
+}
 
 /** Start the background music if it isn't already playing. Called on
  *  first user gesture (menu click, etc.) because browsers block auto-
@@ -106,16 +142,25 @@ export function startBackgroundMusic(): void {
   }
   musicStarted = true;
   const el = new Audio();
-  el.loop = true;
   el.volume = settings.musicMuted ? 0 : settings.musicVolume;
   el.preload = 'auto';
-  // Try the .mp3 first; fall back to .ogg if the mp3 404s.
-  el.src = BG_MUSIC_URL_CANDIDATES[0];
-  el.addEventListener('error', () => {
-    if (el.src.endsWith('.mp3')) {
-      el.src = BG_MUSIC_URL_CANDIDATES[1];
+  // Loop the CURRENT track only when the user picked a specific one.
+  // In random mode we let it end and pick a new one, so no loop flag.
+  el.loop = settings.musicTrack !== 'random';
+  el.src = pickTrackUrl();
+  // When a track ends in random mode, pick another and keep going.
+  el.addEventListener('ended', () => {
+    if (settings.musicTrack === 'random' && !settings.musicMuted) {
+      el.src = pickTrackUrl();
+      void el.play().catch(() => {});
     }
-    // else: file just isn't there — silent degrade.
+  });
+  el.addEventListener('error', () => {
+    // File missing — try the next candidate rather than dying silently.
+    if (settings.musicTrack === 'random') {
+      el.src = pickTrackUrl();
+      if (!settings.musicMuted) void el.play().catch(() => {});
+    }
   });
   musicEl = el;
   if (!settings.musicMuted) {
@@ -139,6 +184,20 @@ export function toggleMusicMuted(): boolean {
     else void musicEl.play().catch(() => {});
   }
   return next;
+}
+
+/** Switch active track. If music is already playing we swap the source
+ *  live and resume; otherwise the choice is stored for the next start.
+ *  Passing 'random' immediately kicks off a fresh random pick. */
+export function setMusicTrack(track: MusicTrack): void {
+  setSoundSettings({ musicTrack: track });
+  if (!musicEl) return;
+  const wasPlaying = !musicEl.paused;
+  musicEl.loop = track !== 'random';
+  musicEl.src = pickTrackUrl();
+  if (wasPlaying && !settings.musicMuted) {
+    void musicEl.play().catch(() => {});
+  }
 }
 
 function ensureCtx(): AudioContext | null {
