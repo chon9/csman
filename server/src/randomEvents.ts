@@ -47,9 +47,15 @@ interface EventContext {
   /** When set, target pickers strongly bias toward this team so the
    *  effect lands on the caller's roster. Used by time-skip bursts so
    *  the user actually sees the world moving on THEIR side, not on a
-   *  random rival team's roster. Falls back to the global pool if the
-   *  preferred team has no eligible player for the event. */
+   *  random rival team's roster. Fallback to the global pool is
+   *  controlled by `strictTeamOnly` below. */
   preferTeamId?: string;
+  /** When true (time-skip bursts), pickers NEVER fall through to other
+   *  teams — if the caller's roster has no eligible target, the roll
+   *  returns null and the ticker retries a different event kind. This
+   *  keeps ID A's skip from spilling events onto ID B's account when
+   *  multiple accounts share the server. */
+  strictTeamOnly?: boolean;
   /** Cross-round set of player ids that have already been targeted in
    *  the current burst. Prevents the same star getting +1 attribute
    *  from three back-to-back breakthrough rolls. Only enforced for
@@ -139,7 +145,8 @@ function findQualifyingPlayer(
   const rosters = loadActiveRosters(ctx.db);
   // If a preferred team is set (time-skip burst), try it FIRST so the
   // caller sees events land on their own roster. Fall through to the
-  // global pool only when the preferred team has no eligible player.
+  // global pool only when the preferred team has no eligible player
+  // AND we're not in strict mode.
   if (ctx.preferTeamId) {
     const preferred = rosters.find((r) => r.teamId === ctx.preferTeamId);
     if (preferred) {
@@ -155,6 +162,10 @@ function findQualifyingPlayer(
         return { teamId: preferred.teamId, teamTag: preferred.teamTag, player };
       }
     }
+    // Strict mode: refuse to fall through to other teams — the ticker
+    // will attempt a different event kind rather than dump the effect
+    // onto some unrelated account.
+    if (ctx.strictTeamOnly) return null;
   }
   // Shuffle team order so the same team doesn't always get picked first.
   for (let i = rosters.length - 1; i > 0; i--) {
@@ -316,10 +327,11 @@ const EVENTS: RandomEvent[] = [
     weight: 8,
     resolve(ctx) {
       // Random team gets a small ad-hoc sponsor bonus. Team must be off-cooldown.
-      // Bias toward the caller's team on time-skip bursts.
+      // Bias toward the caller's team on time-skip bursts; in strict
+      // mode we refuse to fall through so events can't leak to other IDs.
       const teams = loadActiveRosters(ctx.db).filter((r) => (ctx.cooldowns.get(r.teamId) ?? 0) <= Date.now());
-      const pick = (ctx.preferTeamId && teams.find((r) => r.teamId === ctx.preferTeamId))
-        ?? pickRandom(teams, ctx.rng);
+      let pick = ctx.preferTeamId ? teams.find((r) => r.teamId === ctx.preferTeamId) : undefined;
+      if (!pick && !ctx.strictTeamOnly) pick = pickRandom(teams, ctx.rng) ?? undefined;
       if (!pick) return null;
       const team = ctx.db.loadTeam(pick.teamId);
       if (!team) return null;
@@ -343,10 +355,11 @@ const EVENTS: RandomEvent[] = [
     weight: 4,
     resolve(ctx) {
       // Team burns cash for a bootcamp; morale + form boost on all starters.
-      // Bias toward the caller's team on time-skip bursts.
+      // Bias toward the caller's team on time-skip bursts; in strict
+      // mode refuse to fall through.
       const teams = loadActiveRosters(ctx.db).filter((r) => (ctx.cooldowns.get(r.teamId) ?? 0) <= Date.now());
-      const pick = (ctx.preferTeamId && teams.find((r) => r.teamId === ctx.preferTeamId))
-        ?? pickRandom(teams, ctx.rng);
+      let pick = ctx.preferTeamId ? teams.find((r) => r.teamId === ctx.preferTeamId) : undefined;
+      if (!pick && !ctx.strictTeamOnly) pick = pickRandom(teams, ctx.rng) ?? undefined;
       if (!pick) return null;
       for (const p of pick.starters) {
         p.morale = clamp((p.morale ?? 12) + 1, 1, 20);
@@ -532,13 +545,18 @@ export function tickRandomEvents(ctx: EventContext): NewsItem | null {
 }
 
 /**
- * Fire a burst of random events during a time-skip so the user sees the
- * world moving as their days advance. Each round is a normal event roll
- * with the chance gate forced to 1.0 AND biased to land on the caller's
- * team so THEY see the impact — not some random rival roster elsewhere
- * on the server. Fresh cooldown map so the burst can chain multiple
- * events on their team back-to-back. Rounds scale with days skipped,
- * capped so 30-day skips don't dump 15 items into the inbox.
+ * Fire a burst of random events during a time-skip.
+ *
+ * Rate: capped at 1 event per 7 days skipped (user tuning) — a 7-day
+ * skip gets 1 event, a 14-day skip gets 2, a 30-day skip gets 5.
+ * Ceiling of 10 kept for the hardest edge cases.
+ *
+ * Isolation: strictTeamOnly=true — events NEVER fall through to other
+ * teams if the caller's roster doesn't qualify. This means ID A's
+ * skip can't ever land an effect on ID B's account. Rolls that can't
+ * find a valid target on the caller's team simply retry with a
+ * different event kind (built-in in tickRandomEvents' 3-attempt loop);
+ * if all 3 attempts fail the round is a no-op.
  */
 export function runTimeSkipEventBurst(
   db: DB,
@@ -547,11 +565,8 @@ export function runTimeSkipEventBurst(
   days: number,
   preferTeamId?: string,
 ): number {
-  const rounds = Math.max(1, Math.min(10, Math.ceil(days / 2)));
+  const rounds = Math.max(1, Math.min(10, Math.ceil(days / 7)));
   const rng = () => Math.random();
-  // Persist "already hit" across ALL rounds so the same star doesn't get
-  // three consecutive attribute bumps. Cooldowns still reset per round
-  // so different teams / different players CAN chain.
   const burstHitPlayers = new Set<string>();
   let fired = 0;
   for (let i = 0; i < rounds; i++) {
@@ -560,6 +575,7 @@ export function runTimeSkipEventBurst(
       db, broadcastAll, notifyTeam, rng, cooldowns,
       chanceOverride: 1.0,
       preferTeamId,
+      strictTeamOnly: !!preferTeamId,
       burstHitPlayers,
     });
     if (item) fired++;
