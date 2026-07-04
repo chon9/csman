@@ -18,6 +18,9 @@ const KIND_META: Record<InboxKind, { icon: string; label: string; color: string 
   sponsor:          { icon: '💼', label: 'Sponsor',         color: '#d9b344' },
   'player-message': { icon: '💬', label: 'Player Message',  color: '#78d078' },
   media:            { icon: '📺', label: 'Media',           color: '#c084fc' },
+  training:         { icon: '🎯', label: 'Training',        color: '#f2c443' },
+  wallet:           { icon: '💸', label: 'E-Wallet',        color: '#6ed09a' },
+  bet:              { icon: '🎰', label: 'Bet',             color: '#ff8a00' },
 };
 
 type Filter = 'all' | InboxKind;
@@ -49,14 +52,17 @@ export default function InboxScreen(): React.ReactElement | null {
   }, [items, filter]);
 
   const counts = useMemo(() => {
-    const acc: Record<Filter, number> = { all: items.length, event: 0, 'missed-battle': 0, sponsor: 0, 'player-message': 0, media: 0 };
+    const acc: Record<Filter, number> = {
+      all: items.length, event: 0, 'missed-battle': 0, sponsor: 0,
+      'player-message': 0, media: 0, training: 0, wallet: 0, bet: 0,
+    };
     for (const it of items) acc[it.kind]++;
     return acc;
   }, [items]);
 
   if (!team) return null;
 
-  const filters: Filter[] = ['all', 'event', 'missed-battle', 'sponsor', 'player-message', 'media'];
+  const filters: Filter[] = ['all', 'event', 'missed-battle', 'sponsor', 'player-message', 'media', 'training', 'wallet', 'bet'];
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -64,7 +70,7 @@ export default function InboxScreen(): React.ReactElement | null {
       <div className="hero-panel">
         <div>
           <h2>📬 Inbox</h2>
-          <div className="hero-sub">Last 30 items · random events, missed battles, sponsor offers, player messages, and media questions</div>
+          <div className="hero-sub">Last 30 items · events, missed battles, sponsors, player messages, media, training, e-wallet transfers, and bet results</div>
         </div>
         <button className="btn" onClick={() => go('home')}>← Back</button>
       </div>

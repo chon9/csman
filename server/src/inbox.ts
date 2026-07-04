@@ -18,7 +18,7 @@
 // pay bigger fan swings than routine wins.
 
 import type { DB } from './db.ts';
-import type { InboxChoice, InboxItem, ServerMessage } from '../../src/online/protocol.ts';
+import type { InboxChoice, InboxItem, ServerMessage, TrainingOutcome } from '../../src/online/protocol.ts';
 import type { Player } from '../../src/types.ts';
 
 type MoraleDelta = -2 | -1 | 0 | 1 | 2;
@@ -559,6 +559,248 @@ const MEDIA_QUESTIONS: MediaQuestionTemplate[] = [
 ];
 
 // =====================================================================
+// 4) TRAINING RESULT — non-interactive, player-voiced
+// =====================================================================
+//
+// Fires the moment the user collects their training session. The trained
+// player gets a headline (icon + attribute delta) plus a spoken line from
+// a 20-template pool split by outcome:
+//   - jackpot (5 lines): breakthrough / PA gain, hype
+//   - success (7 lines): confidence, discipline, workmanlike
+//   - reduce  (5 lines): frustration, humility, will fix it
+//   - retire  (3 lines): farewell — trained too hard, career over
+//
+// Kept out of the RECAPS/PLAYER_QUOTES arrays so match narrative gating
+// doesn't collide with training-only vocabulary.
+
+interface TrainingLine {
+  when: TrainingOutcome['kind'];
+  title: string;
+  body: string;
+}
+
+const TRAINING_LINES: TrainingLine[] = [
+  // ===== JACKPOT (5) — PA jumped, attribute up too =====
+  {
+    when: 'jackpot',
+    title: '{nick}: "Everything clicked in the practice room"',
+    body: `"I don't know what happened — the reads, the pace, all of it just fell into place. Coaches are saying it's a new ceiling for me. {attr} feels totally different." — {nick} after the session (+{paDelta} PA · {attr} → {newVal}).`,
+  },
+  {
+    when: 'jackpot',
+    title: 'Breakthrough: {nick} finds a new gear',
+    body: `"You spend months hitting the same wall, and then one day the wall isn't there. That's what this felt like." — {nick}, glowing after a training session that unlocked +{paDelta} PA and pushed {attr} to {newVal}.`,
+  },
+  {
+    when: 'jackpot',
+    title: `{nick}: "Best session I've ever had"`,
+    body: `"Genuinely — best day at the office in a long time. Coach broke down some footage and something just clicked." — {nick} after banking +{paDelta} PA and levelling {attr} up to {newVal}.`,
+  },
+  {
+    when: 'jackpot',
+    title: 'Analysts talk about {nick}\'s ceiling raise',
+    body: `Word from the practice server: {nick} put in a session that rewrote what the coaches thought was possible. PA up {paDelta}, {attr} climbs to {newVal}. Don't be surprised if the ranking desk moves the pin.`,
+  },
+  {
+    when: 'jackpot',
+    title: `{nick}: "This is the version I've been chasing"`,
+    body: `"I've been telling everyone I have another level. Nobody believed me. This proves it." — {nick} after a session that popped {attr} to {newVal} and added {paDelta} PA of headroom.`,
+  },
+
+  // ===== SUCCESS (7) — attribute +1, no PA gain =====
+  {
+    when: 'success',
+    title: '{nick}: "Small gains, but I\'ll take them"',
+    body: `"Not a game-changer, but you can't skip these reps. {attr} feels a little sharper today than yesterday." — {nick} after the session (+1 {attr} → {newVal}).`,
+  },
+  {
+    when: 'success',
+    title: '{nick} banks another rep',
+    body: `"Progress isn't linear. Show up, put the work in, log off. {attr} is up a notch — that's another brick in the wall." — {nick} on the successful session.`,
+  },
+  {
+    when: 'success',
+    title: '{nick}: "Coach said the numbers moved"',
+    body: `"Wasn't sure it was landing during the drills, but the tracker says {attr} went up. I trust the process." — {nick} after {attr} climbed to {newVal}.`,
+  },
+  {
+    when: 'success',
+    title: '{nick} on the {attr} drills',
+    body: `"These sessions are boring but they work. Repeat the movement, own the timing, {attr} is a little tighter than it was." — {nick} after the training (+1 → {newVal}).`,
+  },
+  {
+    when: 'success',
+    title: '{nick}: "Building block for the split"',
+    body: `"Nothing spectacular, but the whole roadmap is small steps. Today was one of them." — {nick} after {attr} moved up to {newVal}.`,
+  },
+  {
+    when: 'success',
+    title: '{nick} keeps the streak going',
+    body: `"Every session is a chance to be a little better than yesterday. Today {attr} did its part." — {nick}, satisfied but not celebrating.`,
+  },
+  {
+    when: 'success',
+    title: '{nick}: "Confidence bar is up"',
+    body: `"You feel it when a session hits — the aim, the reads, the confidence. Today was one of those. {attr} is real now." — {nick} after training pushed {attr} to {newVal}.`,
+  },
+
+  // ===== REDUCE (5) — attribute -1, motivation dented =====
+  {
+    when: 'reduce',
+    title: '{nick} owns a rough session',
+    body: `"Regression is part of the sport. Session didn\'t land — {attr} took a step back. Own it, come back tomorrow, get it right." — {nick}, honest after the setback ({attr} → {newVal}).`,
+  },
+  {
+    when: 'reduce',
+    title: '{nick}: "Not the day I wanted"',
+    body: `"I overcooked the drills. The reps we\'re supposed to gain? I burnt them instead. On me." — {nick} after {attr} slid to {newVal}.`,
+  },
+  {
+    when: 'reduce',
+    title: '{nick} frustrated by training slip',
+    body: `"You can\'t win every session — but this one hurt. I\'ll be back in the practice server tonight." — {nick} after the reps left {attr} at {newVal}.`,
+  },
+  {
+    when: 'reduce',
+    title: '{nick}: "Reset and go again"',
+    body: `"It happens. Take the loss, watch the tape, do the reps the right way tomorrow. {attr} is a number, not a verdict." — {nick} after the disappointing training.`,
+  },
+  {
+    when: 'reduce',
+    title: 'Coach: "{nick} pushed too hard today"',
+    body: `The training staff say {nick} overworked the {attr} drills and left the practice room worse than they arrived ({newVal} now). Nobody\'s panicking — but the tape session tomorrow won\'t be pleasant.`,
+  },
+
+  // ===== RETIRE (3) — career-ending =====
+  {
+    when: 'retire',
+    title: '{nick} calls it a career',
+    body: `"I gave it everything I had — one session too many. My body\'s telling me it\'s time. Thank you to the org and the fans." — {nick}, retiring after a training session that ended their career.`,
+  },
+  {
+    when: 'retire',
+    title: 'Career over: {nick} retires from the pro scene',
+    body: `A training session pushed too far — {nick} tore something in the wrist and the doctors have signed them off pro play. A career remembered fondly by everyone who lined up next to them.`,
+  },
+  {
+    when: 'retire',
+    title: '{nick}\'s farewell statement',
+    body: `"Never thought a training day would be the last one. But here we are. Grateful for every scrim, every LAN, every one of you. See you on the other side of the desk." — {nick}, retiring.`,
+  },
+];
+
+/** Attribute keys → short human label. Falls back to raw key. */
+const ATTR_LABEL: Record<string, string> = {
+  aim: 'aim', reflexes: 'reflexes', tracking: 'tracking', spray: 'spray',
+  awareness: 'awareness', gameSense: 'game sense', clutch: 'clutch',
+  utility: 'utility', flashUsage: 'flashes', composure: 'composure',
+  resilience: 'resilience', teamwork: 'teamwork', leadership: 'leadership',
+  aggression: 'aggression', discipline: 'discipline',
+  entryFragging: 'entry fragging', support: 'support', igl: 'IGL calls',
+  positioning: 'positioning', movement: 'movement',
+};
+
+/** Build a training-result inbox item from an outcome. Returns null only
+ *  if we can't find any template that matches (shouldn't happen — every
+ *  outcome kind has ≥3 lines). */
+export function generateTrainingItem(
+  outcome: TrainingOutcome,
+): { title: string; body: string; payload: Record<string, unknown> } | null {
+  const pool = TRAINING_LINES.filter((t) => t.when === outcome.kind);
+  if (pool.length === 0) return null;
+  const template = pool[Math.floor(Math.random() * pool.length)]!;
+  const attrKey = String(outcome.attribute);
+  const attrLabel = ATTR_LABEL[attrKey] ?? attrKey;
+  const vars: Record<string, string | number | undefined> = {
+    nick: outcome.playerNickname,
+    attr: attrLabel,
+    newVal: outcome.newAttrValue,
+    paDelta: outcome.paDelta,
+    newPA: outcome.newPA,
+  };
+  return {
+    title: fill(template.title, vars),
+    body: fill(template.body, vars),
+    payload: {
+      quoteType: 'training',
+      playerId: outcome.playerId,
+      speakerNickname: outcome.playerNickname,
+      outcome: outcome.kind,
+      attribute: attrKey,
+      attrDelta: outcome.attrDelta,
+      paDelta: outcome.paDelta,
+      newAttrValue: outcome.newAttrValue,
+      newPA: outcome.newPA,
+    },
+  };
+}
+
+// =====================================================================
+// 5) MORALE SHIFT — player quote fired whenever a starter's morale
+//     moves up or down from a non-match event (media choice, random
+//     event, training). Match-driven morale shifts already get quoted
+//     by the post-match player-quote pass, so we skip those.
+// =====================================================================
+
+const MORALE_UP_LINES: string[] = [
+  `"Energy in the room is up. I feel it in the scrims — I feel it walking into practice." — {nick}`,
+  `"Little things stack. Today felt like the org actually has our backs — that lifts everyone." — {nick}`,
+  `"When morale is like this the game feels easier. Reads come faster, shots feel cleaner." — {nick}`,
+  `"You need the vibe to be right. Right now, it\'s right." — {nick}, smiling in press.`,
+  `"Confidence is a real thing. Feels like I\'ve got another gear I didn\'t have last week." — {nick}`,
+  `"Coach knows how to keep the room dialled. Grateful to be here." — {nick} on a good week.`,
+  `"Best I\'ve felt going into a scrim block in a while. Whatever we\'re doing — keep doing it." — {nick}`,
+];
+
+const MORALE_DOWN_LINES: string[] = [
+  `"Not going to lie — this hurt. Head\'s not fully in it yet. Working on it." — {nick} being honest.`,
+  `"Some weeks the room feels lighter, some weeks it doesn\'t. This is one of the harder ones." — {nick}`,
+  `"I\'ll be professional. But it\'d be a lie to say nothing rattled." — {nick}, terse after the news.`,
+  `"You can\'t fake morale. Right now I need to get my head right before the next scrim block." — {nick}`,
+  `"Bad taste in the mouth. Nothing a good day at practice can\'t fix — I hope." — {nick}`,
+  `"Whole squad felt it. Reset day tomorrow — otherwise this bleeds into the matches." — {nick}`,
+];
+
+/** Fire a short player-voice inbox item when a starter\'s morale shifted
+ *  outside of the normal match flow. Silent (no item) if:
+ *   - delta is 0
+ *   - no eligible starter (e.g. all-real-name roster, retired)
+ *   - the shift was tiny in a big roster (we rate-limit — one item at most).
+ *
+ *  `reason` is a short human phrase for context ("after a rough training",
+ *  "after the press conference") — appended to the title. */
+export function emitMoraleShiftItem(
+  db: DB,
+  notifyTeam: (teamId: string, msg: ServerMessage) => void,
+  teamId: string,
+  starters: Player[],
+  delta: number,
+  reason: string,
+): InboxItem | null {
+  if (delta === 0) return null;
+  const eligible = starters.filter((p) => !p.isRealName && !p.retired);
+  if (eligible.length === 0) return null;
+  const speaker = eligible[Math.floor(Math.random() * eligible.length)]!;
+  const pool = delta > 0 ? MORALE_UP_LINES : MORALE_DOWN_LINES;
+  const body = fill(pool[Math.floor(Math.random() * pool.length)]!, { nick: speaker.nickname });
+  const arrow = delta > 0 ? '↑' : '↓';
+  const title = `${speaker.nickname} on morale ${arrow} — ${reason}`;
+  return emitInboxItem(db, notifyTeam, {
+    teamId,
+    kind: 'player-message',
+    title,
+    body,
+    payload: {
+      quoteType: 'morale',
+      speakerId: speaker.id,
+      speakerNickname: speaker.nickname,
+      moraleDelta: delta,
+      reason,
+    },
+  });
+}
+
+// =====================================================================
 // Public generators — pick a template that fits the situation
 // =====================================================================
 
@@ -673,11 +915,11 @@ export function resolveInboxChoice(
   item: InboxItem,
   teamId: string,
   choiceId: string,
-): { summary: string; newFans?: number } | null {
+): { summary: string; newFans?: number; rosterMoraleDelta: number } | null {
   if (item.kind !== 'media') {
     // Player messages are now read-only (no choices). Any other kind
     // just gets an acknowledgment.
-    return { summary: 'Acknowledged.' };
+    return { summary: 'Acknowledged.', rosterMoraleDelta: 0 };
   }
   const templateId = item.payload.templateId as string | undefined;
   if (!templateId?.startsWith('media:')) return null;
@@ -710,7 +952,7 @@ export function resolveInboxChoice(
   if (newFans !== undefined) parts.push(`${newFans > 0 ? '+' : ''}${newFans.toLocaleString()} fans`);
   if (rosterDelta !== 0) parts.push(`roster morale ${rosterDelta > 0 ? '+' : ''}${rosterDelta}`);
   const detail = parts.length > 0 ? `${parts.join(' · ')} — ` : '';
-  return { summary: `${detail}${effect.summary}`, newFans };
+  return { summary: `${detail}${effect.summary}`, newFans, rosterMoraleDelta: rosterDelta };
 }
 
 // =====================================================================

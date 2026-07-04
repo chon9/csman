@@ -2220,7 +2220,10 @@ export type InboxKind =
   | 'missed-battle'  // Quick-Match defender: someone attacked you
   | 'sponsor'        // New sponsor offer waiting for review
   | 'player-message' // Player has words about the last match (interactive)
-  | 'media';         // Press-conference question (interactive, affects fans)
+  | 'media'          // Press-conference question (interactive, affects fans)
+  | 'training'       // Training-center session result — player speaks about it
+  | 'wallet'         // E-Wallet transfer (cash / skin / player / lot)
+  | 'bet';           // AI-betting card settlement (only if user had a bet)
 
 export interface InboxChoice {
   /** Stable id — echoed back on `respond-inbox`. */
@@ -2252,7 +2255,7 @@ export interface InboxItem {
   createdAt: number;
 }
 
-export const PROTOCOL_VERSION = 56;
+export const PROTOCOL_VERSION = 57;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

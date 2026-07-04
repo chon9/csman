@@ -386,7 +386,11 @@ import { DAILY_RACE_BOARD_LIMIT } from './dailyRace.ts';
 import type { DailyRaceEntryWire, DailyRacePayoutWire } from '../../src/online/protocol.ts';
 import { canTrain, loadTrainingWire, logLineFor, rollTrainingOutcome } from './training.ts';
 import { matchupBonusPct, resolveArchetypes } from '../../src/engine/tacticalMatchup.ts';
-import { emitInboxItem, resolveInboxChoice, rollPostMatchInbox, type MatchContext } from './inbox.ts';
+import {
+  emitInboxItem, emitMoraleShiftItem, generateTrainingItem,
+  resolveInboxChoice, rollPostMatchInbox,
+  type MatchContext,
+} from './inbox.ts';
 import type { InboxItem } from '../../src/online/protocol.ts';
 import { TRAINING_DURATION_MS } from '../../src/online/protocol.ts';
 import { ATTRIBUTE_KEYS } from '../../src/types.ts';
@@ -3687,6 +3691,16 @@ export function handle(
       db.markInboxItemResolved(conn.teamId, msg.itemId);
       const resolved = db.loadInboxItem(msg.itemId) as InboxItem;
       const unread = db.inboxUnreadCount(conn.teamId);
+      // Roster morale moved from the choice → fire a player-voice item
+      // reflecting the room's mood shift (skip the tiny +1/-1 flat case
+      // for wins/losses handled by match narrative).
+      if (Math.abs(outcome.rosterMoraleDelta) >= 1) {
+        const starters = (db.loadTeam(conn.teamId)?.playerIds ?? []).slice(0, 5)
+          .map((id) => db.loadPlayer(id))
+          .filter((p): p is import('../../src/types.ts').Player => !!p);
+        const reason = outcome.rosterMoraleDelta > 0 ? 'after the press conference' : 'after your press answer';
+        emitMoraleShiftItem(db, notifyTeam, conn.teamId, starters, outcome.rosterMoraleDelta, reason);
+      }
       return {
         kind: 'inbox-resolved',
         item: resolved,
@@ -3775,10 +3789,44 @@ export function handle(
         player.teamId = null;
         player.contract = null;
       }
+      // Morale swing on the trained player follows the outcome kind:
+      //   jackpot +2, success +1, reduce -1, retire n/a (they're gone).
+      let moraleDelta = 0;
+      if (!outcome.retired) {
+        if (outcome.kind === 'jackpot') moraleDelta = 2;
+        else if (outcome.kind === 'success') moraleDelta = 1;
+        else if (outcome.kind === 'reduce') moraleDelta = -1;
+        if (moraleDelta !== 0) {
+          player.morale = Math.max(1, Math.min(20, (player.morale ?? 12) + moraleDelta));
+        }
+      }
       db.persistPlayer(player);
       db.clearTrainingSession(conn.teamId);
       playersDelta.push(player);
       log(logLineFor(outcome, team.tag));
+
+      // Push the news to the inbox — trained player, spoken line from
+      // the training pool, outcome-aware. The result modal still opens
+      // client-side, but the inbox item persists as a permanent record.
+      const trainingItem = generateTrainingItem(outcome);
+      if (trainingItem) {
+        emitInboxItem(db, notifyTeam, {
+          teamId: conn.teamId, kind: 'training',
+          title: trainingItem.title, body: trainingItem.body,
+          payload: trainingItem.payload,
+        });
+      }
+      // Morale-shift quote for non-trivial swings (jackpot/reduce). Skip
+      // for the +1 success case (rate-limit: too many small ups drown the
+      // inbox) and skip on retire (their voice is already in the retire
+      // template).
+      if (!outcome.retired && (moraleDelta === 2 || moraleDelta === -1)) {
+        const starters = team.playerIds.slice(0, 5)
+          .map((id) => db.loadPlayer(id))
+          .filter((p): p is import('../../src/types.ts').Player => !!p);
+        const reason = moraleDelta > 0 ? 'after a breakthrough session' : 'after a rough training';
+        emitMoraleShiftItem(db, notifyTeam, conn.teamId, starters, moraleDelta, reason);
+      }
       return { kind: 'training-collected', outcome, playersDelta };
     }
 
@@ -4666,11 +4714,24 @@ export function handle(
         newMoney: recipient.money,
       });
       notifyTeam(recipient.id, { kind: 'team-money-updated', teamId: recipient.id, money: recipient.money });
+      const cashDesc = `$${amount.toLocaleString()} in cash`;
+      emitInboxItem(db, notifyTeam, {
+        teamId: sender.id, kind: 'wallet',
+        title: `Sent ${cashDesc} to ${recipient.tag}`,
+        body: `E-Wallet transfer confirmed. You sent ${cashDesc} to ${recipient.tag}. New balance: $${sender.money.toLocaleString()}.`,
+        payload: { direction: 'sent', assetKind: 'cash', otherTag: recipient.tag, amount },
+      });
+      emitInboxItem(db, notifyTeam, {
+        teamId: recipient.id, kind: 'wallet',
+        title: `Received ${cashDesc} from ${sender.tag}`,
+        body: `${sender.tag} sent you ${cashDesc} through the E-Wallet. New balance: $${recipient.money.toLocaleString()}.`,
+        payload: { direction: 'received', assetKind: 'cash', otherTag: sender.tag, amount },
+      });
       return {
         kind: 'ewallet-sent',
         assetKind: 'cash',
         toTeamTag: recipient.tag,
-        description: `$${amount.toLocaleString()} in cash`,
+        description: cashDesc,
         newMoney: sender.money,
       };
     }
@@ -4698,6 +4759,18 @@ export function handle(
         fromTeamTag: sender.tag,
         description: desc,
         newMoney: recipient.money,
+      });
+      emitInboxItem(db, notifyTeam, {
+        teamId: sender.id, kind: 'wallet',
+        title: `Sent skin "${desc}" to ${recipient.tag}`,
+        body: `E-Wallet transfer confirmed. You sent "${desc}" to ${recipient.tag}. The skin has been removed from your inventory and any player who had it equipped.`,
+        payload: { direction: 'sent', assetKind: 'skin', otherTag: recipient.tag, skinName: desc },
+      });
+      emitInboxItem(db, notifyTeam, {
+        teamId: recipient.id, kind: 'wallet',
+        title: `Received skin "${desc}" from ${sender.tag}`,
+        body: `${sender.tag} sent you the skin "${desc}" through the E-Wallet. It's now in your inventory — equip it on a player from the Skins screen.`,
+        payload: { direction: 'received', assetKind: 'skin', otherTag: sender.tag, skinName: desc },
       });
       return {
         kind: 'ewallet-sent',
@@ -4742,6 +4815,18 @@ export function handle(
         fromTeamTag: sender.tag,
         description: desc,
         newMoney: recipient.money,
+      });
+      emitInboxItem(db, notifyTeam, {
+        teamId: sender.id, kind: 'wallet',
+        title: `Released ${player.nickname} to ${recipient.tag}`,
+        body: `E-Wallet transfer confirmed. ${desc} has left your roster and joined ${recipient.tag}.`,
+        payload: { direction: 'sent', assetKind: 'player', otherTag: recipient.tag, playerNickname: player.nickname, playerId: player.id },
+      });
+      emitInboxItem(db, notifyTeam, {
+        teamId: recipient.id, kind: 'wallet',
+        title: `Signed ${player.nickname} from ${sender.tag}`,
+        body: `${sender.tag} sent you ${desc} through the E-Wallet. Welcome to the roster.`,
+        payload: { direction: 'received', assetKind: 'player', otherTag: sender.tag, playerNickname: player.nickname, playerId: player.id },
       });
       return {
         kind: 'ewallet-sent',
@@ -4806,6 +4891,18 @@ export function handle(
         fromTeamTag: sender.tag,
         description: desc,
         newMoney: recipient.money,
+      });
+      emitInboxItem(db, notifyTeam, {
+        teamId: sender.id, kind: 'wallet',
+        title: `Deeded lot (${lot.x},${lot.y}) to ${recipient.tag}`,
+        body: `E-Wallet transfer confirmed. You gave up the ${desc} — ownership is now with ${recipient.tag}.`,
+        payload: { direction: 'sent', assetKind: 'lot', otherTag: recipient.tag, x: lot.x, y: lot.y, residents: movedPlayerNicks },
+      });
+      emitInboxItem(db, notifyTeam, {
+        teamId: recipient.id, kind: 'wallet',
+        title: `Received lot (${lot.x},${lot.y}) from ${sender.tag}`,
+        body: `${sender.tag} deeded you the ${desc} through the E-Wallet. Check the Virtual Real Estate screen to manage it.`,
+        payload: { direction: 'received', assetKind: 'lot', otherTag: sender.tag, x: lot.x, y: lot.y, residents: movedPlayerNicks },
       });
       return {
         kind: 'ewallet-sent',

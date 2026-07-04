@@ -34,6 +34,7 @@ import {
 import { DEFAULT_TACTICS, type Player, type Tactics, type Team } from '../../src/types.ts';
 import type { DB } from './db.ts';
 import type { Broadcast, NotifyTeam } from './handlers.ts';
+import { emitInboxItem } from './inbox.ts';
 
 // ---------------------------------------------------------------------
 // Card payload — stored in payload_json. Includes the full reconstructable
@@ -301,6 +302,39 @@ function resolveCard(
       },
       newMoney: db.loadTeam(bet.bettor_team_id)?.money ?? 0,
     });
+
+    // Persistent inbox record of the bet outcome — visible even after
+    // the card leaves the replay cache. Includes the final scoreline
+    // and the side the user backed so the entry is self-contained.
+    const bettedTag = bet.side === 'A' ? payload.teamA.team.tag : payload.teamB.team.tag;
+    const oppTag = bet.side === 'A' ? payload.teamB.team.tag : payload.teamA.team.tag;
+    const scoreline = `${payload.teamA.team.tag} ${result.mapsA}-${result.mapsB} ${payload.teamB.team.tag}`;
+    if (won) {
+      const profit = payout - bet.stake;
+      emitInboxItem(db, notifyTeam, {
+        teamId: bet.bettor_team_id, kind: 'bet',
+        title: `Bet won: +$${profit.toLocaleString()} on ${bettedTag}`,
+        body: `${bettedTag} beat ${oppTag} (${scoreline}). Your $${bet.stake.toLocaleString()} at ${bet.odds_at_bet.toFixed(2)} paid out $${payout.toLocaleString()} — profit $${profit.toLocaleString()}. Cha-ching.`,
+        payload: {
+          cardId: row.id, matchId, side: bet.side, stake: bet.stake,
+          oddsAtBet: bet.odds_at_bet, payout, status: 'won',
+          teamATag: payload.teamA.team.tag, teamBTag: payload.teamB.team.tag,
+          mapsA: result.mapsA, mapsB: result.mapsB,
+        },
+      });
+    } else {
+      emitInboxItem(db, notifyTeam, {
+        teamId: bet.bettor_team_id, kind: 'bet',
+        title: `Bet lost: -$${bet.stake.toLocaleString()} on ${bettedTag}`,
+        body: `${oppTag} took the win (${scoreline}). Your $${bet.stake.toLocaleString()} on ${bettedTag} at ${bet.odds_at_bet.toFixed(2)} didn't land. Next one.`,
+        payload: {
+          cardId: row.id, matchId, side: bet.side, stake: bet.stake,
+          oddsAtBet: bet.odds_at_bet, payout: 0, status: 'lost',
+          teamATag: payload.teamA.team.tag, teamBTag: payload.teamB.team.tag,
+          mapsA: result.mapsA, mapsB: result.mapsB,
+        },
+      });
+    }
   }
   log(`ai-bet resolved ${row.id}: ${payload.teamA.team.tag} ${result.mapsA}-${result.mapsB} ${payload.teamB.team.tag} (${bets.length} bets)`);
 

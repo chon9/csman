@@ -48,7 +48,15 @@ interface RandomEvent {
   weight: number;
   /** Resolve a target for this event. Returns null when no valid subject
    *  exists right now so the ticker can fall back to another event. */
-  resolve(ctx: EventContext): { newsBody: string; affectedTeamId?: string } | null;
+  resolve(ctx: EventContext): {
+    newsBody: string;
+    affectedTeamId?: string;
+    /** If the event shifted the affected player's morale, expose the
+     *  delta + nickname so the ticker can fire a player-voice inbox
+     *  quote alongside the news. Positive = mood up, negative = down. */
+    moraleDelta?: number;
+    moraleSpeaker?: string;
+  } | null;
 }
 
 // =====================================================================
@@ -154,6 +162,8 @@ const EVENTS: RandomEvent[] = [
       return {
         newsBody: `🌟 Breakthrough — ${target.player.nickname} of ${target.teamTag} looks a different player in scrims. +1 ${attr}.`,
         affectedTeamId: target.teamId,
+        moraleDelta: 1,
+        moraleSpeaker: target.player.nickname,
       };
     },
   },
@@ -185,6 +195,8 @@ const EVENTS: RandomEvent[] = [
       return {
         newsBody: `📺 ${target.player.nickname} guests on a HLTV podcast — talks up ${target.teamTag}'s chances this cycle.`,
         affectedTeamId: target.teamId,
+        moraleDelta: 1,
+        moraleSpeaker: target.player.nickname,
       };
     },
   },
@@ -210,6 +222,8 @@ const EVENTS: RandomEvent[] = [
       return {
         newsBody: `🎬 Viral clip — ${target.player.nickname}'s 1v3 hits 200k views overnight. ${target.teamTag} banks $${bonus.toLocaleString()} in clip royalties.`,
         affectedTeamId: target.teamId,
+        moraleDelta: 1,
+        moraleSpeaker: target.player.nickname,
       };
     },
   },
@@ -232,6 +246,8 @@ const EVENTS: RandomEvent[] = [
       return {
         newsBody: `💭 ${target.player.nickname} (${target.teamTag}) shows up rattled — ${reason}. Morale takes a hit.`,
         affectedTeamId: target.teamId,
+        moraleDelta: -2,
+        moraleSpeaker: target.player.nickname,
       };
     },
   },
@@ -293,6 +309,8 @@ const EVENTS: RandomEvent[] = [
       return {
         newsBody: `🏕 ${pick.teamTag} announce a two-week bootcamp — the whole starting five leaves the practice room recharged.`,
         affectedTeamId: pick.teamId,
+        moraleDelta: 1,
+        moraleSpeaker: pick.starters[0]?.nickname,
       };
     },
   },
@@ -386,6 +404,42 @@ export function tickRandomEvents(ctx: EventContext): NewsItem | null {
           item: inbox as import('../../src/online/protocol.ts').InboxItem,
           unread,
         });
+        // Extra player-voice item when the event shifted morale — this is
+        // the "more player messages tied to morale events" surface. Kept
+        // separate from the event item so the mood swing gets its own
+        // quote-shaped row rather than a wall of numbers.
+        if (typeof outcome.moraleDelta === 'number' && outcome.moraleDelta !== 0 && outcome.moraleSpeaker) {
+          const arrow = outcome.moraleDelta > 0 ? '↑' : '↓';
+          const upLines = [
+            `"Days like this are why we do it. Everyone in the room felt it." — ${outcome.moraleSpeaker}`,
+            `"Confidence is up. Practice feels lighter tomorrow." — ${outcome.moraleSpeaker}`,
+            `"Little wins matter. This one landed." — ${outcome.moraleSpeaker}`,
+          ];
+          const downLines = [
+            `"Rough one to shake off. Head down, back to work." — ${outcome.moraleSpeaker}`,
+            `"Not a good day — the room felt it. Reset tomorrow." — ${outcome.moraleSpeaker}`,
+            `"Nothing to say except: fix it in practice." — ${outcome.moraleSpeaker}`,
+          ];
+          const pool = outcome.moraleDelta > 0 ? upLines : downLines;
+          const line = pool[Math.floor(ctx.rng() * pool.length)]!;
+          const shiftItem = ctx.db.pushInbox({
+            teamId: outcome.affectedTeamId,
+            kind: 'player-message',
+            title: `${outcome.moraleSpeaker} on morale ${arrow}`,
+            body: line,
+            payload: {
+              quoteType: 'morale',
+              speakerNickname: outcome.moraleSpeaker,
+              moraleDelta: outcome.moraleDelta,
+              trigger: picked.id,
+            },
+          });
+          ctx.notifyTeam(outcome.affectedTeamId, {
+            kind: 'inbox-item',
+            item: shiftItem as import('../../src/online/protocol.ts').InboxItem,
+            unread: ctx.db.inboxUnreadCount(outcome.affectedTeamId),
+          });
+        }
       }
     }
     if (outcome.affectedTeamId) {
