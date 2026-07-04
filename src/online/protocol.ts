@@ -1936,7 +1936,7 @@ export type ServerMessage =
   | { kind: 'pong' }
   // ----- Phase 2 -----
   | { kind: 'duel-result'; outcome: DuelOutcome }
-  | { kind: 'time-skipped'; newDay: number; daysAdvanced: number; trainingNotes: string[]; cost: number; devChanges: DevChange[] }
+  | { kind: 'time-skipped'; newDay: number; daysAdvanced: number; trainingNotes: string[]; cost: number; devChanges: DevChange[]; eventsFired?: number }
   | { kind: 'market'; listings: MarketListing[]; players: Player[] }
   | { kind: 'market-listed'; listing: MarketListing }
   | { kind: 'market-unlisted'; listingId: string }

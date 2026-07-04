@@ -795,11 +795,17 @@ export const useOnline = create<OnlineState>((set, get) => ({
             // Auto-open the growth modal whenever the skip moved at least one player.
             showDevReport: msg.devChanges.length > 0,
           });
+          const devPart = msg.devChanges.length > 0
+            ? ` ${msg.devChanges.length} player${msg.devChanges.length === 1 ? '' : 's'} developed.` : '';
+          const eventPart = msg.eventsFired && msg.eventsFired > 0
+            ? ` ${msg.eventsFired} event${msg.eventsFired === 1 ? '' : 's'} — check Inbox.` : '';
           pushToast(
             'success',
-            `+${msg.daysAdvanced} days · -$${msg.cost.toLocaleString()}.` +
-              (msg.devChanges.length > 0 ? ` ${msg.devChanges.length} player${msg.devChanges.length === 1 ? '' : 's'} developed.` : ''),
+            `+${msg.daysAdvanced} days · -$${msg.cost.toLocaleString()}.${devPart}${eventPart}`,
           );
+          // Refresh inbox so the newly-pushed items show without needing
+          // the user to click into the Inbox screen first.
+          client.send({ kind: 'list-inbox' });
           client.send({ kind: 'refresh-state' });
           break;
         }

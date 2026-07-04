@@ -1352,7 +1352,7 @@ export function handle(
       // land on the caller's team (inbox item), others hit other rosters
       // (news ticker). Uses the existing tickRandomEvents flow so all
       // notification + inbox wiring is reused.
-      const eventsFired = runTimeSkipEventBurst(db, broadcast, notifyTeam, ts.daysAdvanced);
+      const eventsFired = runTimeSkipEventBurst(db, broadcast, notifyTeam, ts.daysAdvanced, team.id);
       log(`time-skip: +${ts.daysAdvanced}d, -$${ts.cost} (day ${ts.newDay}), ${ts.devChanges.length} dev moves, ${ts.goalsReached.length} goals reached, ${ret.retired.length} retired, ${eventsFired} events`);
       return {
         kind: 'time-skipped',
@@ -1361,6 +1361,7 @@ export function handle(
         trainingNotes: ts.trainingNotes,
         cost: ts.cost,
         devChanges: ts.devChanges,
+        eventsFired,
       };
     }
 
