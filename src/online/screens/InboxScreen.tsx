@@ -149,6 +149,11 @@ function InboxRow({
   const choices = (item.payload.choices as InboxChoice[] | undefined) ?? [];
   const interactive = choices.length > 0 && !resolved;
 
+  // Read + collapsed → heavily dimmed strip. Read + expanded → full
+  // opacity so the user can re-read the body without visual noise.
+  // Unread → high-visibility tint regardless of expanded state.
+  const dimmed = !unread && !expanded;
+
   return (
     <div
       className="panel"
@@ -156,33 +161,45 @@ function InboxRow({
       style={{
         cursor: 'pointer',
         marginBottom: 0,
-        borderLeft: `3px solid ${meta.color}`,
-        background: unread ? `${meta.color}12` : 'var(--panel)',
+        borderLeft: unread ? `4px solid ${meta.color}` : `3px solid ${meta.color}55`,
+        background: unread ? `${meta.color}1f` : 'var(--panel)',
+        boxShadow: unread ? `0 0 0 1px ${meta.color}44 inset` : 'none',
+        opacity: dimmed ? 0.55 : 1,
+        transition: 'opacity 140ms ease, background 140ms ease',
+        padding: dimmed ? '8px 12px' : undefined,
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-          <span style={{ fontSize: 16 }}>{meta.icon}</span>
+          <span style={{ fontSize: unread ? 18 : 15 }}>{meta.icon}</span>
           <span
             className="pill"
             style={{
-              background: `${meta.color}22`, borderColor: `${meta.color}55`, color: meta.color,
+              background: `${meta.color}${unread ? '33' : '22'}`,
+              borderColor: `${meta.color}${unread ? '77' : '55'}`,
+              color: meta.color,
               padding: '2px 8px', fontSize: 10,
+              fontWeight: unread ? 700 : 500,
             }}
           >{meta.label.toUpperCase()}</span>
           <strong style={{
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             color: unread ? 'var(--text)' : 'var(--text-dim)',
+            fontWeight: unread ? 800 : 500,
+            fontSize: unread ? 15 : 13,
+            letterSpacing: unread ? '0.1px' : undefined,
           }}>{item.title}</strong>
           {unread && (
             <span style={{
-              width: 8, height: 8, borderRadius: '50%', background: meta.color,
-              boxShadow: `0 0 6px ${meta.color}88`,
+              width: 10, height: 10, borderRadius: '50%', background: meta.color,
+              boxShadow: `0 0 8px ${meta.color}, 0 0 14px ${meta.color}66`,
               flexShrink: 0,
             }} />
           )}
         </div>
-        <span className="muted small" style={{ flexShrink: 0 }}>{fmtAgo(item.createdAt)}</span>
+        <span className="muted small" style={{ flexShrink: 0, fontWeight: unread ? 600 : 400 }}>
+          {fmtAgo(item.createdAt)}
+        </span>
       </div>
 
       {expanded && (
