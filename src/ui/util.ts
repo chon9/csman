@@ -5,6 +5,32 @@ export function money(n: number): string {
   return `${sign}$${Math.abs(Math.round(n)).toLocaleString('en-US')}`;
 }
 
+/**
+ * Compact money format for narrow UI cells (sidebar cash pill, hero
+ * badges, stat cards) where full six/seven/eight-digit numbers overflow.
+ *
+ * Under $1M we keep the full form because it's precise and short enough
+ * ($999,999 fits everywhere). At $1M+ we shift to K/M/B/T with just
+ * enough precision to distinguish neighbours:
+ *   - one decimal below 10 in a bucket (1.2M, 3.4B)
+ *   - integer at 10+ in a bucket (12M, 340B)
+ *
+ * Callers should still put the exact number in a `title` attribute so
+ * hover reveals the precise amount.
+ */
+export function moneyCompact(n: number): string {
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(Math.round(n));
+  if (abs < 1_000_000) return `${sign}$${abs.toLocaleString('en-US')}`;
+  const pick = (v: number, suf: string): string => {
+    const rounded = v < 10 ? Math.round(v * 10) / 10 : Math.round(v);
+    return `${sign}$${rounded}${suf}`;
+  };
+  if (abs < 1_000_000_000) return pick(abs / 1_000_000, 'M');
+  if (abs < 1_000_000_000_000) return pick(abs / 1_000_000_000, 'B');
+  return pick(abs / 1_000_000_000_000, 'T');
+}
+
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 

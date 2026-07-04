@@ -23,6 +23,7 @@ import {
 import type { MatchFormat } from '../../types';
 import DuelResultModal from './DuelResultModal';
 import ToastStack from './ToastStack';
+import { moneyCompact } from '../../ui/util';
 import { PlayerName } from './PlayerProfileModal';
 import DailyQuestsPanel from './DailyQuestsPanel';
 import ChatWidget from './ChatWidget';
@@ -142,7 +143,7 @@ export default function OnlineHomeScreen() {
       </div>
 
       <div className="online-stat-grid">
-        <StatCard label="Cash" value={`$${team.money.toLocaleString()}`} />
+        <StatCard label="Cash" value={moneyCompact(team.money)} title={`$${team.money.toLocaleString()}`} />
         <StatCard label="Roster" value={`${roster.length} / ${team.playerIds.length || 5}`} />
         <StatCard label="Avg CA" value={String(avgCA)} />
         <StatCard label="Avg PA" value={String(avgPA)} />
@@ -423,9 +424,9 @@ export default function OnlineHomeScreen() {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function StatCard({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div className="stat-card">
+    <div className="stat-card" title={title}>
       <div className="stat-label">{label}</div>
       <div className="stat-value">{value}</div>
     </div>

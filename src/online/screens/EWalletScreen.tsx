@@ -10,6 +10,7 @@ import { useOnline } from '../onlineStore';
 import { APARTMENT_TIER_META, findCar, findLuxury } from '../protocol';
 import type { Player } from '../../types';
 import ToastStack from './ToastStack';
+import { moneyCompact } from '../../ui/util';
 
 type Tab = 'cash' | 'skins' | 'players' | 'lots';
 
@@ -99,8 +100,12 @@ export default function EWalletScreen(): React.ReactElement | null {
           <div className="hero-sub">Peer-to-peer transfers · zero fee · cash, skins, players and real estate</div>
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-          <span className="pill pill-accent" style={{ fontSize: 'var(--text-md)', padding: '5px 12px' }}>
-            💰 ${team.money.toLocaleString()}
+          <span
+            className="pill pill-accent"
+            style={{ fontSize: 'var(--text-md)', padding: '5px 12px', whiteSpace: 'nowrap' }}
+            title={`$${team.money.toLocaleString()}`}
+          >
+            💰 {moneyCompact(team.money)}
           </span>
           <button className="btn" onClick={() => go('home')}>← Back</button>
         </div>

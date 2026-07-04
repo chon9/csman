@@ -9,6 +9,7 @@ import { publicOrigin } from '../serverUrl';
 import { formatGameAge } from '../dateHelpers';
 import { getSoundSettings, toggleMusicMuted, startBackgroundMusic } from '../../sound/soundManager';
 import RankBadge from './RankBadge';
+import { moneyCompact } from '../../ui/util';
 
 interface NavItem {
   id: OnlineScreen;
@@ -94,7 +95,10 @@ export default function OnlineSidebar(): React.ReactElement {
       {team && (
         <div className="osb-cash">
           <div className="osb-cash-label">Cash</div>
-          <div className="osb-cash-amount">${team.money.toLocaleString()}</div>
+          <div
+            className="osb-cash-amount"
+            title={`$${team.money.toLocaleString()}`}
+          >{moneyCompact(team.money)}</div>
           {dailyBonusAvailable && (
             <button className="osb-daily" onClick={claimDailyBonus} title="Claim $10,000 daily login bonus">
               🎁 Claim daily $10k

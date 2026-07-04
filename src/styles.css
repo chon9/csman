@@ -6964,6 +6964,12 @@ input[type='range'] {
   font-size: 18px;
   font-weight: 700;
   color: #d4f0d8;
+  /* Safety net: if compact format ever isn't compact enough (e.g. long
+     future currency symbol), truncate rather than break the sidebar. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .osb-daily {
   margin-top: 6px;
