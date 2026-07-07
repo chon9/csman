@@ -73,10 +73,21 @@ export default function OnlineSidebar(): React.ReactElement {
 
   return (
     <aside className="osb">
-      {/* ===== Brand / team badge ===== */}
+      {/* ===== Brand / team badge =====
+           Crest always renders the tag as a two-letter monogram — the
+           user-chosen emoji logoId reads as amateur when it's the only
+           thing filling a team crest. The logo emoji still shows on
+           the team-profile page where it has more space to breathe. */}
       <div className="osb-brand">
-        <div className="osb-brand-mark" style={team?.primaryColor ? { background: `linear-gradient(135deg, ${team.primaryColor}, ${team.primaryColor}88)`, color: '#0a0d12' } : undefined}>
-          {team?.logoId || team?.tag.slice(0, 2).toUpperCase() || '··'}
+        <div
+          className="osb-brand-mark"
+          style={team?.primaryColor ? {
+            background: `linear-gradient(135deg, ${team.primaryColor}, ${team.primaryColor}aa)`,
+            color: '#06121c',
+            borderColor: `${team.primaryColor}55`,
+          } : undefined}
+        >
+          {team?.tag.slice(0, 2).toUpperCase() || '··'}
         </div>
         <div className="osb-brand-text">
           <div className="osb-brand-name">{team?.name ?? 'CS2 Manager'}</div>
