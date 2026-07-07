@@ -2422,7 +2422,7 @@ export const ACHIEVEMENT_LABELS: Record<string, string> = {
   // ===== Streaks & domination =====
   streak_5: '🔥 Heater — 5-duel win streak',
   streak_10: '🔥 Untouchable — 10-duel win streak',
-  perfect_map: '🎯 16-0 — swept a map without dropping a round',
+  perfect_map: '🎯 13-0 — swept a map without dropping a round',
   giant_slayer: '😱 Giant Slayer — beat a team with 40+ higher avg CA in PvP',
   underdog_win: '😱 Cinderella — beat a team with a higher avg CA in PvP',
 

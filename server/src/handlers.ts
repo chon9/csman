@@ -323,12 +323,14 @@ function applyPostDuelAchievements(
     if (wAvg + 40 < lAvg) tryUnlock(db, notifyTeam, winnerTeamId, 'giant_slayer', ACHIEVEMENT_LABELS.giant_slayer);
   }
 
-  // Perfect map — any map with a 16-0 sweep in winner's favour.
+  // Perfect map — any map won without dropping a single round to the
+  // opponent. Engine is MR12 (first to 13), so a perfect sweep is 13-0.
+  // Was hardcoded to 16-0 (old MR15 format), which meant this achievement
+  // literally could never unlock. Bug shipped in the first pass.
   const winnerIsA = result.teamAId === winnerTeamId;
   for (const m of result.maps) {
-    const wScore = winnerIsA ? m.scoreA : m.scoreB;
     const lScore = winnerIsA ? m.scoreB : m.scoreA;
-    if (wScore === 16 && lScore === 0) {
+    if (lScore === 0) {
       tryUnlock(db, notifyTeam, winnerTeamId, 'perfect_map', ACHIEVEMENT_LABELS.perfect_map);
       break;
     }

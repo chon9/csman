@@ -25,6 +25,7 @@ import EWalletScreen from './online/screens/EWalletScreen';
 import DailyRaceScreen from './online/screens/DailyRaceScreen';
 import OnlineTrainingScreen from './online/screens/TrainingScreen';
 import OnlineInboxScreen from './online/screens/InboxScreen';
+import OnlineAchievementsScreen from './online/screens/AchievementsScreen';
 import MobileNav from './online/screens/MobileNav';
 import FabDock from './online/screens/FabDock';
 import OnlineSidebar from './online/screens/OnlineSidebar';
@@ -161,6 +162,7 @@ export default function App() {
     else if (onlineScreen === 'daily-race') body = <DailyRaceScreen />;
     else if (onlineScreen === 'training') body = <OnlineTrainingScreen />;
     else if (onlineScreen === 'inbox') body = <OnlineInboxScreen />;
+    else if (onlineScreen === 'achievements') body = <OnlineAchievementsScreen />;
     else body = <OnlineHomeScreen />;
     return (
       <div className="online-layout">

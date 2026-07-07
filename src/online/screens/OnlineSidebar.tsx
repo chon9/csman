@@ -40,6 +40,7 @@ const PRIMARY: NavItem[] = [
   { id: 'scout', label: 'Scout', icon: 'scout' },
   { id: 'history', label: 'History', icon: 'history' },
   { id: 'leaderboard', label: 'Leaderboard', icon: 'bar-chart' },
+  { id: 'achievements', label: 'Achievements', icon: 'trophy' },
 ];
 
 export default function OnlineSidebar(): React.ReactElement {
