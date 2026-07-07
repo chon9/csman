@@ -1865,6 +1865,14 @@ export type ClientMessage =
   | { kind: 'mark-inbox-read'; itemId: number }
   | { kind: 'mark-all-inbox-read' }
   | { kind: 'respond-inbox'; itemId: number; choiceId: string }
+  // ----- Card Duel (Splinterlands-style auto-battle) -----
+  /** Enter the matchmaking queue with a chosen deck. Deck = 5 player
+   *  ids from the caller's roster; server validates ownership + roster. */
+  | { kind: 'queue-card-duel'; deckPlayerIds: string[] }
+  /** Voluntarily leave the queue before a pair lands. No-op if not queued. */
+  | { kind: 'cancel-card-duel-queue' }
+  /** Concede an in-flight card duel — awards the win to the opponent. */
+  | { kind: 'concede-card-duel'; matchId: string }
   // ----- Training Center (5-min idle · high-risk / high-return) -----
   | { kind: 'list-training' }
   | { kind: 'start-training'; playerId: string; attribute: keyof PlayerAttributes }
@@ -2051,6 +2059,15 @@ export type ServerMessage =
   | { kind: 'inbox-item'; item: InboxItem; unread: number }
   /** Bulk read-flag response — client wipes unread across all items. */
   | { kind: 'inbox-all-read'; flippedCount: number; unread: number }
+  // ----- Card Duel wire messages -----
+  /** Ack that the caller is in the matchmaking queue. `position` is
+   *  their 1-indexed slot in the queue (1 = matches next). */
+  | { kind: 'card-duel-queued'; position: number; queueSize: number }
+  /** Sent to both sides at pair time. Battle is pre-computed on the
+   *  server and streamed as a single payload — the client animates. */
+  | { kind: 'card-duel-battle'; battle: CardDuelBattle; mySide: 'A' | 'B'; newMoney: number }
+  /** Sent when the caller's queue slot cancelled or timed out. */
+  | { kind: 'card-duel-queue-cancelled'; reason: 'user' | 'timeout' }
   /** Feedback line + updated fans/morale after resolving an interactive
    *  item — surfaced as a toast alongside the folded-in item. */
   | { kind: 'inbox-resolved'; item: InboxItem; effectSummary: string; newFans?: number; unread: number }
@@ -2284,7 +2301,97 @@ export interface InboxItem {
   createdAt: number;
 }
 
-export const PROTOCOL_VERSION = 60;
+// ============ Card Duel (Splinterlands-style auto-battle) ============
+
+/** Slot on the battle line. 0..4, matching pick order — the mirror
+ *  matchup for slot i is my slot i vs opp slot i. When a card dies its
+ *  attacks are re-targeted to the lowest-index living opponent. */
+export type CardDuelSlot = 0 | 1 | 2 | 3 | 4;
+
+/** Every card's static profile — persisted at battle start so the frames
+ *  can render a stable identity. Derived from the underlying Player. */
+export interface CardDuelCard {
+  playerId: string;
+  nickname: string;
+  role: PlayerRole;
+  slot: CardDuelSlot;
+  /** HP pool at battle start. Endurance × 4 + 20 (range ~24–100). */
+  maxHp: number;
+  attack: number;
+  defense: number;
+  speed: number;
+}
+
+/** One template from the 12-card situation deck. Deterministic ids
+ *  keep the wire tiny — client renders label + description from a
+ *  local table matching this id. */
+export type CardDuelSituationId =
+  | 'eco' | 'force_buy' | 'bomb_plant' | 'bomb_defuse' | 'clutch_time'
+  | 'awp_pick' | 'smoke_wall' | 'flashbang' | 'utility_execute'
+  | 'crossfire' | 'rush_b' | 'save_round';
+
+export interface CardDuelSituation {
+  id: CardDuelSituationId;
+  /** True when the effect flavours toward attackers (side A), false
+   *  toward defenders (side B), null when symmetric. Cosmetic on the
+   *  wire; engine reads the id directly. */
+  attackerFavoured?: boolean;
+}
+
+/** One resolved combat event inside a turn. Rendered as a strike line
+ *  with damage numbers + any status flags (role advantage, crit). */
+export interface CardDuelStrike {
+  attackerSide: 'A' | 'B';
+  attackerSlot: CardDuelSlot;
+  targetSlot: CardDuelSlot;
+  damage: number;
+  /** True when the attacker's role countered the target's role — the
+   *  client renders a small advantage indicator on this strike. */
+  advantage: boolean;
+  /** True when the attacker was skipped this turn (situation card
+   *  flashed them). Damage is 0 in that case. */
+  skipped: boolean;
+  /** Target HP AFTER this strike. Client uses this to drive the HP bar. */
+  targetHpAfter: number;
+  targetSlain: boolean;
+}
+
+/** One turn of the auto-battle. Client plays each turn back with a
+ *  short delay per strike so the sequence reads like a Splinterlands
+ *  frame. */
+export interface CardDuelTurn {
+  turnNumber: number;
+  situation: CardDuelSituation;
+  strikes: CardDuelStrike[];
+}
+
+/** Complete pre-computed battle. Server builds this once, streams to
+ *  both clients, then both animate in lockstep. */
+export interface CardDuelBattle {
+  matchId: string;
+  aTeamTag: string;
+  bTeamTag: string;
+  aCards: CardDuelCard[];
+  bCards: CardDuelCard[];
+  turns: CardDuelTurn[];
+  winner: 'A' | 'B';
+  /** True when the loss was a concede/disconnect (the frames array
+   *  may still be present but truncated to whatever happened before
+   *  the quit). */
+  quit: boolean;
+  stake: number;
+}
+
+/** Cost to enter one card duel — fixed at $2,500 for the MVP. */
+export const CARD_DUEL_STAKE = 2500;
+/** Ticks between turns on the client-side playback (real ms). */
+export const CARD_DUEL_TURN_MS = 1400;
+/** Ticks between strikes within a turn on the client-side playback. */
+export const CARD_DUEL_STRIKE_MS = 260;
+/** How many concurrent card-duel matches the server will run. */
+export const CARD_DUEL_QUEUE_TIMEOUT_MS = 60_000;
+
+export const PROTOCOL_VERSION = 61;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

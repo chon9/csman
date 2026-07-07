@@ -6793,6 +6793,13 @@ input[type='range'] {
 .lf-watch:hover { background: linear-gradient(135deg, #de9b35 0%, #f2c443 100%); color: #1a1410; }
 .lf-watch:active { transform: scale(0.98); }
 
+/* ===== Card Duel damage-number pop ===== */
+@keyframes card-duel-hit {
+  0%   { transform: translateY(0) scale(0.6); opacity: 0; }
+  20%  { transform: translateY(-10px) scale(1.15); opacity: 1; }
+  100% { transform: translateY(-30px) scale(1); opacity: 0; }
+}
+
 /* ===== Team logos ===== */
 .team-logo {
   border-radius: 6px;

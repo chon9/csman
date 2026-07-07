@@ -69,7 +69,7 @@ import type { PlayerAttributes } from '../types';
 import type { ConnectionStatus, OnlineClient } from './wsClient';
 import { connect } from './wsClient';
 
-export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets' | 'real-estate' | 'ewallet' | 'daily-race' | 'training' | 'inbox' | 'achievements';
+export type OnlineScreen = 'connect' | 'create-team' | 'home' | 'squad' | 'market' | 'challenges' | 'history' | 'viewer' | 'tactics' | 'leaderboard' | 'tournaments' | 'replay' | 'admin' | 'cases' | 'boosters' | 'massage' | 'mini-games' | 'scout' | 'streaming' | 'ai-bets' | 'real-estate' | 'ewallet' | 'daily-race' | 'training' | 'inbox' | 'achievements' | 'card-duel';
 
 /** One-shot toast banner, used for time-skip + market success messages. */
 export interface OnlineToast {
@@ -103,6 +103,16 @@ interface OnlineState {
    *  the server is asking whether we want to watch — before yanking us
    *  out of whatever screen we were on. Cleared on Watch/Skip. */
   watchPrompt: { outcome: DuelOutcome; sourceLabel: string; opponentTag: string } | null;
+  /** Card duel state — populated by matchmaking + battle messages. */
+  cardDuel: {
+    /** Queue state — populated between queue-card-duel and card-duel-battle. */
+    queued?: { position: number; queueSize: number };
+    /** Latest battle received — client animates from this. Cleared when
+     *  the user closes the result modal. */
+    battle?: import('./protocol').CardDuelBattle;
+    /** Which side the caller is on. */
+    mySide?: 'A' | 'B';
+  } | null;
   /** PvP duel outcome waiting for the synced replay to finish playing.
    *  While this is non-null the user is parked on the replay viewer in
    *  locked mode (no scrub controls, forced 4× speed). When the replay
@@ -427,6 +437,10 @@ interface OnlineState {
   /** Decline the incoming watch-prompt — drops the cached outcome
    *  (inbox / missed-battle item still preserves the record). */
   declineWatchPrompt: () => void;
+  queueCardDuel: (deckPlayerIds: string[]) => void;
+  cancelCardDuelQueue: () => void;
+  concedeCardDuel: (matchId: string) => void;
+  dismissCardDuel: () => void;
   timeSkip: (days: number) => void;
   refreshMarket: () => void;
   listPlayer: (playerId: string, askingPrice: number) => void;
@@ -577,6 +591,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   duelResult: null,
   duelPending: false,
   watchPrompt: null,
+  cardDuel: null,
   pendingDuelResult: null,
   skipPending: false,
   marketListings: [],
@@ -977,6 +992,23 @@ export const useOnline = create<OnlineState>((set, get) => ({
           const next = get().inboxItems.map((it) => (it.readAt ? it : { ...it, readAt: now }));
           set({ inboxItems: next, inboxUnread: msg.unread });
           if (msg.flippedCount > 0) pushToast('info', `📬 Marked ${msg.flippedCount} item${msg.flippedCount === 1 ? '' : 's'} as read`);
+          break;
+        }
+        case 'card-duel-queued': {
+          set({ cardDuel: { queued: { position: msg.position, queueSize: msg.queueSize } } });
+          break;
+        }
+        case 'card-duel-queue-cancelled': {
+          set({ cardDuel: null });
+          if (msg.reason === 'timeout') {
+            pushToast('warn', 'Card duel queue timed out — no opponent found in time.');
+          }
+          break;
+        }
+        case 'card-duel-battle': {
+          const team = get().team;
+          const moneyPatch = team ? { ...team, money: msg.newMoney } : team;
+          set({ cardDuel: { battle: msg.battle, mySide: msg.mySide }, team: moneyPatch });
           break;
         }
         case 'live-replay': {
@@ -2113,6 +2145,23 @@ export const useOnline = create<OnlineState>((set, get) => ({
     // Just drop the cached outcome. The missed-battle inbox item still
     // preserves the record so the user can review results later.
     set({ watchPrompt: null });
+    get().client?.send({ kind: 'refresh-state' });
+  },
+
+  queueCardDuel(deckPlayerIds) {
+    if (get().cardDuel) return; // already queued or in battle
+    set({ cardDuel: { queued: { position: 1, queueSize: 1 } } });
+    get().client?.send({ kind: 'queue-card-duel', deckPlayerIds });
+  },
+  cancelCardDuelQueue() {
+    get().client?.send({ kind: 'cancel-card-duel-queue' });
+  },
+  concedeCardDuel(matchId) {
+    get().client?.send({ kind: 'concede-card-duel', matchId });
+    set({ cardDuel: null });
+  },
+  dismissCardDuel() {
+    set({ cardDuel: null });
     get().client?.send({ kind: 'refresh-state' });
   },
 

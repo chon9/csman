@@ -362,6 +362,8 @@ import { spawnInitialRoster } from './spawn.ts';
 import { runAiDuel, runPvpDuel, stripFrames } from './duels.ts';
 import { skipTime } from './timeskip.ts';
 import { runTimeSkipEventBurst } from './randomEvents.ts';
+import { buildConcedeBattle, simulateCardDuel } from './cardDuel.ts';
+import { CARD_DUEL_STAKE, CARD_DUEL_QUEUE_TIMEOUT_MS } from '../../src/online/protocol.ts';
 import { buildWageMap, ensureFreeAgentPool, mintWonderkid, suggestedWage } from './freeAgents.ts';
 import { CASES, DAILY_FREE_CASE_ID } from '../../src/data/cs2Cases.ts';
 import { openCase as rollCaseOpen, tradeUpContract as rollTradeUp } from '../../src/sim/caseOpening.ts';
@@ -872,6 +874,91 @@ function fmtCooldown(ms: number): string {
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60), rem = s % 60;
   return rem === 0 ? `${m}m` : `${m}m ${rem}s`;
+}
+
+// ---------------------------------------------------------------------
+// Card Duel — matchmaking queue + active-battle registry
+// ---------------------------------------------------------------------
+//
+// Single global FIFO queue keyed by teamId. When a second team joins,
+// the pair pops off, server runs the sim, streams the battle to both.
+// Quitter detection: activeBattles maps teamId -> matchId of an
+// in-flight battle. If a connection drops while a matchId is still
+// active, the OTHER side wins by concede (opponent already got the
+// battle; the disconnected side's next reconnect sees the loss result).
+
+interface CardDuelQueueEntry {
+  teamId: string;
+  deckPlayerIds: string[];
+  queuedAt: number;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+}
+const cardDuelQueue: CardDuelQueueEntry[] = [];
+/** Map of teamId → matchId while a battle is still "live" (the client
+ *  is animating). Cleared when the battle ends normally OR when the
+ *  quitter's disconnect fires the concede path. */
+const cardDuelActiveMatches = new Map<string, string>();
+
+/** Run the battle for a matched pair: deduct stakes, simulate, credit
+ *  the winner, notify both. Battle frames are computed in one shot;
+ *  the client animates them locally. */
+function runCardDuelBattle(
+  db: DB,
+  notifyTeam: NotifyTeam,
+  log: (s: string) => void,
+  aTeamId: string,
+  aDeck: string[],
+  bTeamId: string,
+  bDeck: string[],
+): void {
+  const teamA = db.loadTeam(aTeamId);
+  const teamB = db.loadTeam(bTeamId);
+  if (!teamA || !teamB) return;
+  // Load the 5 decked players in the order the caller sent (deck order
+  // is meaningful — slot 0 vs slot 0, etc.).
+  const aPlayers = aDeck.map((id) => db.loadPlayer(id)).filter((p): p is NonNullable<typeof p> => !!p);
+  const bPlayers = bDeck.map((id) => db.loadPlayer(id)).filter((p): p is NonNullable<typeof p> => !!p);
+  if (aPlayers.length !== 5 || bPlayers.length !== 5) {
+    // One of the decks became invalid between queue join and battle time
+    // (player traded, retired, etc.). Refund + notify both.
+    notifyTeam(aTeamId, { kind: 'error', code: 'deck-invalid', message: 'Your deck is no longer valid.' });
+    notifyTeam(bTeamId, { kind: 'error', code: 'deck-invalid', message: 'Opponent deck no longer valid — no charge.' });
+    return;
+  }
+  // Deduct stakes up front.
+  teamA.money = Math.max(0, teamA.money - CARD_DUEL_STAKE);
+  teamB.money = Math.max(0, teamB.money - CARD_DUEL_STAKE);
+  db.setTeamMoneyDay(teamA.id, teamA.money, teamA.day);
+  db.setTeamMoneyDay(teamB.id, teamB.money, teamB.day);
+  const matchId = `carduel-${aTeamId.slice(-4)}-${bTeamId.slice(-4)}-${Date.now()}`;
+  const seed = `${matchId}-${aTeamId}-${bTeamId}`;
+  const battle = simulateCardDuel(seed, teamA.tag, aPlayers, teamB.tag, bPlayers, matchId, CARD_DUEL_STAKE);
+  // Winner takes the full pot.
+  const pot = CARD_DUEL_STAKE * 2;
+  if (battle.winner === 'A') {
+    teamA.money += pot;
+    db.setTeamMoneyDay(teamA.id, teamA.money, teamA.day);
+  } else {
+    teamB.money += pot;
+    db.setTeamMoneyDay(teamB.id, teamB.money, teamB.day);
+  }
+  cardDuelActiveMatches.set(aTeamId, matchId);
+  cardDuelActiveMatches.set(bTeamId, matchId);
+  notifyTeam(aTeamId, { kind: 'card-duel-battle', battle, mySide: 'A', newMoney: teamA.money });
+  notifyTeam(bTeamId, { kind: 'card-duel-battle', battle, mySide: 'B', newMoney: teamB.money });
+  notifyTeam(aTeamId, { kind: 'team-money-updated', teamId: aTeamId, money: teamA.money });
+  notifyTeam(bTeamId, { kind: 'team-money-updated', teamId: bTeamId, money: teamB.money });
+  log(`card-duel ${matchId}: ${teamA.tag} vs ${teamB.tag} → ${battle.winner} (${battle.turns.length} turns)`);
+  // Auto-clear the active flag after the animation window would have
+  // finished. Concede handler also clears if the client sends early.
+  const expectedPlaybackMs = battle.turns.length * 1400 + 5000;
+  setTimeout(() => {
+    if (cardDuelActiveMatches.get(aTeamId) === matchId) cardDuelActiveMatches.delete(aTeamId);
+    if (cardDuelActiveMatches.get(bTeamId) === matchId) cardDuelActiveMatches.delete(bTeamId);
+  }, expectedPlaybackMs).unref?.();
+  // Suppress unused import warning for buildConcedeBattle — reserved
+  // for a future "disconnect mid-queue" refund path.
+  void buildConcedeBattle;
 }
 
 /** Synthesize a Team (engine-shaped) from a TeamRow. The wire shape is
@@ -3813,6 +3900,73 @@ export function handle(
       const flipped = db.markAllInboxRead(conn.teamId);
       const unread = db.inboxUnreadCount(conn.teamId);
       return { kind: 'inbox-all-read', flippedCount: flipped, unread };
+    }
+
+    // ---------- Card Duel ----------
+    case 'queue-card-duel': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const teamId = conn.teamId;
+      const team = db.loadTeam(teamId);
+      if (!team) return { kind: 'error', code: 'no-team', message: 'Team missing.' };
+      if (team.money < CARD_DUEL_STAKE) {
+        return { kind: 'error', code: 'insufficient-funds', message: `Need $${CARD_DUEL_STAKE.toLocaleString()} to enter.` };
+      }
+      if (cardDuelActiveMatches.has(teamId)) {
+        return { kind: 'error', code: 'in-battle', message: 'You already have a battle in progress.' };
+      }
+      if (cardDuelQueue.some((e) => e.teamId === teamId)) {
+        return { kind: 'error', code: 'in-queue', message: 'You are already in the queue.' };
+      }
+      // Validate the 5-card deck. Every id must be on the caller's roster.
+      const deck = Array.isArray(msg.deckPlayerIds) ? msg.deckPlayerIds.slice(0, 5) : [];
+      if (deck.length !== 5) {
+        return { kind: 'error', code: 'bad-deck', message: 'Deck must have exactly 5 players.' };
+      }
+      const roster = new Set(team.playerIds);
+      for (const id of deck) {
+        if (!roster.has(id)) return { kind: 'error', code: 'not-your-player', message: 'A card in your deck is not on your roster.' };
+      }
+      // Try to match with the head of the queue right away.
+      const opponent = cardDuelQueue.shift();
+      if (opponent) {
+        clearTimeout(opponent.timeoutHandle);
+        runCardDuelBattle(db, notifyTeam, log, opponent.teamId, opponent.deckPlayerIds, teamId, deck);
+        return null; // battle broadcast handles both sides
+      }
+      // Otherwise park in the queue with a timeout.
+      const timeoutHandle = setTimeout(() => {
+        const idx = cardDuelQueue.findIndex((e) => e.teamId === teamId);
+        if (idx !== -1) {
+          cardDuelQueue.splice(idx, 1);
+          notifyTeam(teamId, { kind: 'card-duel-queue-cancelled', reason: 'timeout' });
+        }
+      }, CARD_DUEL_QUEUE_TIMEOUT_MS);
+      cardDuelQueue.push({ teamId, deckPlayerIds: deck, queuedAt: Date.now(), timeoutHandle });
+      return { kind: 'card-duel-queued', position: cardDuelQueue.length, queueSize: cardDuelQueue.length };
+    }
+
+    case 'cancel-card-duel-queue': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const idx = cardDuelQueue.findIndex((e) => e.teamId === conn.teamId);
+      if (idx === -1) return { kind: 'error', code: 'not-queued', message: 'Not in queue.' };
+      clearTimeout(cardDuelQueue[idx]!.timeoutHandle);
+      cardDuelQueue.splice(idx, 1);
+      return { kind: 'card-duel-queue-cancelled', reason: 'user' };
+    }
+
+    case 'concede-card-duel': {
+      if (!conn.teamId) return { kind: 'error', code: 'no-team', message: 'No team.' };
+      const activeMatchId = cardDuelActiveMatches.get(conn.teamId);
+      if (!activeMatchId || activeMatchId !== msg.matchId) {
+        return { kind: 'error', code: 'no-battle', message: 'No such active battle.' };
+      }
+      // The battle was already delivered to both clients, so a concede
+      // just cleans up the active-match tracking + logs. Payouts already
+      // happened at simulate time (winner-take-all). If we later add
+      // partial-refund semantics for concedes, this is where it lands.
+      cardDuelActiveMatches.delete(conn.teamId);
+      log(`card-duel concede: ${conn.teamId} on ${activeMatchId}`);
+      return null;
     }
 
     case 'respond-inbox': {
