@@ -433,6 +433,22 @@ export function openDb(path: string) {
       date_utc TEXT NOT NULL,
       mmr_at_start INTEGER NOT NULL,
       gross_earned INTEGER NOT NULL DEFAULT 0,
+      -- Positive-only MMR accumulator. Points board reads THIS instead
+      -- of (current_mmr - mmr_at_start) so losses don't erase gains —
+      -- losing a rematch against the same team can't drop you off the
+      -- board once you've climbed onto it.
+      mmr_gained INTEGER NOT NULL DEFAULT 0,
+      -- Net sportsbook profit today (payouts - stakes, floored at 0).
+      sportsbook_profit INTEGER NOT NULL DEFAULT 0,
+      -- Net value of cases opened today (sum of skin market prices at
+      -- reveal time). Doesn't include re-sales — that's counted in
+      -- gross_earned already.
+      cases_value INTEGER NOT NULL DEFAULT 0,
+      -- Net mini-game winnings today (positive rewards only, negatives
+      -- floored). Includes daily-quests, morale game, crash, mines,
+      -- dragon-gate — anything that pays cash from the mini-games
+      -- surface.
+      mini_games_profit INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (team_id, date_utc),
       FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
     );
@@ -531,6 +547,13 @@ export function openDb(path: string) {
   // (on pre-migration DBs the CREATE TABLE IF NOT EXISTS above is a
   // no-op, so the column is only present once tryAddColumn has run).
   tryAddColumn('teams', 'wallet_id', 'TEXT', "''");
+  // Daily race — extra accumulators. Positive-only MMR; sportsbook /
+  // cases / mini-games profits — all fed by explicit hooks at bet
+  // settle, case reveal, and mini-game reward sites.
+  tryAddColumn('daily_race', 'mmr_gained', 'INTEGER', '0');
+  tryAddColumn('daily_race', 'sportsbook_profit', 'INTEGER', '0');
+  tryAddColumn('daily_race', 'cases_value', 'INTEGER', '0');
+  tryAddColumn('daily_race', 'mini_games_profit', 'INTEGER', '0');
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_wallet_id
            ON teams(wallet_id) WHERE wallet_id != '';`);
   // Bonus fans accumulated from media / press-conference responses.
@@ -885,10 +908,11 @@ export function openDb(path: string) {
   const selectDailyRaceRow = db.prepare(
     `SELECT team_id, mmr_at_start, gross_earned FROM daily_race WHERE team_id = ? AND date_utc = ?`,
   );
-  // Points board — current MMR minus start-of-day MMR, positive only.
+  // Points board — POSITIVE-only MMR accumulator (was net delta which
+  // let losses erase gains). Fed by a hook at every MMR-changing event.
   const selectPointsBoard = db.prepare(
     `SELECT t.id AS team_id, t.tag, t.name, t.logo_id, t.primary_color,
-            (t.mmr - r.mmr_at_start) AS delta
+            r.mmr_gained AS delta
      FROM daily_race r
      JOIN teams t ON t.id = r.team_id
      WHERE r.date_utc = ?
@@ -904,6 +928,48 @@ export function openDb(path: string) {
      WHERE r.date_utc = ?
      ORDER BY delta DESC, t.tag ASC
      LIMIT ?`,
+  );
+  // Sportsbook profits today — net (payouts - stakes) on settled bets.
+  const selectSportsbookBoard = db.prepare(
+    `SELECT t.id AS team_id, t.tag, t.name, t.logo_id, t.primary_color,
+            r.sportsbook_profit AS delta
+     FROM daily_race r
+     JOIN teams t ON t.id = r.team_id
+     WHERE r.date_utc = ?
+     ORDER BY delta DESC, t.tag ASC
+     LIMIT ?`,
+  );
+  // Case value today — sum of market prices at reveal time.
+  const selectCasesBoard = db.prepare(
+    `SELECT t.id AS team_id, t.tag, t.name, t.logo_id, t.primary_color,
+            r.cases_value AS delta
+     FROM daily_race r
+     JOIN teams t ON t.id = r.team_id
+     WHERE r.date_utc = ?
+     ORDER BY delta DESC, t.tag ASC
+     LIMIT ?`,
+  );
+  // Mini-game winnings today — quests, crash, mines, morale game, etc.
+  const selectMiniGamesBoard = db.prepare(
+    `SELECT t.id AS team_id, t.tag, t.name, t.logo_id, t.primary_color,
+            r.mini_games_profit AS delta
+     FROM daily_race r
+     JOIN teams t ON t.id = r.team_id
+     WHERE r.date_utc = ?
+     ORDER BY delta DESC, t.tag ASC
+     LIMIT ?`,
+  );
+  const incrementDailyRaceMmr = db.prepare(
+    `UPDATE daily_race SET mmr_gained = mmr_gained + ? WHERE team_id = ? AND date_utc = ?`,
+  );
+  const incrementDailyRaceSportsbook = db.prepare(
+    `UPDATE daily_race SET sportsbook_profit = sportsbook_profit + ? WHERE team_id = ? AND date_utc = ?`,
+  );
+  const incrementDailyRaceCases = db.prepare(
+    `UPDATE daily_race SET cases_value = cases_value + ? WHERE team_id = ? AND date_utc = ?`,
+  );
+  const incrementDailyRaceMiniGames = db.prepare(
+    `UPDATE daily_race SET mini_games_profit = mini_games_profit + ? WHERE team_id = ? AND date_utc = ?`,
   );
   const countPayoutsForDate = db.prepare(
     `SELECT COUNT(*) AS n FROM daily_race_payouts WHERE date_utc = ?`,
@@ -1979,18 +2045,58 @@ export function openDb(path: string) {
     tx();
   }
 
-  /** Load current leaderboards for a given UTC date. Both boards are
-   *  capped at `limit` entries (top-N) and only include positive
+  /** Load all four current leaderboards for a given UTC date. Each is
+   *  capped at `limit` entries (top-N) and only includes positive
    *  deltas — a team that hasn't moved doesn't show up. */
   function loadDailyRaceBoards(dateUtc: string, limit: number): {
-    pointsBoard: DailyRaceEntry[]; moneyBoard: DailyRaceEntry[];
+    pointsBoard: DailyRaceEntry[];
+    moneyBoard: DailyRaceEntry[];
+    sportsbookBoard: DailyRaceEntry[];
+    casesBoard: DailyRaceEntry[];
+    miniGamesBoard: DailyRaceEntry[];
   } {
     const rawPoints = selectPointsBoard.all(dateUtc, limit) as DailyRaceEntry[];
     const rawMoney = selectMoneyBoard.all(dateUtc, limit) as DailyRaceEntry[];
+    const rawSb = selectSportsbookBoard.all(dateUtc, limit) as DailyRaceEntry[];
+    const rawCa = selectCasesBoard.all(dateUtc, limit) as DailyRaceEntry[];
+    const rawMg = selectMiniGamesBoard.all(dateUtc, limit) as DailyRaceEntry[];
     return {
       pointsBoard: rawPoints.filter((r) => r.delta > 0),
       moneyBoard: rawMoney.filter((r) => r.delta > 0),
+      sportsbookBoard: rawSb.filter((r) => r.delta > 0),
+      casesBoard: rawCa.filter((r) => r.delta > 0),
+      miniGamesBoard: rawMg.filter((r) => r.delta > 0),
     };
+  }
+
+  /** Bump the positive-MMR accumulator for a team on today's snapshot.
+   *  Callers pass ONLY positive deltas (loss events should not touch
+   *  this counter). Missing daily_race row is a no-op (defensive). */
+  function bumpDailyRaceMmr(teamId: string, dateUtc: string, delta: number): void {
+    if (delta <= 0) return;
+    ensureDailyRaceSnapshot(teamId, dateUtc);
+    incrementDailyRaceMmr.run(delta, teamId, dateUtc);
+  }
+
+  /** Bump the sportsbook profit accumulator (net = payout - stake).
+   *  Callers may pass negatives (losses shrink profit) — floored at
+   *  zero by the board query itself (positive-only filter). */
+  function bumpDailyRaceSportsbook(teamId: string, dateUtc: string, delta: number): void {
+    if (delta === 0) return;
+    ensureDailyRaceSnapshot(teamId, dateUtc);
+    incrementDailyRaceSportsbook.run(delta, teamId, dateUtc);
+  }
+
+  function bumpDailyRaceCases(teamId: string, dateUtc: string, delta: number): void {
+    if (delta <= 0) return;
+    ensureDailyRaceSnapshot(teamId, dateUtc);
+    incrementDailyRaceCases.run(delta, teamId, dateUtc);
+  }
+
+  function bumpDailyRaceMiniGames(teamId: string, dateUtc: string, delta: number): void {
+    if (delta === 0) return;
+    ensureDailyRaceSnapshot(teamId, dateUtc);
+    incrementDailyRaceMiniGames.run(delta, teamId, dateUtc);
   }
 
   /** Check whether the given UTC date has already been rolled over
@@ -2005,7 +2111,8 @@ export function openDb(path: string) {
    *  handlers. Fails silently on duplicate (PK collision) so a
    *  crash-mid-rollover replay is safe. */
   function recordDailyRacePayout(args: {
-    dateUtc: string; raceKind: 'points' | 'money';
+    dateUtc: string;
+    raceKind: 'points' | 'money' | 'sportsbook' | 'cases' | 'mini_games';
     rank: number; teamId: string; amount: number; valueDelta: number;
   }): void {
     try {
@@ -3496,6 +3603,10 @@ export function openDb(path: string) {
     snapshotAllTeamsForDate,
     loadDailyRaceBoards,
     dailyRaceRolled,
+    bumpDailyRaceMmr,
+    bumpDailyRaceSportsbook,
+    bumpDailyRaceCases,
+    bumpDailyRaceMiniGames,
     recordDailyRacePayout,
     loadRecentRacePayoutsForTeam,
     startTrainingSession,

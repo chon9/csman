@@ -160,6 +160,7 @@ startCrashBustTicker(50, (session) => {
   const team = db.loadTeam(session.teamId);
   if (!team) return;
   console.log(`[csm:crash] autobust ${team.tag} at ${session.crashAt}x (bet $${session.bet} lost)`);
+  db.bumpDailyRaceMiniGames(session.teamId, new Date().toISOString().slice(0, 10), -session.bet);
   notifyTeam(session.teamId, {
     kind: 'crash-result',
     result: {

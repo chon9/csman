@@ -245,6 +245,12 @@ function applyPvpMmr(
   db.applyMmrChange(loser.id, loserNewMmr);
   winner.mmr = winnerNewMmr;
   loser.mmr = loserNewMmr;
+  // Track POSITIVE MMR gain into the daily-race Points accumulator.
+  // Losses intentionally don't decrement — the whole point of the
+  // rework: a rematch grinder can't fall off the board by losing.
+  if (winnerDelta > 0) {
+    db.bumpDailyRaceMmr(winner.id, new Date().toISOString().slice(0, 10), winnerDelta);
+  }
   return {
     winnerDelta, loserDelta,
     winnerNewMmr, loserNewMmr,
@@ -953,6 +959,9 @@ function buildDailyRaceState(db: DB, teamId: string): ServerMessage {
   const full = db.loadDailyRaceBoards(today, 10_000);
   const clampedPoints = full.pointsBoard.slice(0, DAILY_RACE_BOARD_LIMIT);
   const clampedMoney = full.moneyBoard.slice(0, DAILY_RACE_BOARD_LIMIT);
+  const clampedSb = full.sportsbookBoard.slice(0, DAILY_RACE_BOARD_LIMIT);
+  const clampedCases = full.casesBoard.slice(0, DAILY_RACE_BOARD_LIMIT);
+  const clampedMg = full.miniGamesBoard.slice(0, DAILY_RACE_BOARD_LIMIT);
   const mapEntry = (r: typeof full.pointsBoard[number]): DailyRaceEntryWire => ({
     teamId: r.team_id, tag: r.tag, name: r.name,
     logoId: r.logo_id ?? null, primaryColor: r.primary_color ?? null, delta: r.delta,
@@ -963,7 +972,7 @@ function buildDailyRaceState(db: DB, teamId: string): ServerMessage {
   };
   const payouts: DailyRacePayoutWire[] = db.loadRecentRacePayoutsForTeam(teamId, 10).map((r) => ({
     dateUtc: r.date_utc,
-    raceKind: r.race_kind as 'points' | 'money',
+    raceKind: r.race_kind as DailyRacePayoutWire['raceKind'],
     rank: r.rank,
     amount: r.amount,
     valueDelta: r.value_delta,
@@ -980,9 +989,15 @@ function buildDailyRaceState(db: DB, teamId: string): ServerMessage {
     rolloverUtcMs: nextMidnight,
     pointsBoard: clampedPoints.map(mapEntry),
     moneyBoard: clampedMoney.map(mapEntry),
+    sportsbookBoard: clampedSb.map(mapEntry),
+    casesBoard: clampedCases.map(mapEntry),
+    miniGamesBoard: clampedMg.map(mapEntry),
     myRank: {
       points: findRank(full.pointsBoard),
       money: findRank(full.moneyBoard),
+      sportsbook: findRank(full.sportsbookBoard),
+      cases: findRank(full.casesBoard),
+      mini_games: findRank(full.miniGamesBoard),
     },
     recentPayouts: payouts,
   };
@@ -2543,6 +2558,7 @@ export function handle(
         tryUnlock(db, notifyTeam, team.id, 'dragon_in_between', ACHIEVEMENT_LABELS.dragon_in_between);
       }
       bumpQuestProgress(db, team.id, 'dragon_gate_plays');
+      db.bumpDailyRaceMiniGames(team.id, new Date().toISOString().slice(0, 10), delta);
       log(`dragon-gate: ${team.tag} bet $${bet} on [${gates[0]},${gates[1]}], drew ${thirdCard} → ${outcome} (${delta >= 0 ? '+' : ''}$${delta})`);
       return {
         kind: 'dragon-gate-result',
@@ -2633,6 +2649,7 @@ export function handle(
       if (outcome === 'cashout' && lockedMultiplier >= 10) {
         tryUnlock(db, notifyTeam, team.id, 'crash_cashout_10x', ACHIEVEMENT_LABELS.crash_cashout_10x, Math.floor(lockedMultiplier));
       }
+      db.bumpDailyRaceMiniGames(team.id, new Date().toISOString().slice(0, 10), delta);
       log(`crash-cashout: ${team.tag} ${outcome} at ${lockedMultiplier}x (crashAt=${session.crashAt}x) delta=${delta >= 0 ? '+' : ''}${delta}`);
       return {
         kind: 'crash-result',
@@ -2708,6 +2725,7 @@ export function handle(
         const mineIndices = [...session.mines].sort((a, b) => a - b);
         const safePicks = session.revealed.size;
         closeMinesSession(session.sessionId);
+        db.bumpDailyRaceMiniGames(team.id, new Date().toISOString().slice(0, 10), -session.bet);
         log(`mines-bust: ${team.tag} hit mine at tile ${tile} after ${safePicks} safe picks (bet $${session.bet} lost)`);
         return {
           kind: 'mines-result',
@@ -2741,6 +2759,7 @@ export function handle(
         closeMinesSession(session.sessionId);
         bumpQuestProgress(db, team.id, 'mines_clears');
         tryUnlock(db, notifyTeam, team.id, 'mines_perfect', ACHIEVEMENT_LABELS.mines_perfect, session.mineCount);
+        db.bumpDailyRaceMiniGames(team.id, new Date().toISOString().slice(0, 10), delta);
         log(`mines-clear: ${team.tag} cleared every safe tile @ ${mult}x → +$${delta}`);
         return {
           kind: 'mines-result',
@@ -2784,6 +2803,7 @@ export function handle(
       db.setTeamMoneyDay(team.id, team.money, team.day);
       const mineIndices = [...session.mines].sort((a, b) => a - b);
       closeMinesSession(session.sessionId);
+      db.bumpDailyRaceMiniGames(team.id, new Date().toISOString().slice(0, 10), delta);
       log(`mines-cashout: ${team.tag} cashed @ ${mult}x after ${safePicks} safe picks → +$${delta}`);
       return {
         kind: 'mines-result',
@@ -3095,6 +3115,11 @@ export function handle(
       // Stamp first-owner history entry — provenance trail starts here.
       result.instance.history = [{ teamId: team.id, teamTag: team.tag, at: Date.now() }];
       db.addSkin(team.id, result.instance.id, JSON.stringify(result.instance));
+      // Cases daily-race — market value of the drop counts toward the
+      // board. High-tier drops climb the leaderboard faster.
+      if (result.instance.marketValue > 0) {
+        db.bumpDailyRaceCases(team.id, today, result.instance.marketValue);
+      }
       // Quest progress — case open count.
       bumpQuestProgress(db, team.id, 'cases_opened');
       // Achievement gauntlet for cases — lifetime count + rarity/float drops.

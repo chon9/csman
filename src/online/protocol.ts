@@ -2025,8 +2025,25 @@ export type ServerMessage =
   | { kind: 'sponsor-claimed'; sponsorId: string; amount: number; newMoney: number }
   | { kind: 'ewallet-sent'; assetKind: 'cash' | 'skin' | 'player' | 'lot'; toTeamTag: string; description: string; newMoney: number }
   | { kind: 'ewallet-received'; assetKind: 'cash' | 'skin' | 'player' | 'lot'; fromTeamTag: string; description: string; newMoney: number }
-  | { kind: 'daily-race-state'; dateUtc: string; rolloverUtcMs: number; pointsBoard: DailyRaceEntryWire[]; moneyBoard: DailyRaceEntryWire[]; myRank: { points: number | null; money: number | null }; recentPayouts: DailyRacePayoutWire[] }
-  | { kind: 'daily-race-payout'; raceKind: 'points' | 'money'; rank: number; amount: number; valueDelta: number; dateUtc: string; newMoney: number }
+  | {
+      kind: 'daily-race-state';
+      dateUtc: string;
+      rolloverUtcMs: number;
+      pointsBoard: DailyRaceEntryWire[];
+      moneyBoard: DailyRaceEntryWire[];
+      sportsbookBoard: DailyRaceEntryWire[];
+      casesBoard: DailyRaceEntryWire[];
+      miniGamesBoard: DailyRaceEntryWire[];
+      myRank: {
+        points: number | null;
+        money: number | null;
+        sportsbook: number | null;
+        cases: number | null;
+        mini_games: number | null;
+      };
+      recentPayouts: DailyRacePayoutWire[];
+    }
+  | { kind: 'daily-race-payout'; raceKind: DailyRaceKind; rank: number; amount: number; valueDelta: number; dateUtc: string; newMoney: number }
   | { kind: 'daily-race-rolled'; dateUtc: string }
   | { kind: 'inbox'; items: InboxItem[]; unread: number }
   /** Push a single new inbox item — either fresh (unread) or resolved
@@ -2101,9 +2118,13 @@ export interface DailyRaceEntryWire {
   delta: number;
 }
 
+/** Every race kind carried by the wire. Points + money pay the flagship
+ *  prize; the three activity boards pay smaller amounts. */
+export type DailyRaceKind = 'points' | 'money' | 'sportsbook' | 'cases' | 'mini_games';
+
 export interface DailyRacePayoutWire {
   dateUtc: string;
-  raceKind: 'points' | 'money';
+  raceKind: DailyRaceKind;
   rank: number;
   amount: number;
   valueDelta: number;
@@ -2263,7 +2284,7 @@ export interface InboxItem {
   createdAt: number;
 }
 
-export const PROTOCOL_VERSION = 59;
+export const PROTOCOL_VERSION = 60;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past

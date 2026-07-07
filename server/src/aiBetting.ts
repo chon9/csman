@@ -289,6 +289,16 @@ function resolveCard(
         notifyTeam(bet.bettor_team_id, { kind: 'team-money-updated', teamId: bet.bettor_team_id, money: team.money });
       }
     }
+    // Sportsbook daily-race counter: net profit = payout - stake. Loss
+    // adds a negative (-stake) so grinding losing bets can't pad the
+    // leaderboard. Positive-only filter at query time hides teams that
+    // are net-negative for the day.
+    const netProfit = payout - bet.stake;
+    if (netProfit !== 0) {
+      db.bumpDailyRaceSportsbook(
+        bet.bettor_team_id, new Date().toISOString().slice(0, 10), netProfit,
+      );
+    }
     notifyTeam(bet.bettor_team_id, {
       kind: 'ai-bet-settled',
       cardId: row.id,

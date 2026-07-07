@@ -335,7 +335,16 @@ interface OnlineState {
     rolloverUtcMs: number;
     pointsBoard: DailyRaceEntryWire[];
     moneyBoard: DailyRaceEntryWire[];
-    myRank: { points: number | null; money: number | null };
+    sportsbookBoard: DailyRaceEntryWire[];
+    casesBoard: DailyRaceEntryWire[];
+    miniGamesBoard: DailyRaceEntryWire[];
+    myRank: {
+      points: number | null;
+      money: number | null;
+      sportsbook: number | null;
+      cases: number | null;
+      mini_games: number | null;
+    };
     recentPayouts: DailyRacePayoutWire[];
   } | null;
 
@@ -1693,6 +1702,9 @@ export const useOnline = create<OnlineState>((set, get) => ({
               rolloverUtcMs: msg.rolloverUtcMs,
               pointsBoard: msg.pointsBoard,
               moneyBoard: msg.moneyBoard,
+              sportsbookBoard: msg.sportsbookBoard,
+              casesBoard: msg.casesBoard,
+              miniGamesBoard: msg.miniGamesBoard,
               myRank: msg.myRank,
               recentPayouts: msg.recentPayouts,
             },
@@ -1700,8 +1712,15 @@ export const useOnline = create<OnlineState>((set, get) => ({
           break;
         }
         case 'daily-race-payout': {
-          const kindLabel = msg.raceKind === 'points' ? 'Points Race' : 'Money Race';
-          const rankLabel = msg.rank === 1 ? '🥇 1st' : msg.rank === 2 ? '🥈 2nd' : '🥉 3rd';
+          const KIND_LABEL: Record<typeof msg.raceKind, string> = {
+            points: 'Points Race',
+            money: 'Money Race',
+            sportsbook: 'Sportsbook Race',
+            cases: 'Cases Race',
+            mini_games: 'Mini Games Race',
+          };
+          const kindLabel = KIND_LABEL[msg.raceKind] ?? String(msg.raceKind);
+          const rankLabel = msg.rank === 1 ? '1st' : msg.rank === 2 ? '2nd' : '3rd';
           pushToast('success', `${rankLabel} in ${kindLabel} — $${msg.amount.toLocaleString()} awarded.`);
           break;
         }

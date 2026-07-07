@@ -18,10 +18,23 @@ import type { DB } from './db.ts';
 import { utcDateKey } from './db.ts';
 import type { ServerMessage } from '../../src/online/protocol.ts';
 
-/** Payout schedule per race, in dollars. Applies to both Points and
- *  Money races. Ties at the boundary share the higher slot's payout
- *  (both get 1st-place amount, next distinct rank is 3rd, etc.). */
-const RACE_PAYOUTS = [500_000, 250_000, 100_000] as const;
+/** Payout schedule per race, in dollars. Points + Money are the flagship
+ *  boards and pay the biggest prizes. Sportsbook / Cases / Mini Games are
+ *  activity-specific and pay smaller amounts so the daily cash injection
+ *  from the ticker stays reasonable across five simultaneous boards. */
+const FLAGSHIP_PAYOUTS = [500_000, 250_000, 100_000] as const;
+const ACTIVITY_PAYOUTS = [200_000, 100_000, 40_000] as const;
+
+/** Ordered list of every board the rollover pays out on. */
+const BOARD_CONFIGS = [
+  { kind: 'points',    payouts: FLAGSHIP_PAYOUTS },
+  { kind: 'money',     payouts: FLAGSHIP_PAYOUTS },
+  { kind: 'sportsbook', payouts: ACTIVITY_PAYOUTS },
+  { kind: 'cases',     payouts: ACTIVITY_PAYOUTS },
+  { kind: 'mini_games', payouts: ACTIVITY_PAYOUTS },
+] as const;
+
+type RaceKind = typeof BOARD_CONFIGS[number]['kind'];
 
 /** How many top rows to show on the client leaderboard. */
 export const DAILY_RACE_BOARD_LIMIT = 20;
@@ -77,12 +90,20 @@ export function startDailyRaceTicker(db: DB, deps: DailyRaceTickerDeps): void {
 
 /** Freeze a date's boards, pay the top 3 on each, notify winners. */
 function rolloverOneDay(db: DB, dateUtc: string, deps: DailyRaceTickerDeps): void {
-  const { pointsBoard, moneyBoard } = db.loadDailyRaceBoards(dateUtc, RACE_PAYOUTS.length);
+  const all = db.loadDailyRaceBoards(dateUtc, Math.max(FLAGSHIP_PAYOUTS.length, ACTIVITY_PAYOUTS.length));
+  const boardByKind: Record<RaceKind, typeof all.pointsBoard> = {
+    points: all.pointsBoard,
+    money: all.moneyBoard,
+    sportsbook: all.sportsbookBoard,
+    cases: all.casesBoard,
+    mini_games: all.miniGamesBoard,
+  };
   const paid: string[] = [];
-  for (const [kind, board] of [['points', pointsBoard], ['money', moneyBoard]] as const) {
-    for (let i = 0; i < board.length && i < RACE_PAYOUTS.length; i++) {
+  for (const cfg of BOARD_CONFIGS) {
+    const board = boardByKind[cfg.kind];
+    for (let i = 0; i < board.length && i < cfg.payouts.length; i++) {
       const entry = board[i];
-      const amount = RACE_PAYOUTS[i];
+      const amount = cfg.payouts[i];
       const team = db.loadTeam(entry.team_id);
       if (!team) continue;
       // Additive to team.money — routed through setTeamMoneyDay so the
@@ -90,12 +111,12 @@ function rolloverOneDay(db: DB, dateUtc: string, deps: DailyRaceTickerDeps): voi
       team.money += amount;
       db.setTeamMoneyDay(team.id, team.money, team.day);
       db.recordDailyRacePayout({
-        dateUtc, raceKind: kind, rank: i + 1,
+        dateUtc, raceKind: cfg.kind, rank: i + 1,
         teamId: team.id, amount, valueDelta: entry.delta,
       });
       deps.notifyTeam(team.id, {
         kind: 'daily-race-payout',
-        raceKind: kind,
+        raceKind: cfg.kind,
         rank: i + 1,
         amount,
         valueDelta: entry.delta,
@@ -103,7 +124,7 @@ function rolloverOneDay(db: DB, dateUtc: string, deps: DailyRaceTickerDeps): voi
         newMoney: team.money,
       });
       deps.notifyTeam(team.id, { kind: 'team-money-updated', teamId: team.id, money: team.money });
-      paid.push(`${team.tag}(#${i + 1} ${kind}, $${amount.toLocaleString()})`);
+      paid.push(`${team.tag}(#${i + 1} ${cfg.kind}, $${amount.toLocaleString()})`);
     }
   }
   if (paid.length > 0) {

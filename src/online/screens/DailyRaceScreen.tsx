@@ -7,9 +7,19 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
-import type { DailyRaceEntryWire } from '../protocol';
+import type { DailyRaceEntryWire, DailyRaceKind } from '../protocol';
 import ToastStack from './ToastStack';
-import Icon from '../../ui/Icon';
+import Icon, { type IconName } from '../../ui/Icon';
+
+/** Per-race icon + colour + human label. Used by the recent-payouts strip
+ *  so a "Sportsbook #2" row reads with the right hue and glyph. */
+const RACE_META: Record<DailyRaceKind, { icon: IconName; label: string; color: string }> = {
+  points:     { icon: 'trending-up', label: 'Points',     color: '#4dd4b0' },
+  money:      { icon: 'cash',        label: 'Money',      color: '#d9b344' },
+  sportsbook: { icon: 'bet',         label: 'Sportsbook', color: '#ff8a00' },
+  cases:      { icon: 'cases',       label: 'Cases',      color: '#b47ef7' },
+  mini_games: { icon: 'mini-games',  label: 'Mini Games', color: '#6ba0f5' },
+};
 
 export default function DailyRaceScreen(): React.ReactElement | null {
   const team = useOnline((s) => s.team);
@@ -47,14 +57,13 @@ export default function DailyRaceScreen(): React.ReactElement | null {
 
       {/* Payout schedule strip */}
       <div className="panel panel-accent" style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'center' }}>
-        <span className="section-title" style={{ margin: 0, flex: 'none' }}>Payout schedule</span>
-        <span className="pill pill-accent">1st · $500,000</span>
-        <span className="pill">2nd · $250,000</span>
-        <span className="pill">3rd · $100,000</span>
+        <span className="section-title" style={{ margin: 0, flex: 'none' }}>Payouts</span>
+        <span className="pill pill-accent">Points / Money · 500K · 250K · 100K</span>
+        <span className="pill">Sportsbook / Cases / Mini Games · 200K · 100K · 40K</span>
         <span className="muted small" style={{ marginLeft: 'auto' }}>Awarded automatically at 00:00 UTC · positive deltas only</span>
       </div>
 
-      {/* The two boards */}
+      {/* The five boards */}
       {!daily ? (
         <div className="panel" style={{ padding: 24, textAlign: 'center' }}>Loading race boards…</div>
       ) : (
@@ -62,7 +71,7 @@ export default function DailyRaceScreen(): React.ReactElement | null {
           <Board
             title="Points Race"
             icon="trending-up"
-            subtitle="MMR gained today"
+            subtitle="MMR gained today · losses excluded"
             rows={daily.pointsBoard}
             myTeamId={team.id}
             myRank={daily.myRank.points}
@@ -79,6 +88,36 @@ export default function DailyRaceScreen(): React.ReactElement | null {
             unit="$"
             accent="#d9b344"
           />
+          <Board
+            title="Sportsbook Race"
+            icon="bet"
+            subtitle="Net bet profit today"
+            rows={daily.sportsbookBoard}
+            myTeamId={team.id}
+            myRank={daily.myRank.sportsbook}
+            unit="$"
+            accent="#ff8a00"
+          />
+          <Board
+            title="Cases Race"
+            icon="cases"
+            subtitle="Value of skins pulled today"
+            rows={daily.casesBoard}
+            myTeamId={team.id}
+            myRank={daily.myRank.cases}
+            unit="$"
+            accent="#b47ef7"
+          />
+          <Board
+            title="Mini Games Race"
+            icon="mini-games"
+            subtitle="Net mini-game winnings today"
+            rows={daily.miniGamesBoard}
+            myTeamId={team.id}
+            myRank={daily.myRank.mini_games}
+            unit="$"
+            accent="#6ba0f5"
+          />
         </div>
       )}
 
@@ -87,18 +126,20 @@ export default function DailyRaceScreen(): React.ReactElement | null {
         <div className="panel">
           <div className="panel-title">Your recent race wins</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--text-md)' }}>
-            {daily.recentPayouts.map((p) => (
+            {daily.recentPayouts.map((p) => {
+              const meta = RACE_META[p.raceKind] ?? RACE_META.points;
+              return (
               <div key={`${p.dateUtc}-${p.raceKind}-${p.rank}`} style={{
                 display: 'flex', justifyContent: 'space-between', gap: 'var(--space-2)',
                 padding: '8px 10px', borderRadius: 'var(--radius-sm)',
                 background: 'var(--bg-elev)',
-                borderLeft: `2px solid ${p.raceKind === 'points' ? '#78d078' : 'var(--accent)'}`,
+                borderLeft: `2px solid ${meta.color}`,
               }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                   <span className="pill" style={{ minWidth: 90 }}>{p.dateUtc}</span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <Icon name={p.raceKind === 'points' ? 'trending-up' : 'cash'} size={12} />
-                    {p.raceKind === 'points' ? 'Points' : 'Money'}
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: meta.color }}>
+                    <Icon name={meta.icon} size={12} />
+                    {meta.label}
                     <span className="muted">#{p.rank}</span>
                   </span>
                   <span className="muted small">
@@ -107,7 +148,8 @@ export default function DailyRaceScreen(): React.ReactElement | null {
                 </span>
                 <strong style={{ color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>+${p.amount.toLocaleString()}</strong>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
