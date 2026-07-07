@@ -1,48 +1,49 @@
-/* ============ CS2 Manager — FM26-inspired dark theme ============ */
+/* ============ CS2 Manager — Midnight Navy + Teal (FM24-adjacent) ============ */
 /*
  * Design tokens. The `:root` block is the single source of truth for
  * colors / spacing / typography / elevation — every component reads
  * from here. When tuning the visual language, edit these variables
  * rather than the component classes below.
  *
- * Palette approach: near-black canvas, one lifted-panel shade, one
- * hover shade, one strong border, one soft border. Text is a warm
- * off-white so it doesn't clash with the gold accent. Accent is a
- * muted amber/gold — used sparingly, never as a base color.
+ * Palette approach: deep navy canvas with a subtle blue undertone,
+ * three lifted-panel shades for depth, sharp teal accent used sparingly
+ * for interactive state. Text is cool off-white for a clinical,
+ * simulation-tool feel. No decorative chrome; hierarchy comes from
+ * typography weight, spacing, and micro-borders rather than emoji.
  */
 
 :root {
   /* ----- Surfaces (canvas → elevated) ----- */
-  --bg:        #0e1116;
-  --bg-elev:   #131820;
-  --panel:     #161a22;
-  --panel-2:   #1e2330;
-  --panel-hi:  #232937;
-  --overlay:   rgba(0, 0, 0, 0.55);
+  --bg:        #0a0f1a;
+  --bg-elev:   #0f1523;
+  --panel:     #12192a;
+  --panel-2:   #1a2338;
+  --panel-hi:  #223050;
+  --overlay:   rgba(4, 8, 16, 0.72);
 
   /* ----- Borders (soft → strong) ----- */
-  --border:        #242832;
-  --border-soft:   rgba(255, 255, 255, 0.06);
-  --border-strong: #2d3340;
-  --border-accent: rgba(217, 179, 68, 0.35);
+  --border:        #2d3652;
+  --border-soft:   rgba(140, 160, 200, 0.08);
+  --border-strong: #3a4670;
+  --border-accent: rgba(77, 212, 176, 0.42);
 
   /* ----- Text ----- */
-  --text:      #e6e8ee;
-  --text-dim:  #b4bac8;
-  --muted:     #8a93a3;
-  --text-faint:#5f6673;
+  --text:      #e6ebf5;
+  --text-dim:  #a4afca;
+  --muted:     #8390ad;
+  --text-faint:#5c6a88;
 
-  /* ----- Accent + semantic ----- */
-  --accent:      #d9b344;
-  --accent-dark: #b8952e;
-  --accent-hi:   #ecc76a;
-  --accent-soft: rgba(217, 179, 68, 0.14);
-  --win:         #4caf7d;
-  --win-soft:    rgba(76, 175, 125, 0.12);
-  --loss:        #e25555;
-  --loss-soft:   rgba(226, 85, 85, 0.12);
-  --info:        #5aa4e6;
-  --info-soft:   rgba(90, 164, 230, 0.12);
+  /* ----- Accent + semantic (teal-driven) ----- */
+  --accent:      #4dd4b0;
+  --accent-dark: #2ea888;
+  --accent-hi:   #7feacb;
+  --accent-soft: rgba(77, 212, 176, 0.14);
+  --win:         #4dd4b0;
+  --win-soft:    rgba(77, 212, 176, 0.12);
+  --loss:        #f04b6a;
+  --loss-soft:   rgba(240, 75, 106, 0.12);
+  --info:        #6ba0f5;
+  --info-soft:   rgba(107, 160, 245, 0.12);
 
   /* ----- Rarity / brand-adjacent (keep in sync with cs2Cases) ----- */
   --rarity-milspec:    #4b69ff;
@@ -69,8 +70,9 @@
   --radius-xl: 14px;
   --radius-pill: 999px;
 
-  /* ----- Typography scale ----- */
+  /* ----- Typography scale (tight tracking, FM24-magazine feel) ----- */
   --font-body: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-display: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
   --text-xs:  10px;
   --text-sm:  11px;
@@ -79,11 +81,14 @@
   --text-xl:  16px;
   --text-2xl: 20px;
   --text-3xl: 26px;
+  /* Micro-caps used for section labels ("CASH · MMR · ROSTER"). */
+  --tracking-caps: 0.14em;
+  --tracking-tight: -0.01em;
 
-  /* ----- Elevation (layered shadows for FM26 depth) ----- */
-  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.45);
-  --elev-2: 0 2px 8px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.5);
-  --elev-3: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+  /* ----- Elevation — deeper canvas, softer shadows ----- */
+  --elev-1: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 1px 2px rgba(0, 0, 0, 0.5);
+  --elev-2: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 4px 12px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --elev-3: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 20px 48px rgba(0, 0, 0, 0.62), 0 4px 12px rgba(0, 0, 0, 0.35);
   --focus-ring: 0 0 0 2px var(--accent-soft), 0 0 0 3px var(--accent);
 
   /* ----- Motion ----- */
@@ -379,7 +384,7 @@ button {
 .btn-accent {
   background: var(--accent);
   border-color: var(--accent);
-  color: #14171c;
+  color: #06121c;
   font-weight: 700;
   box-shadow: var(--elev-1);
 }
@@ -388,7 +393,7 @@ button {
 .btn-accent:hover:not(:disabled) {
   background: var(--accent-hi);
   border-color: var(--accent-hi);
-  color: #14171c;
+  color: #06121c;
 }
 
 .btn-danger {
@@ -397,19 +402,20 @@ button {
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: rgba(226, 85, 85, 0.12);
+  background: var(--loss-soft);
   border-color: var(--loss);
+  color: var(--loss);
 }
 
 .btn-continue {
   background: var(--accent);
   border: 1px solid var(--accent);
-  color: #14171c;
+  color: #06121c;
   font-size: 14px;
   font-weight: 800;
   padding: 10px 28px;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
+  letter-spacing: var(--tracking-caps);
 }
 
 .btn-continue:hover {
@@ -546,10 +552,13 @@ input[type='range'] {
 .panel-title {
   font-size: var(--text-sm);
   text-transform: uppercase;
-  letter-spacing: 0.8px;
+  letter-spacing: var(--tracking-caps);
   color: var(--text-dim);
   font-weight: 700;
   margin-bottom: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* Left-accent stripe — used sparingly to highlight one primary panel
@@ -570,12 +579,12 @@ input[type='range'] {
 /* Hero header panel — replaces the one-off gradient hero-panel pattern.
  * Consistent shape, single subtle radial-tinted background. */
 .hero-panel {
+  position: relative;
   background:
-    radial-gradient(120% 200% at 0% 0%, var(--accent-soft), transparent 45%),
-    linear-gradient(180deg, var(--panel-hi), var(--panel));
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  padding: var(--space-5);
+    linear-gradient(180deg, var(--panel-hi) 0%, var(--panel) 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-5) var(--space-6);
   margin-bottom: var(--space-4);
   box-shadow: var(--elev-2);
   display: flex;
@@ -583,18 +592,31 @@ input[type='range'] {
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3);
+  overflow: hidden;
+}
+/* Signature accent strip — subtle vertical band, FM24-style. */
+.hero-panel::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--accent), transparent 80%);
+  opacity: 0.9;
 }
 .hero-panel h1,
 .hero-panel h2 {
   margin: 0 0 var(--space-1);
   font-size: var(--text-2xl);
   font-weight: 700;
-  letter-spacing: 0.6px;
+  letter-spacing: var(--tracking-tight);
   color: var(--text);
 }
 .hero-panel .hero-sub {
   color: var(--muted);
   font-size: var(--text-sm);
+  letter-spacing: 0.02em;
 }
 
 /* Stat card — big-number tile. Used on Home/Race/E-Wallet dashboards. */
@@ -607,15 +629,17 @@ input[type='range'] {
   flex-direction: column;
   gap: var(--space-1);
   box-shadow: var(--elev-1);
-  transition: border-color var(--motion-fast), transform var(--motion-fast);
+  transition: border-color var(--motion-fast), background var(--motion-fast);
+  position: relative;
 }
 .stat-card:hover {
   border-color: var(--border-strong);
+  background: var(--panel-2);
 }
 .stat-label {
   font-size: var(--text-xs);
   text-transform: uppercase;
-  letter-spacing: 1.2px;
+  letter-spacing: var(--tracking-caps);
   color: var(--muted);
   font-weight: 600;
 }
@@ -624,7 +648,7 @@ input[type='range'] {
   font-weight: 700;
   color: var(--text);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.2px;
+  letter-spacing: var(--tracking-tight);
 }
 .stat-caption {
   font-size: var(--text-sm);
@@ -6886,8 +6910,8 @@ input[type='range'] {
 .osb {
   display: flex;
   flex-direction: column;
-  background: linear-gradient(180deg, #14181f 0%, #10141a 100%);
-  border-right: 1px solid rgba(255,255,255,0.05);
+  background: linear-gradient(180deg, var(--panel) 0%, var(--bg-elev) 100%);
+  border-right: 1px solid var(--border);
   padding: 16px 12px;
   gap: 14px;
   position: sticky;
@@ -6900,15 +6924,15 @@ input[type='range'] {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
 }
 .osb-brand-mark {
   width: 38px;
   height: 38px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #de9b35, #b87a1d);
-  color: #0a0d12;
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  color: #06121c;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6916,139 +6940,157 @@ input[type='range'] {
   font-size: 14px;
   letter-spacing: 0.5px;
   flex-shrink: 0;
+  box-shadow: var(--elev-1);
 }
 .osb-brand-text { min-width: 0; }
 .osb-brand-name {
-  font-weight: 600;
+  font-weight: 700;
   font-size: 13px;
+  letter-spacing: var(--tracking-tight);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .osb-brand-meta {
   font-size: 10.5px;
-  color: #8b93a3;
-  margin-top: 2px;
+  color: var(--muted);
+  margin-top: 3px;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 .osb-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #6aa7ec;
+  background: var(--muted);
 }
-.osb-dot-open    { background: #4caf75; box-shadow: 0 0 6px rgba(76,175,117,0.7); }
+.osb-dot-open    { background: var(--win); box-shadow: 0 0 8px rgba(77, 212, 176, 0.7); }
 .osb-dot-closed,
-.osb-dot-error   { background: #d8595b; }
+.osb-dot-error   { background: var(--loss); }
 .osb-dot-connecting,
 .osb-dot-reconnecting { background: #f2c443; }
 
 .osb-cash {
-  background: linear-gradient(135deg, rgba(76,175,117,0.10), rgba(76,175,117,0.04));
-  border: 1px solid rgba(76,175,117,0.20);
-  border-radius: 10px;
-  padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(77, 212, 176, 0.10), rgba(77, 212, 176, 0.02));
+  border: 1px solid rgba(77, 212, 176, 0.22);
+  border-radius: 8px;
+  padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 .osb-cash-label {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: #8b93a3;
+  letter-spacing: var(--tracking-caps);
+  color: var(--muted);
+  font-weight: 600;
 }
 .osb-cash-amount {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
-  color: #d4f0d8;
-  /* Safety net: if compact format ever isn't compact enough (e.g. long
-     future currency symbol), truncate rather than break the sidebar. */
+  color: var(--text);
+  letter-spacing: var(--tracking-tight);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
 }
 .osb-daily {
-  margin-top: 6px;
-  background: linear-gradient(135deg, #2a7d4f, #4caf75);
+  margin-top: 8px;
+  background: linear-gradient(135deg, var(--accent-dark), var(--accent));
   border: none;
-  color: white;
+  color: #06121c;
   padding: 8px 10px;
-  border-radius: 8px;
-  font-weight: 600;
-  font-size: 12px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
   cursor: pointer;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
-  box-shadow: 0 2px 6px rgba(76,175,117,0.25);
+  box-shadow: 0 2px 8px rgba(77, 212, 176, 0.25);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
 }
-.osb-daily:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(76,175,117,0.35); }
+.osb-daily:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(77, 212, 176, 0.4); }
 
 .osb-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   flex: 1;
+  margin-top: 4px;
 }
 .osb-nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 11px;
+  gap: 11px;
+  padding: 8px 11px;
   border: none;
   background: transparent;
-  color: #b8c0cd;
-  border-radius: 8px;
+  color: var(--text-dim);
+  border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
   text-align: left;
-  transition: background 0.12s ease, color 0.12s ease, transform 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease;
   position: relative;
 }
 .osb-nav-item:hover {
-  background: rgba(255,255,255,0.04);
-  color: #e8eaf0;
+  background: var(--panel-2);
+  color: var(--text);
 }
 .osb-nav-item-active {
-  background: rgba(222,155,53,0.10);
-  color: #f2c443;
-  box-shadow: inset 3px 0 0 #de9b35;
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .osb-nav-item-active:hover {
-  background: rgba(222,155,53,0.16);
-  color: #f2c443;
+  background: rgba(77, 212, 176, 0.18);
+  color: var(--accent-hi);
 }
 .osb-nav-icon {
-  font-size: 15px;
   width: 20px;
-  text-align: center;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+  color: currentColor;
+  opacity: 0.85;
 }
-.osb-nav-label { flex: 1; }
+.osb-nav-item-active .osb-nav-icon { opacity: 1; }
+.osb-nav-label { flex: 1; letter-spacing: 0; }
 .osb-nav-badge {
-  background: #de9b35;
-  color: #0a0d12;
+  background: var(--accent);
+  color: #06121c;
   font-size: 10px;
   font-weight: 700;
   padding: 1px 6px;
   border-radius: 8px;
+  min-width: 18px;
+  text-align: center;
 }
 .osb-nav-admin {
   margin-top: 6px;
-  border-top: 1px solid rgba(255,255,255,0.05);
-  padding-top: 12px;
-  border-radius: 0 8px 8px 0;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+  border-radius: 0 6px 6px 0;
 }
 
 .osb-footer {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   padding-top: 10px;
-  border-top: 1px solid rgba(255,255,255,0.05);
+  border-top: 1px solid var(--border-soft);
 }
 .osb-footer-btn {
   display: flex;
@@ -7057,16 +7099,17 @@ input[type='range'] {
   padding: 7px 11px;
   background: transparent;
   border: none;
-  color: #8b93a3;
+  color: var(--muted);
   border-radius: 6px;
   cursor: pointer;
   font-size: 11.5px;
+  font-weight: 500;
   text-align: left;
   transition: background 0.12s ease, color 0.12s ease;
 }
-.osb-footer-btn:hover:not(:disabled) { background: rgba(255,255,255,0.04); color: #e8eaf0; }
+.osb-footer-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
 .osb-footer-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.osb-footer-disconnect:hover { color: #ff9b9d; background: rgba(216,89,91,0.08); }
+.osb-footer-disconnect:hover { color: var(--loss); background: var(--loss-soft); }
 
 /* Collapse sidebar on small screens — push it to a sticky top strip. */
 @media (max-width: 720px) {

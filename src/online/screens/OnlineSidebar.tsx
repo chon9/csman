@@ -10,35 +10,36 @@ import { formatGameAge } from '../dateHelpers';
 import { getSoundSettings, toggleMusicMuted, startBackgroundMusic } from '../../sound/soundManager';
 import RankBadge from './RankBadge';
 import { moneyCompact } from '../../ui/util';
+import Icon, { type IconName } from '../../ui/Icon';
 
 interface NavItem {
   id: OnlineScreen;
   label: string;
-  icon: string;
+  icon: IconName;
   // Optional badge text (e.g. "!" for the daily bonus). Empty → no badge.
   badge?: string;
 }
 
 const PRIMARY: NavItem[] = [
-  { id: 'home', label: 'Home', icon: '🏠' },
-  { id: 'inbox', label: 'Inbox', icon: '📬' },
-  { id: 'tactics', label: 'Tactics', icon: '🎯' },
-  { id: 'challenges', label: 'PvP Lobby', icon: '⚔' },
-  { id: 'tournaments', label: 'Tournaments', icon: '🏆' },
-  { id: 'daily-race', label: 'Daily Race', icon: '🏁' },
-  { id: 'training', label: 'Training', icon: '🎯' },
-  { id: 'market', label: 'Market', icon: '💱' },
-  { id: 'cases', label: 'Cases', icon: '📦' },
-  { id: 'boosters', label: 'Boosters', icon: '🎴' },
-  { id: 'massage', label: 'Massage', icon: '💆' },
-  { id: 'mini-games', label: 'Mini Games', icon: '🎮' },
-  { id: 'ai-bets', label: 'AI Betting', icon: '🎰' },
-  { id: 'real-estate', label: 'Real Estate', icon: '🏘' },
-  { id: 'ewallet', label: 'E-Wallet', icon: '💳' },
-  { id: 'streaming', label: 'Streaming', icon: '📺' },
-  { id: 'scout', label: 'Scout', icon: '🔬' },
-  { id: 'history', label: 'History', icon: '📜' },
-  { id: 'leaderboard', label: 'Leaderboard', icon: '📈' },
+  { id: 'home', label: 'Overview', icon: 'home' },
+  { id: 'inbox', label: 'Inbox', icon: 'inbox' },
+  { id: 'tactics', label: 'Tactics', icon: 'tactics' },
+  { id: 'challenges', label: 'PvP Lobby', icon: 'crosshair' },
+  { id: 'tournaments', label: 'Tournaments', icon: 'trophy' },
+  { id: 'daily-race', label: 'Daily Race', icon: 'flag' },
+  { id: 'training', label: 'Training', icon: 'dumbbell' },
+  { id: 'market', label: 'Market', icon: 'market' },
+  { id: 'cases', label: 'Cases', icon: 'cases' },
+  { id: 'boosters', label: 'Boosters', icon: 'zap' },
+  { id: 'massage', label: 'Massage', icon: 'sparkle' },
+  { id: 'mini-games', label: 'Mini Games', icon: 'mini-games' },
+  { id: 'ai-bets', label: 'Sportsbook', icon: 'bet' },
+  { id: 'real-estate', label: 'Real Estate', icon: 'building' },
+  { id: 'ewallet', label: 'E-Wallet', icon: 'wallet' },
+  { id: 'streaming', label: 'Streaming', icon: 'stream' },
+  { id: 'scout', label: 'Scout', icon: 'scout' },
+  { id: 'history', label: 'History', icon: 'history' },
+  { id: 'leaderboard', label: 'Leaderboard', icon: 'bar-chart' },
 ];
 
 export default function OnlineSidebar(): React.ReactElement {
@@ -94,14 +95,14 @@ export default function OnlineSidebar(): React.ReactElement {
       {/* ===== Cash + daily bonus pill (prominent) ===== */}
       {team && (
         <div className="osb-cash">
-          <div className="osb-cash-label">Cash</div>
+          <div className="osb-cash-label">Balance</div>
           <div
             className="osb-cash-amount"
             title={`$${team.money.toLocaleString()}`}
           >{moneyCompact(team.money)}</div>
           {dailyBonusAvailable && (
             <button className="osb-daily" onClick={claimDailyBonus} title="Claim $10,000 daily login bonus">
-              🎁 Claim daily $10k
+              <Icon name="gift" size={13} /> Claim daily $10k
             </button>
           )}
         </div>
@@ -135,7 +136,7 @@ export default function OnlineSidebar(): React.ReactElement {
               className={`osb-nav-item ${screen === item.id ? 'osb-nav-item-active' : ''}`}
               onClick={() => go(item.id)}
             >
-              <span className="osb-nav-icon">{item.icon}</span>
+              <span className="osb-nav-icon"><Icon name={item.icon} size={16} /></span>
               <span className="osb-nav-label">{item.label}</span>
               {dynBadge && <span className="osb-nav-badge">{dynBadge}</span>}
             </button>
@@ -146,7 +147,7 @@ export default function OnlineSidebar(): React.ReactElement {
             className={`osb-nav-item osb-nav-admin ${screen === 'admin' ? 'osb-nav-item-active' : ''}`}
             onClick={() => go('admin')}
           >
-            <span className="osb-nav-icon">🛠</span>
+            <span className="osb-nav-icon"><Icon name="shield-check" size={16} /></span>
             <span className="osb-nav-label">Admin</span>
           </button>
         )}
@@ -158,24 +159,24 @@ export default function OnlineSidebar(): React.ReactElement {
           className="osb-footer-btn"
           onClick={() => { if (typeof window !== 'undefined') window.open(`${publicOrigin()}/hof`, '_blank'); }}
           title="Hall of Fame (opens in new tab)"
-        >🏛 HoF</button>
+        ><Icon name="trophy" size={13} /> Hall of Fame</button>
         <button
           className="osb-footer-btn"
           onClick={() => { if (typeof window !== 'undefined') window.open(`${publicOrigin()}/stats`, '_blank'); }}
           title="Server stats (opens in new tab)"
-        >📊 Stats</button>
+        ><Icon name="bar-chart" size={13} /> Server stats</button>
         <button
           className="osb-footer-btn"
           onClick={() => { navigator.clipboard?.writeText(profileUrl); }}
           title={`Copy public team page link: ${profileUrl}`}
           disabled={!team}
-        >🔗 Profile link</button>
+        ><Icon name="copy" size={13} /> Copy profile link</button>
         <button
           className="osb-footer-btn"
           onClick={exportTeam}
           title="Download a portable .csm.json snapshot"
           disabled={!team}
-        >⬇ Export team</button>
+        ><Icon name="download" size={13} /> Export team</button>
         <button
           className="osb-footer-btn"
           onClick={() => {
@@ -185,9 +186,9 @@ export default function OnlineSidebar(): React.ReactElement {
             setTickClock(Date.now()); // force re-render so the label updates
           }}
           title="Toggle background music"
-        >{getSoundSettings().musicMuted ? '🔇 Music' : '🎵 Music'}</button>
+        ><Icon name={getSoundSettings().musicMuted ? 'volume' : 'music'} size={13} /> {getSoundSettings().musicMuted ? 'Music off' : 'Music on'}</button>
         <button className="osb-footer-btn osb-footer-disconnect" onClick={disconnect}>
-          ⏻ Disconnect
+          <Icon name="log-out" size={13} /> Disconnect
         </button>
       </div>
     </aside>

@@ -24,6 +24,7 @@ import type { MatchFormat } from '../../types';
 import DuelResultModal from './DuelResultModal';
 import ToastStack from './ToastStack';
 import { moneyCompact } from '../../ui/util';
+import Icon from '../../ui/Icon';
 import { PlayerName } from './PlayerProfileModal';
 import DailyQuestsPanel from './DailyQuestsPanel';
 import ChatWidget from './ChatWidget';
@@ -135,9 +136,11 @@ export default function OnlineHomeScreen() {
             money={team.money}
             onRefill={refillDuels}
           />
-          <button className="btn btn-tiny" onClick={refresh} title="Refresh state">↻</button>
-          <button className="btn btn-tiny" onClick={() => setProfileOpen(true)} title="Edit bio, color, social links">
-            Edit profile
+          <button className="btn btn-tiny" onClick={refresh} title="Refresh state" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Icon name="refresh" size={12} /> Refresh
+          </button>
+          <button className="btn btn-tiny" onClick={() => setProfileOpen(true)} title="Edit bio, color, social links" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <Icon name="settings" size={12} /> Edit profile
           </button>
         </div>
       </div>

@@ -11,16 +11,21 @@ import { useEffect, useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import type { InboxChoice, InboxItem, InboxKind } from '../protocol';
 import ToastStack from './ToastStack';
+import Icon, { type IconName } from '../../ui/Icon';
 
-const KIND_META: Record<InboxKind, { icon: string; label: string; color: string }> = {
-  event:            { icon: '🌍', label: 'Event',           color: '#5aa4e6' },
-  'missed-battle':  { icon: '⚔',  label: 'Missed Battle',  color: '#e25555' },
-  sponsor:          { icon: '💼', label: 'Sponsor',         color: '#d9b344' },
-  'player-message': { icon: '💬', label: 'Player Message',  color: '#78d078' },
-  media:            { icon: '📺', label: 'Media',           color: '#c084fc' },
-  training:         { icon: '🎯', label: 'Training',        color: '#f2c443' },
-  wallet:           { icon: '💸', label: 'E-Wallet',        color: '#6ed09a' },
-  bet:              { icon: '🎰', label: 'Bet',             color: '#ff8a00' },
+// Kind → icon + label + accent colour. Icons come from the shared Icon
+// set; colours are drawn from the palette tokens with per-kind hues so
+// the eye can sort at a glance without emoji noise.
+interface KindMeta { icon: IconName; label: string; color: string }
+const KIND_META: Record<InboxKind, KindMeta> = {
+  event:            { icon: 'globe',      label: 'Event',          color: '#6ba0f5' },
+  'missed-battle':  { icon: 'crosshair',  label: 'Missed Battle',  color: '#f04b6a' },
+  sponsor:          { icon: 'briefcase',  label: 'Sponsor',        color: '#d9b344' },
+  'player-message': { icon: 'mail',       label: 'Player Message', color: '#4dd4b0' },
+  media:            { icon: 'megaphone',  label: 'Media',          color: '#b47ef7' },
+  training:         { icon: 'dumbbell',   label: 'Training',       color: '#f2c443' },
+  wallet:           { icon: 'wallet',     label: 'E-Wallet',       color: '#4dd4b0' },
+  bet:              { icon: 'bet',        label: 'Sportsbook',     color: '#ff8a00' },
 };
 
 type Filter = 'all' | InboxKind;
@@ -70,9 +75,23 @@ export default function InboxScreen(): React.ReactElement | null {
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* Header */}
       <div className="hero-panel">
-        <div>
-          <h2>📬 Inbox</h2>
-          <div className="hero-sub">Last 30 items · events, missed battles, sponsors, player messages, media, training, e-wallet transfers, and bet results</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div
+            style={{
+              width: 40, height: 40, borderRadius: 8,
+              background: 'var(--accent-soft)', color: 'var(--accent)',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              border: '1px solid var(--border-accent)',
+            }}
+          >
+            <Icon name="inbox" size={20} />
+          </div>
+          <div>
+            <h2 style={{ margin: 0 }}>Inbox</h2>
+            <div className="hero-sub">
+              Last 30 items · events, missed battles, sponsors, players, media, training, wallet, sportsbook
+            </div>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button
@@ -80,28 +99,46 @@ export default function InboxScreen(): React.ReactElement | null {
             disabled={unread === 0}
             onClick={() => markAllRead()}
             title={unread === 0 ? 'Nothing unread' : `Mark ${unread} unread item${unread === 1 ? '' : 's'} as read`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
-            ✓ Mark all as read{unread > 0 ? ` (${unread})` : ''}
+            <Icon name="check" size={13} /> Mark all as read{unread > 0 ? ` (${unread})` : ''}
           </button>
-          <button className="btn" onClick={() => go('home')}>← Back</button>
+          <button
+            className="btn"
+            onClick={() => go('home')}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Icon name="chevron-left" size={13} /> Back
+          </button>
         </div>
       </div>
 
       {/* Filter chips */}
       <div className="panel" style={{ padding: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {filters.map((f) => {
-          const meta = f === 'all' ? { icon: '📋', label: 'All', color: 'var(--text)' } : KIND_META[f];
+          const isAll = f === 'all';
+          const meta = isAll ? null : KIND_META[f];
           const active = filter === f;
           return (
             <button
               key={f}
               onClick={() => setFilter(f)}
               className={`btn ${active ? 'btn-accent' : ''}`}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                fontSize: 11.5,
+              }}
             >
-              <span>{meta.icon}</span>
-              <span>{meta.label}</span>
-              <span className="muted small" style={{ marginLeft: 4 }}>{counts[f]}</span>
+              <Icon name={isAll ? 'folder' : meta!.icon} size={13} />
+              <span>{isAll ? 'All' : meta!.label}</span>
+              <span
+                className="muted small"
+                style={{
+                  marginLeft: 2, fontVariantNumeric: 'tabular-nums',
+                  color: active ? '#06121c' : 'var(--muted)',
+                  opacity: active ? 0.8 : 1,
+                }}
+              >{counts[f]}</span>
             </button>
           );
         })}
@@ -161,55 +198,74 @@ function InboxRow({
       style={{
         cursor: 'pointer',
         marginBottom: 0,
-        borderLeft: unread ? `4px solid ${meta.color}` : `3px solid ${meta.color}55`,
-        background: unread ? `${meta.color}1f` : 'var(--panel)',
-        boxShadow: unread ? `0 0 0 1px ${meta.color}44 inset` : 'none',
+        borderLeft: unread ? `3px solid ${meta.color}` : `2px solid ${meta.color}44`,
+        background: unread ? `${meta.color}14` : 'var(--panel)',
+        boxShadow: unread ? `0 0 0 1px ${meta.color}33 inset` : 'none',
         opacity: dimmed ? 0.55 : 1,
         transition: 'opacity 140ms ease, background 140ms ease',
-        padding: dimmed ? '8px 12px' : undefined,
+        padding: dimmed ? '10px 14px' : '12px 14px',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-          <span style={{ fontSize: unread ? 18 : 15 }}>{meta.icon}</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
           <span
-            className="pill"
             style={{
-              background: `${meta.color}${unread ? '33' : '22'}`,
-              borderColor: `${meta.color}${unread ? '77' : '55'}`,
+              width: 26, height: 26, borderRadius: 6,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              background: unread ? `${meta.color}22` : `${meta.color}12`,
+              border: `1px solid ${meta.color}${unread ? '55' : '33'}`,
               color: meta.color,
-              padding: '2px 8px', fontSize: 10,
-              fontWeight: unread ? 700 : 500,
+              flexShrink: 0,
             }}
-          >{meta.label.toUpperCase()}</span>
+          >
+            <Icon name={meta.icon} size={14} />
+          </span>
+          <span
+            style={{
+              background: `${meta.color}${unread ? '22' : '15'}`,
+              border: `1px solid ${meta.color}${unread ? '55' : '33'}`,
+              color: meta.color,
+              padding: '1px 7px',
+              fontSize: 9.5,
+              fontWeight: 700,
+              letterSpacing: '0.08em',
+              borderRadius: 3,
+              textTransform: 'uppercase',
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+          >{meta.label}</span>
           <strong style={{
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             color: unread ? 'var(--text)' : 'var(--text-dim)',
-            fontWeight: unread ? 800 : 500,
-            fontSize: unread ? 15 : 13,
-            letterSpacing: unread ? '0.1px' : undefined,
+            fontWeight: unread ? 700 : 500,
+            fontSize: unread ? 14 : 13,
+            letterSpacing: unread ? '-0.005em' : undefined,
           }}>{item.title}</strong>
           {unread && (
             <span style={{
-              width: 10, height: 10, borderRadius: '50%', background: meta.color,
-              boxShadow: `0 0 8px ${meta.color}, 0 0 14px ${meta.color}66`,
+              width: 8, height: 8, borderRadius: '50%', background: meta.color,
+              boxShadow: `0 0 6px ${meta.color}, 0 0 12px ${meta.color}66`,
               flexShrink: 0,
             }} />
           )}
         </div>
-        <span className="muted small" style={{ flexShrink: 0, fontWeight: unread ? 600 : 400 }}>
+        <span
+          className="muted small"
+          style={{ flexShrink: 0, fontWeight: unread ? 600 : 400, fontVariantNumeric: 'tabular-nums' }}
+        >
           {fmtAgo(item.createdAt)}
         </span>
       </div>
 
       {expanded && (
-        <div style={{ marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
-          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.55, color: 'var(--text-dim)' }}>
+        <div style={{ marginTop: 12 }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, color: 'var(--text-dim)', fontSize: 13 }}>
             {item.body}
           </div>
 
           {interactive && (
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
               {choices.map((c) => (
                 <button
                   key={c.id}
@@ -226,13 +282,14 @@ function InboxRow({
 
           {resolved && (
             <div style={{
-              marginTop: 10, padding: '8px 12px',
+              marginTop: 12, padding: '8px 12px',
               background: 'var(--bg-elev)', borderRadius: 4,
-              borderLeft: `3px solid ${meta.color}`,
+              borderLeft: `2px solid ${meta.color}`,
               fontSize: 12, color: 'var(--text-dim)',
-              fontStyle: 'italic',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
             }}>
-              ✓ Response recorded {fmtAgo(item.resolvedAt!)}
+              <Icon name="check" size={13} style={{ color: meta.color }} />
+              Response recorded {fmtAgo(item.resolvedAt!)}
             </div>
           )}
         </div>
