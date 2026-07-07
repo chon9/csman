@@ -10,7 +10,6 @@ import {
   APVP_DEFENDER_WIN_SHARE,
   APVP_MAX_STAKE,
   APVP_MIN_STAKE,
-  APVP_PRIMARY_DELTA,
   MAX_DUEL_STAKE,
   MIN_DUEL_STAKE,
 } from '../protocol';
@@ -99,7 +98,7 @@ export default function OnlineChallengesScreen() {
               ⚡ Quick Match <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 999, background: 'rgba(110,255,179,0.22)', border: '1px solid rgba(110,255,179,0.55)', color: '#b8ffd9', letterSpacing: 1, fontWeight: 800 }}>ASYNC</span>
             </div>
             <div className="muted small" style={{ marginTop: 4, color: 'rgba(255,255,255,0.78)' }}>
-              Server pairs you with a random team within ±{APVP_PRIMARY_DELTA} total starter CA. No waiting, no posting — duels in seconds.
+              Server pairs you with a fully random team — no CA-band filter. MMR gain/loss scales with the skill gap, so a stronger opponent pays you bigger on the upset. No waiting, no posting.
               Defender risks nothing — no cash lost, no fatigue, no contract burn. Only wins {Math.round(APVP_DEFENDER_WIN_SHARE * 100)}% of the stake on an upset. You carry the full risk.
             </div>
           </div>

@@ -33,11 +33,9 @@ import {
   MAX_REFILLS_PER_DAY,
   MIN_REFILL_COST,
   APVP_DEFENDER_WIN_SHARE,
-  APVP_FALLBACK_DELTA,
   APVP_FORMAT,
   APVP_MAX_STAKE,
   APVP_MIN_STAKE,
-  APVP_PRIMARY_DELTA,
   CRASH_MAX_BET,
   CRASH_MIN_BET,
   DRAGON_GATE_MAX_BET,
@@ -1987,15 +1985,17 @@ export function handle(
         };
       }
 
-      // Compute the requesting team's total starter CA — the matchmaker
-      // window keys off this number.
+      // Compute total starter CA — no longer used for matchmaking (fully
+      // random opponent per user tuning) but still logged for balance
+      // insight. MMR swings still Elo off the actual CA delta.
       const myPlayers = db.loadTeamPlayers(me.id);
       const myStarters = myPlayers.slice(0, 5);
       const myTotalCA = myStarters.reduce((s, p) => s + p.currentAbility, 0);
 
-      // Build the candidate pool. Defender pays NOTHING on a loss, so we
-      // no longer gate on their bankroll — any active team with a full
-      // starting 5 is eligible.
+      // Build the full candidate pool — every active team with a full
+      // starting 5. No CA-band narrowing: user complained that the old
+      // CA-band matchmaker kept pairing them with the same nearby teams
+      // and the win/loss MMR rewards already handle skill balance.
       const pool = db.loadMatchmakingPool(0).filter((t) =>
         t.id !== me.id && t.playerIds.length >= 5,
       );
@@ -2008,66 +2008,37 @@ export function handle(
         candidates.push({ teamId: t.id, tag: t.tag, name: t.name, players, totalCA });
       }
 
-      // Prevent same-opponent-twice-in-a-row. Look up the caller's last
-      // PvP opponent; if picking from the primary band would land on
-      // that team again, widen to the fallback band before allowing a
-      // rematch. Only allow the rematch as a true last resort (nobody
-      // else exists in either band).
+      // Prevent same-opponent-twice-in-a-row. This is the ONLY filter
+      // we still apply — CA distance no longer matters.
       const lastOppId = db.findLastPvpOpponent(me.id);
-      const withinDelta = (delta: number): Candidate[] =>
-        candidates.filter((c) => Math.abs(c.totalCA - myTotalCA) <= delta);
-      const excludingLast = (list: Candidate[]): Candidate[] =>
-        lastOppId ? list.filter((c) => c.teamId !== lastOppId) : list;
-
-      // Primary band excluding last opponent — the ideal case.
-      let band = excludingLast(withinDelta(APVP_PRIMARY_DELTA));
-      let bandLabel = `±${APVP_PRIMARY_DELTA}`;
-
-      // If primary band is empty AFTER excluding the last opponent, widen
-      // to the fallback band before letting the rematch happen. Real users
-      // will accept "we searched wider to find someone new" much more than
-      // "you just fought them, here's a rematch".
-      if (band.length === 0) {
-        band = excludingLast(withinDelta(APVP_FALLBACK_DELTA));
-        bandLabel = `±${APVP_FALLBACK_DELTA} (widened to avoid rematch)`;
-      }
-      // Last-resort rematch: nobody else in either band. Better than
-      // erroring the user out — they still get a match, they just get
-      // the same team back with an honest 'no other opponents' notice.
-      if (band.length === 0) {
-        band = withinDelta(APVP_FALLBACK_DELTA);
-        bandLabel = `±${APVP_FALLBACK_DELTA} (rematch — no other teams available)`;
+      const notLastOpp = lastOppId
+        ? candidates.filter((c) => c.teamId !== lastOppId)
+        : candidates;
+      let bandLabel = 'random pool';
+      let band = notLastOpp;
+      // If literally the only team available is the last opponent, allow
+      // the rematch as a last resort so the user still gets a match.
+      if (band.length === 0 && candidates.length > 0) {
+        band = candidates;
+        bandLabel = 'random pool (rematch — no other teams available)';
       }
       if (band.length === 0) {
         return {
           kind: 'error',
           code: 'no-opponents',
-          message: `No teams within ±${APVP_FALLBACK_DELTA} total starter CA of you with $${stake.toLocaleString()} on hand. Try a lower stake or wait for the pool to grow.`,
+          message: 'No other teams available right now — try again in a moment.',
         };
       }
 
-      // Shuffle and pick the first valid opponent. Defenders don't have
-      // a daily cap on incoming async matches — they didn't opt in, so
-      // their action budget shouldn't be drained by other people's
-      // matchmaking. The only filter left is "team still exists".
-      for (let i = band.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [band[i], band[j]] = [band[j]!, band[i]!];
-      }
-      let oppCandidate: Candidate | null = null;
-      let opp: TeamRow | null = null;
-      for (const c of band) {
-        const oppRow = db.loadTeam(c.teamId);
-        if (!oppRow) continue;
-        oppCandidate = c;
-        opp = oppRow;
-        break;
-      }
-      if (!opp || !oppCandidate) {
+      // Uniform random pick — no shuffle-and-first tricks. Every team
+      // has an equal shot regardless of CA.
+      const oppCandidate = band[Math.floor(Math.random() * band.length)]!;
+      const opp = db.loadTeam(oppCandidate.teamId);
+      if (!opp) {
         return {
           kind: 'error',
           code: 'no-opponents-available',
-          message: 'No opponents available right now. Try again in a moment.',
+          message: 'Opponent disappeared before matchmaking finished — try again.',
         };
       }
       const oppPlayers = oppCandidate.players;
@@ -2158,7 +2129,7 @@ export function handle(
           teamBId: opp.id,
           mapsA: duel.result.mapsA,
           mapsB: duel.result.mapsB,
-          context: `$${stake.toLocaleString()} Quick Match (${bandLabel} CA)`,
+          context: `$${stake.toLocaleString()} Quick Match (${bandLabel})`,
           at: Date.now(),
         },
       });
