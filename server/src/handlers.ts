@@ -840,6 +840,32 @@ export function newConnSession(): ConnSession {
   return { sessionToken: null, nickname: null, teamId: null };
 }
 
+// ---------------------------------------------------------------------
+// Shared duel cooldown — one entry per team. AI Match and Quick Match
+// (PvP find-async-match) share this lockout so users can't spam the
+// engine + inbox with back-to-back duels. 3 min per team.
+// ---------------------------------------------------------------------
+const DUEL_COOLDOWN_MS = 3 * 60 * 1000;
+const duelCooldowns = new Map<string, number>();
+
+function checkDuelCooldown(teamId: string): { ok: true } | { ok: false; remainingMs: number } {
+  const readyAt = duelCooldowns.get(teamId) ?? 0;
+  const now = Date.now();
+  if (readyAt > now) return { ok: false, remainingMs: readyAt - now };
+  return { ok: true };
+}
+
+function stampDuelCooldown(teamId: string): void {
+  duelCooldowns.set(teamId, Date.now() + DUEL_COOLDOWN_MS);
+}
+
+function fmtCooldown(ms: number): string {
+  const s = Math.ceil(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), rem = s % 60;
+  return rem === 0 ? `${m}m` : `${m}m ${rem}s`;
+}
+
 /** Synthesize a Team (engine-shaped) from a TeamRow. The wire shape is
  *  flatter than the engine's; this fills in the rep + mapPool defaults the
  *  match engine expects. */
@@ -1121,6 +1147,18 @@ export function handle(
       // (stake=0) skip the check so unranked practice stays unlimited.
       // Cap resets every in-game day (≈ every 4 real hours).
       const isScrim = msg.stake === 0;
+      // Real-time shared cooldown with Quick Match (3 min). Applies to
+      // ranked/staked duels only — scrims stay unrestricted.
+      if (!isScrim) {
+        const cd = checkDuelCooldown(team.id);
+        if (!cd.ok) {
+          return {
+            kind: 'error',
+            code: 'duel-cooldown',
+            message: `Match cooldown active — ${fmtCooldown(cd.remainingMs)} left before your next AI Match or Quick Match.`,
+          };
+        }
+      }
       const today = new Date().toISOString().slice(0, 10); // for daily-bonus path; unrelated to duel cap
       const gameDayKey = `day-${team.day}`;
       if (!isScrim) {
@@ -1274,6 +1312,10 @@ export function handle(
         rollPostMatchInbox(db, notifyTeam, team.id, ctx);
       }
 
+      // Stamp the shared duel cooldown so the next AI Match or Quick
+      // Match is gated for 3 min. Skip for scrims (stake === 0).
+      if (!isScrim) stampDuelCooldown(team.id);
+
       return {
         kind: 'duel-result',
         outcome: {
@@ -1284,6 +1326,10 @@ export function handle(
           opponentName: duel.opponentName,
           opponentTag: duel.opponentTag,
           opponentTeamId: null, // AI opponent — no clickable profile
+          // AI Match now ALSO forces the caller into the locked replay
+          // viewer (was straight-to-modal). Skips for scrims — those
+          // are quick practice runs where the user just wants numbers.
+          lockedReplay: !isScrim,
           moneyDelta: duel.moneyDelta,
           newMoney: team.money,
           summary: duel.summary,
@@ -1524,6 +1570,16 @@ export function handle(
           message: 'Challenger has hit their in-game-day duel cap — challenge auto-cancelled.',
         };
       }
+      // Shared 3-min cooldown — only gates the ACTIVE accepter. The
+      // challenger already agreed by posting the challenge earlier.
+      const cd = checkDuelCooldown(accepter.id);
+      if (!cd.ok) {
+        return {
+          kind: 'error',
+          code: 'duel-cooldown',
+          message: `Match cooldown active — ${fmtCooldown(cd.remainingMs)} left before your next AI Match or Quick Match.`,
+        };
+      }
 
       const challengerPlayers = db.loadTeamPlayers(challenger.id);
       const accepterPlayers = db.loadTeamPlayers(accepter.id);
@@ -1715,7 +1771,14 @@ export function handle(
         diagnostics: accepterDiag,
         mvp: computeMvpSnapshot(db, duel.result, accepter.id),
       };
-      notifyTeam(challenger.id, { kind: 'duel-result', outcome: challengerOutcome });
+      // Challenger issued the challenge earlier but wasn't watching now —
+      // pop a confirm modal instead of yanking them into the replay.
+      notifyTeam(challenger.id, {
+        kind: 'match-watch-prompt',
+        outcome: challengerOutcome,
+        sourceLabel: 'Challenge accepted',
+        opponentTag: accepter.tag,
+      });
       // Also tell the challenger their challenge resolved (so any list-challenges UI clears).
       notifyTeam(challenger.id, { kind: 'challenge-cancelled', challengeId: challenge.id });
 
@@ -1766,6 +1829,8 @@ export function handle(
         );
         broadcast({ kind: 'news-item', item: newsItem as NewsItem });
       }
+      // Stamp cooldown on the ACTIVE accepter.
+      stampDuelCooldown(accepter.id);
       log(`PvP resolved: ${challenger.tag} vs ${accepter.tag} → winner ${duel.winnerTeamId === challenger.id ? challenger.tag : accepter.tag}`);
       return { kind: 'duel-result', outcome: accepterOutcome };
     }
@@ -1790,6 +1855,17 @@ export function handle(
           kind: 'error',
           code: 'insufficient-funds',
           message: `Need $${stake.toLocaleString()} to cover the stake.`,
+        };
+      }
+      // Shared 3-min cooldown with AI Match. Only guards the ACTIVE
+      // caller — the defender being auto-matched isn't gated because
+      // they didn't opt in.
+      const cd = checkDuelCooldown(me.id);
+      if (!cd.ok) {
+        return {
+          kind: 'error',
+          code: 'duel-cooldown',
+          message: `Match cooldown active — ${fmtCooldown(cd.remainingMs)} left before your next AI Match or Quick Match.`,
         };
       }
       const myDayKey = `day-${me.day}`;
@@ -2067,7 +2143,16 @@ export function handle(
         diagnostics: oppDiag,
         mvp: computeMvpSnapshot(db, duel.result, opp.id),
       };
-      notifyTeam(opp.id, { kind: 'duel-result', outcome: oppOutcome });
+      // Quick Match defender wasn't opting in — pop a confirm modal
+       // asking if they want to watch the replay instead of yanking them
+       // out of whatever they were doing. If they decline the missed-
+       // battle inbox item still tells them the outcome.
+      notifyTeam(opp.id, {
+        kind: 'match-watch-prompt',
+        outcome: oppOutcome,
+        sourceLabel: 'Quick Match',
+        opponentTag: me.tag,
+      });
 
       // Missed-battle inbox item — the defender didn't opt in and gets
       // an async notification. Includes the outcome from THEIR side.
@@ -2137,6 +2222,8 @@ export function handle(
         );
         broadcast({ kind: 'news-item', item: newsItem as NewsItem });
       }
+      // Stamp cooldown on the ACTIVE caller (defender wasn't opting in).
+      stampDuelCooldown(me.id);
       log(`async-pvp: ${me.tag} (CA ${myTotalCA}) vs ${opp.tag} (CA ${oppCandidate.totalCA}) within ${bandLabel} → ${meWon ? me.tag : opp.tag}`);
       return { kind: 'duel-result', outcome: myOutcome };
     }

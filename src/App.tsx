@@ -33,6 +33,7 @@ import DevReportModal from './online/screens/DevReportModal';
 import LiveFeedWidget from './online/screens/LiveFeedWidget';
 import TeamProfileModal from './online/screens/TeamProfileModal';
 import PlayerProfileModal from './online/screens/PlayerProfileModal';
+import WatchPromptModal from './online/screens/WatchPromptModal';
 import Sidebar from './ui/Sidebar';
 import TopBar from './ui/TopBar';
 import MatchDayScreen from './ui/match/MatchDayScreen';
@@ -178,6 +179,9 @@ export default function App() {
             team tag on any screen can open it. */}
         <TeamProfileModal />
         <PlayerProfileModal />
+        {/* Confirm modal for Quick Match / accepted-challenge results —
+            rendered at shell level so it interrupts any screen. */}
+        <WatchPromptModal />
       </div>
     );
   }

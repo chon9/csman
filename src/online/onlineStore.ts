@@ -99,6 +99,10 @@ interface OnlineState {
   duelResult: DuelOutcome | null;
   /** True while a duel request is in flight (server is simulating). */
   duelPending: boolean;
+  /** Non-null when a Quick Match / accepted challenge landed on us and
+   *  the server is asking whether we want to watch — before yanking us
+   *  out of whatever screen we were on. Cleared on Watch/Skip. */
+  watchPrompt: { outcome: DuelOutcome; sourceLabel: string; opponentTag: string } | null;
   /** PvP duel outcome waiting for the synced replay to finish playing.
    *  While this is non-null the user is parked on the replay viewer in
    *  locked mode (no scrub controls, forced 4× speed). When the replay
@@ -404,6 +408,12 @@ interface OnlineState {
   // Phase 2 actions
   registerAiDuel: (stake: number, format: MatchFormat) => void;
   dismissDuelResult: () => void;
+  /** Accept an incoming watch-prompt — routes into the locked replay
+   *  viewer using the cached outcome. */
+  acceptWatchPrompt: () => void;
+  /** Decline the incoming watch-prompt — drops the cached outcome
+   *  (inbox / missed-battle item still preserves the record). */
+  declineWatchPrompt: () => void;
   timeSkip: (days: number) => void;
   refreshMarket: () => void;
   listPlayer: (playerId: string, askingPrice: number) => void;
@@ -553,6 +563,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   players: {},
   duelResult: null,
   duelPending: false,
+  watchPrompt: null,
   pendingDuelResult: null,
   skipPending: false,
   marketListings: [],
@@ -744,6 +755,13 @@ export const useOnline = create<OnlineState>((set, get) => ({
             } : {}),
             nextTickUtcMs: msg.nextTickUtcMs,
           });
+          break;
+        }
+        case 'match-watch-prompt': {
+          // Server is asking whether we want to watch a match that was
+          // played on us (Quick Match defender or accepted-challenge
+          // challenger). Just cache the outcome + open the modal.
+          set({ watchPrompt: { outcome: msg.outcome, sourceLabel: msg.sourceLabel, opponentTag: msg.opponentTag } });
           break;
         }
         case 'duel-result': {
@@ -2037,6 +2055,40 @@ export const useOnline = create<OnlineState>((set, get) => ({
 
   dismissDuelResult() {
     set({ duelResult: null });
+  },
+
+  acceptWatchPrompt() {
+    const prompt = get().watchPrompt;
+    if (!prompt) return;
+    const outcome = prompt.outcome;
+    const team = get().team;
+    const moneyPatch = team ? { ...team, money: outcome.newMoney } : team;
+    // Route to the locked replay viewer using the cached outcome —
+    // mirrors the duel-result handler's lockedReplay branch.
+    set({
+      watchPrompt: null,
+      team: moneyPatch,
+      liveReplay: {
+        matchId: outcome.result.matchId,
+        result: outcome.result,
+        teamATag: team && outcome.result.teamAId === team.id
+          ? team.tag
+          : (outcome.opponentTag ?? '?'),
+        teamBTag: team && outcome.result.teamBId === team.id
+          ? team.tag
+          : (outcome.opponentTag ?? '?'),
+      },
+      pendingDuelResult: outcome,
+      screen: 'replay',
+    });
+    get().client?.send({ kind: 'refresh-state' });
+  },
+
+  declineWatchPrompt() {
+    // Just drop the cached outcome. The missed-battle inbox item still
+    // preserves the record so the user can review results later.
+    set({ watchPrompt: null });
+    get().client?.send({ kind: 'refresh-state' });
   },
 
   timeSkip(days) {

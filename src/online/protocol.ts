@@ -1936,6 +1936,11 @@ export type ServerMessage =
   | { kind: 'pong' }
   // ----- Phase 2 -----
   | { kind: 'duel-result'; outcome: DuelOutcome }
+  /** Sent to the passive party of a Quick Match or accepted challenge —
+   *  they weren't actively playing when the fight happened, so we ask
+   *  before yanking them into a forced replay. Client shows a modal
+   *  with Watch / Skip buttons. */
+  | { kind: 'match-watch-prompt'; outcome: DuelOutcome; sourceLabel: string; opponentTag: string }
   | { kind: 'time-skipped'; newDay: number; daysAdvanced: number; trainingNotes: string[]; cost: number; devChanges: DevChange[]; eventsFired?: number }
   | { kind: 'market'; listings: MarketListing[]; players: Player[] }
   | { kind: 'market-listed'; listing: MarketListing }
@@ -2258,7 +2263,7 @@ export interface InboxItem {
   createdAt: number;
 }
 
-export const PROTOCOL_VERSION = 58;
+export const PROTOCOL_VERSION = 59;
 
 /** Length of one in-game day in real-world ms. The wall-clock auto-tick
  *  advances every team's day by 1 at each multiple of this duration past
