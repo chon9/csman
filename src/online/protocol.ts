@@ -1929,7 +1929,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { kind: 'hello-ok'; sessionToken: string; hasTeam: boolean; isAdmin: boolean }
   | { kind: 'hello-bad-pin' }
-  | { kind: 'state'; team: OnlineTeam; players: Player[]; dailyBonusAvailable: boolean; freeCaseAvailable: boolean; duelsUsed: number; duelsRefillsUsed: number; moraleGamePlaysUsed: number; nextTickUtcMs: number }
+  | { kind: 'state'; team: OnlineTeam; players: Player[]; dailyBonusAvailable: boolean; freeCaseAvailable: boolean; duelsUsed: number; duelsRefillsUsed: number; moraleGamePlaysUsed: number; nextTickUtcMs: number; matchCooldownUntilMs?: number }
   | { kind: 'team-created'; team: OnlineTeam }
   | { kind: 'players-spawned'; players: Player[] }
   | { kind: 'error'; code: string; message: string }

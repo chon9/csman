@@ -926,6 +926,10 @@ function buildState(db: DB, teamId: string): ServerMessage | null {
   // login rewards, not gameplay-pace gates.
   const gameDayKey = `day-${team.day}`;
   const duelStats = db.getDuelStats(teamId, gameDayKey);
+  // Match cooldown: shared 3-min lockout across AI Match / Quick Match /
+  // Challenge Accept. Send the expiry timestamp so the client can render
+  // a countdown pill; drop it when zero so the client hides the display.
+  const cooldownReadyAt = duelCooldowns.get(teamId) ?? 0;
   return {
     kind: 'state',
     team: teamRowToOnline(team),
@@ -936,6 +940,7 @@ function buildState(db: DB, teamId: string): ServerMessage | null {
     duelsRefillsUsed: duelStats.refillsUsed,
     moraleGamePlaysUsed: db.getMoraleGamePlays(teamId, team.day),
     nextTickUtcMs: nextAutoTickUtcMs(),
+    matchCooldownUntilMs: cooldownReadyAt > Date.now() ? cooldownReadyAt : 0,
   };
 }
 

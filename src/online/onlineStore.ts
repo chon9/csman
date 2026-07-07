@@ -218,6 +218,10 @@ interface OnlineState {
   // ----- Wall-clock auto-advance -----
   /** UTC ms of the next 4-hour boundary, when team.day will auto-tick +1. */
   nextTickUtcMs: number;
+  /** UTC ms until the shared duel cooldown ends (0 = ready). Populated
+   *  by the server after any AI/Quick/PvP match resolves so the client
+   *  can render a countdown in the hero panel + sidebar. */
+  matchCooldownUntilMs: number;
 
   // ----- Scout (pay-to-mint with case-style reveal) -----
   /** Last scout outcome — pops the reveal modal when set, null after dismiss. */
@@ -611,6 +615,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
   duelsUsed: 0,
   duelsRefillsUsed: 0,
   nextTickUtcMs: 0,
+  matchCooldownUntilMs: 0,
   boosts: [],
   activeBoosts: {},
   boostReveal: null,
@@ -754,6 +759,7 @@ export const useOnline = create<OnlineState>((set, get) => ({
               moraleGameSession: { wins: 0, ties: 0, losses: 0, totalMorale: 0 },
             } : {}),
             nextTickUtcMs: msg.nextTickUtcMs,
+            matchCooldownUntilMs: msg.matchCooldownUntilMs ?? 0,
           });
           break;
         }

@@ -53,6 +53,7 @@ export default function OnlineSidebar(): React.ReactElement {
   const inboxUnread = useOnline((s) => s.inboxUnread);
   const claimDailyBonus = useOnline((s) => s.claimDailyBonus);
   const nextTickUtcMs = useOnline((s) => s.nextTickUtcMs);
+  const matchCooldownUntilMs = useOnline((s) => s.matchCooldownUntilMs);
   const refresh = useOnline((s) => s.refreshState);
   const disconnect = useOnline((s) => s.disconnect);
   const exportTeam = useOnline((s) => s.exportTeam);
@@ -132,6 +133,19 @@ export default function OnlineSidebar(): React.ReactElement {
               {formatCountdown(Math.max(0, nextTickUtcMs - tickClock))}
             </span>
           </div>
+          {/* Shared match cooldown — AI / Quick / Challenge. Only rendered
+              while the 3-min lockout is running; hidden when Ready. */}
+          {matchCooldownUntilMs > tickClock && (
+            <div className="osb-tick-row" title="Shared cooldown for AI Match / Quick Match / Challenge Accept">
+              <span className="osb-tick-label">Next match</span>
+              <span
+                className="osb-tick-value osb-tick-countdown"
+                style={{ color: 'var(--loss)' }}
+              >
+                {formatCountdown(matchCooldownUntilMs - tickClock)}
+              </span>
+            </div>
+          )}
         </div>
       )}
 

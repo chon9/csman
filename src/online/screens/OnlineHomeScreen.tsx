@@ -53,6 +53,7 @@ export default function OnlineHomeScreen() {
   const spawnInitialRoster = useOnline((s) => s.spawnInitialRoster);
   const duelsUsed = useOnline((s) => s.duelsUsed);
   const duelsRefillsUsed = useOnline((s) => s.duelsRefillsUsed);
+  const matchCooldownUntilMs = useOnline((s) => s.matchCooldownUntilMs);
   const refillDuels = useOnline((s) => s.refillDuels);
   const renewContract = useOnline((s) => s.renewContract);
   const releasePlayer = useOnline((s) => s.releasePlayer);
@@ -137,6 +138,7 @@ export default function OnlineHomeScreen() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+          <MatchCooldownChip untilMs={matchCooldownUntilMs} />
           <DuelCapChip
             used={duelsUsed}
             refillsUsed={duelsRefillsUsed}
@@ -440,6 +442,41 @@ function StatCard({ label, value, title }: { label: string; value: string; title
       <div className="stat-label">{label}</div>
       <div className="stat-value">{value}</div>
     </div>
+  );
+}
+
+/** Countdown pill for the shared 3-min AI/Quick/Challenge cooldown.
+ *  Renders nothing while the cooldown is done — only shows while there's
+ *  time to display. 1Hz self-tick keeps the number moving without
+ *  churning the parent. */
+function MatchCooldownChip({ untilMs }: { untilMs: number }): React.ReactElement | null {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (untilMs <= now) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [untilMs, now]);
+  const remaining = untilMs - now;
+  if (remaining <= 0) return null;
+  const totalSec = Math.ceil(remaining / 1000);
+  const mm = Math.floor(totalSec / 60);
+  const ss = (totalSec % 60).toString().padStart(2, '0');
+  return (
+    <span
+      className="pill"
+      title="Shared cooldown for AI Match, Quick Match, and accepting Challenges"
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        borderColor: 'var(--loss)',
+        color: 'var(--loss)',
+        background: 'var(--loss-soft)',
+        fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '0.02em',
+      }}
+    >
+      <Icon name="clock" size={12} />
+      Next match {mm}:{ss}
+    </span>
   );
 }
 
