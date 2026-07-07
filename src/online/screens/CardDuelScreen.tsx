@@ -90,6 +90,175 @@ export default function CardDuelScreen(): React.ReactElement | null {
 // Phase 1 — Deck builder
 // ---------------------------------------------------------------------
 
+// ---------------------------------------------------------------------
+// Card rarity — 5 tiers derived from CA (Bronze / Silver / Gold /
+// Platinum / Legendary). Every player card has a stable rarity so the
+// deck builder reads like a real TCG collection.
+// ---------------------------------------------------------------------
+
+type Rarity = 'bronze' | 'silver' | 'gold' | 'platinum' | 'legendary';
+interface RarityMeta {
+  label: string; color: string; gradient: string; textColor: string; glow: string;
+}
+const RARITY_META: Record<Rarity, RarityMeta> = {
+  bronze:     { label: 'BRONZE',     color: '#cd7f32', gradient: 'linear-gradient(160deg, #6b4a24 0%, #3a281a 100%)', textColor: '#e8c39a', glow: 'rgba(205, 127, 50, 0.5)' },
+  silver:     { label: 'SILVER',     color: '#d0d5db', gradient: 'linear-gradient(160deg, #7d848f 0%, #2f3540 100%)', textColor: '#f5f7fb', glow: 'rgba(208, 213, 219, 0.55)' },
+  gold:       { label: 'GOLD',       color: '#ffd166', gradient: 'linear-gradient(160deg, #b58b1a 0%, #4a3712 100%)', textColor: '#fff2c9', glow: 'rgba(255, 209, 102, 0.65)' },
+  platinum:   { label: 'PLATINUM',   color: '#4dd4b0', gradient: 'linear-gradient(160deg, #1c6957 0%, #0d2a26 100%)', textColor: '#c7f7e8', glow: 'rgba(77, 212, 176, 0.65)' },
+  legendary:  { label: 'LEGENDARY',  color: '#b47ef7', gradient: 'linear-gradient(160deg, #4a1e78 0%, #1a0d33 100%)', textColor: '#e8d4ff', glow: 'rgba(180, 126, 247, 0.75)' },
+};
+
+function rarityForCa(ca: number): Rarity {
+  if (ca >= 185) return 'legendary';
+  if (ca >= 170) return 'platinum';
+  if (ca >= 150) return 'gold';
+  if (ca >= 130) return 'silver';
+  return 'bronze';
+}
+
+// Derived stats (must match server/src/cardDuel.ts cardFromPlayer).
+function cardStats(p: import('../../types').Player): { hp: number; atk: number; def: number; spd: number } {
+  const a = p.attributes;
+  return {
+    hp: Math.round((a.endurance ?? 10) * 4 + 20),
+    atk: Math.round((a.aim + a.reflexes) / 2),
+    def: Math.round((a.positioning + a.composure) / 2),
+    spd: Math.round(a.reflexes),
+  };
+}
+
+// Simple 2-letter country → flag emoji. Not exhaustive; returns empty
+// string if the code isn't a 2-letter ISO region.
+function flagFor(nat: string | undefined): string {
+  if (!nat || nat.length !== 2) return '';
+  const base = 0x1F1E6;
+  const a = nat.toUpperCase().charCodeAt(0);
+  const b = nat.toUpperCase().charCodeAt(1);
+  if (a < 65 || a > 90 || b < 65 || b > 90) return '';
+  return String.fromCodePoint(base + (a - 65), base + (b - 65));
+}
+
+// ---------------------------------------------------------------------
+// Player Card — reusable component. Renders like a FIFA / Ultimate Team
+// card: big rating on the left, role + rarity ribbon, four stat rows.
+// ---------------------------------------------------------------------
+
+function PlayerCard({
+  player, size = 'md', highlighted, dragProps, onClick, actionSlot,
+}: {
+  player: import('../../types').Player;
+  size?: 'sm' | 'md';
+  highlighted?: boolean;
+  dragProps?: React.HTMLAttributes<HTMLDivElement> & { draggable?: boolean };
+  onClick?: () => void;
+  actionSlot?: React.ReactElement;
+}): React.ReactElement {
+  const rarity = rarityForCa(player.currentAbility);
+  const meta = RARITY_META[rarity];
+  const stats = cardStats(player);
+  const flag = flagFor(player.nationality);
+  const heightPx = size === 'sm' ? 128 : 168;
+  const ratingSize = size === 'sm' ? 26 : 34;
+
+  return (
+    <div
+      {...dragProps}
+      onClick={onClick}
+      title={onClick ? `Click to move · ${player.nickname}` : player.nickname}
+      style={{
+        position: 'relative',
+        height: heightPx,
+        borderRadius: 8,
+        background: meta.gradient,
+        border: `1.5px solid ${meta.color}`,
+        boxShadow: highlighted
+          ? `0 0 0 2px ${meta.color}, 0 0 18px ${meta.glow}, 0 4px 12px rgba(0, 0, 0, 0.6)`
+          : `0 4px 12px rgba(0, 0, 0, 0.5)`,
+        color: meta.textColor,
+        cursor: onClick || dragProps?.draggable ? 'grab' : 'default',
+        overflow: 'hidden',
+        userSelect: 'none',
+        display: 'flex', flexDirection: 'column',
+        transition: 'transform 120ms ease, box-shadow 140ms ease',
+        ...dragProps?.style,
+      }}
+    >
+      {/* Diagonal shine */}
+      <div style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none',
+        background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 45%)',
+      }} />
+      {/* Rarity ribbon at top */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '4px 8px',
+        background: `linear-gradient(90deg, ${meta.color}55, transparent)`,
+        borderBottom: `1px solid ${meta.color}66`,
+      }}>
+        <span style={{
+          fontSize: 8.5, fontWeight: 800, letterSpacing: '0.14em',
+          color: meta.color,
+        }}>{meta.label}</span>
+        {flag && <span style={{ fontSize: size === 'sm' ? 11 : 13 }}>{flag}</span>}
+      </div>
+      {/* Main body */}
+      <div style={{ display: 'flex', flex: 1, padding: size === 'sm' ? '8px' : '10px 12px', gap: 10 }}>
+        {/* Left: rating + role */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: ratingSize + 6 }}>
+          <div style={{
+            fontSize: ratingSize, fontWeight: 900, lineHeight: 1,
+            color: meta.color,
+            textShadow: '0 1px 2px rgba(0, 0, 0, 0.7)',
+            fontVariantNumeric: 'tabular-nums',
+          }}>{player.currentAbility}</div>
+          <div style={{
+            marginTop: 2, fontSize: 8.5, fontWeight: 800,
+            letterSpacing: '0.12em', color: meta.textColor, opacity: 0.85,
+          }}>{player.role.toUpperCase()}</div>
+        </div>
+        {/* Right: name + stats */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{
+            fontWeight: 700, fontSize: size === 'sm' ? 12 : 14,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            color: meta.textColor,
+            letterSpacing: '-0.005em',
+          }}>{player.nickname}</div>
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 8px',
+            fontSize: size === 'sm' ? 9.5 : 10.5,
+            fontVariantNumeric: 'tabular-nums',
+            color: meta.textColor, opacity: 0.9,
+          }}>
+            <span>HP <b style={{ color: meta.color }}>{stats.hp}</b></span>
+            <span>ATK <b style={{ color: meta.color }}>{stats.atk}</b></span>
+            <span>DEF <b style={{ color: meta.color }}>{stats.def}</b></span>
+            <span>SPD <b style={{ color: meta.color }}>{stats.spd}</b></span>
+          </div>
+        </div>
+      </div>
+      {actionSlot && (
+        <div style={{
+          position: 'absolute', bottom: 4, right: 4,
+          display: 'flex', gap: 2,
+        }}>
+          {actionSlot}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------
+// Deck Phase — real TCG-style deck builder with drag-and-drop.
+// ---------------------------------------------------------------------
+
+interface DragState {
+  playerId: string;
+  source: 'deck' | 'bench';
+  sourceSlot?: number;
+}
+
 function DeckPhase({
   roster, teamMoney, onQueue, onBack,
 }: {
@@ -98,31 +267,70 @@ function DeckPhase({
   onQueue: (deck: string[]) => void;
   onBack: () => void;
 }): React.ReactElement {
-  const [deck, setDeck] = useState<string[]>(() => roster.slice(0, 5).map((p) => p.id));
-  const bench = roster.filter((p) => !deck.includes(p.id));
-  const canQueue = deck.length === 5 && teamMoney >= CARD_DUEL_STAKE;
+  const [deck, setDeck] = useState<(string | null)[]>(() => {
+    const initial: (string | null)[] = [null, null, null, null, null];
+    roster.slice(0, 5).forEach((p, i) => { initial[i] = p.id; });
+    return initial;
+  });
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [dragOverSlot, setDragOverSlot] = useState<number | 'bench' | null>(null);
 
-  const toggle = (id: string, targetSlot?: number) => {
-    if (deck.includes(id)) {
-      setDeck(deck.filter((d) => d !== id));
-      return;
-    }
-    if (deck.length >= 5) return;
-    if (targetSlot != null && targetSlot < 5) {
-      const next = [...deck];
-      next[targetSlot] = id;
-      setDeck(next.filter(Boolean).slice(0, 5));
-    } else {
-      setDeck([...deck, id]);
-    }
+  const deckIds = deck.filter((id): id is string => !!id);
+  const bench = roster.filter((p) => !deckIds.includes(p.id));
+  const canQueue = deckIds.length === 5 && teamMoney >= CARD_DUEL_STAKE;
+  const deckOK = deckIds.length === 5;
+
+  // Move a player into a deck slot. If the target slot is occupied,
+  // swap the occupant back to bench (or back to source if it came from
+  // the deck).
+  const placeInSlot = (playerId: string, targetSlot: number, source: DragState) => {
+    setDeck((prev) => {
+      const next = [...prev];
+      const displaced = next[targetSlot];
+      next[targetSlot] = playerId;
+      if (source.source === 'deck' && source.sourceSlot != null && source.sourceSlot !== targetSlot) {
+        next[source.sourceSlot] = displaced ?? null;
+      }
+      return next;
+    });
+  };
+  const removeFromSlot = (slot: number) => {
+    setDeck((prev) => { const next = [...prev]; next[slot] = null; return next; });
+  };
+  const addToFirstOpenSlot = (playerId: string) => {
+    setDeck((prev) => {
+      const openIdx = prev.findIndex((s) => !s);
+      if (openIdx === -1) return prev;
+      const next = [...prev]; next[openIdx] = playerId; return next;
+    });
+  };
+  const dropOnBench = (source: DragState) => {
+    if (source.source === 'deck' && source.sourceSlot != null) removeFromSlot(source.sourceSlot);
   };
 
-  const moveSlot = (i: number, delta: number) => {
-    const j = i + delta;
-    if (j < 0 || j >= deck.length) return;
-    const next = [...deck];
-    [next[i], next[j]] = [next[j]!, next[i]!];
-    setDeck(next);
+  const dragStart = (state: DragState) => (e: React.DragEvent) => {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', state.playerId);
+    setDrag(state);
+  };
+  const dragEnd = () => { setDrag(null); setDragOverSlot(null); };
+  const dragOver = (target: number | 'bench') => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverSlot !== target) setDragOverSlot(target);
+  };
+  const dragLeave = () => setDragOverSlot(null);
+  const dropOnSlot = (slot: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!drag) return;
+    placeInSlot(drag.playerId, slot, drag);
+    dragEnd();
+  };
+  const dropOnBenchZone = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!drag) return;
+    dropOnBench(drag);
+    dragEnd();
   };
 
   return (
@@ -133,7 +341,7 @@ function DeckPhase({
           <div>
             <h2 style={{ margin: 0 }}>Card Duel</h2>
             <div className="hero-sub">
-              Pick 5 of 12 · Slot order = mirror matchup · Splinterlands-style auto-battle · ${CARD_DUEL_STAKE.toLocaleString()} entry · winner-takes-all
+              5-card lineup · slot order = mirror matchup · ${CARD_DUEL_STAKE.toLocaleString()} entry · winner takes the pot
             </div>
           </div>
         </div>
@@ -147,40 +355,79 @@ function DeckPhase({
         </div>
       </div>
 
-      {/* Selected deck slots */}
-      <div className="panel" style={{ padding: 14 }}>
-        <div className="panel-title">Your Deck <span className="muted small">— slot order matters</span></div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
-          {Array.from({ length: 5 }).map((_, slot) => {
-            const id = deck[slot];
+      {/* Deck slots */}
+      <div className="panel" style={{ padding: 16 }}>
+        <div className="panel-title">
+          Battle Deck
+          <span className="muted small" style={{ marginLeft: 6 }}>
+            — drag cards between slots · {deckIds.length}/5 filled
+          </span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
+          {deck.map((id, slot) => {
             const p = id ? roster.find((r) => r.id === id) : null;
+            const isOver = dragOverSlot === slot;
             return (
               <div
                 key={slot}
-                style={{
-                  padding: 10, borderRadius: 6,
-                  background: p ? 'var(--panel-2)' : 'var(--bg-elev)',
-                  border: `1px dashed ${p ? 'var(--border-accent)' : 'var(--border)'}`,
-                  minHeight: 100,
-                  display: 'flex', flexDirection: 'column', gap: 6,
-                  position: 'relative',
-                }}
+                onDragOver={dragOver(slot)}
+                onDragLeave={dragLeave}
+                onDrop={dropOnSlot(slot)}
+                style={{ position: 'relative' }}
               >
-                <div className="muted" style={{ fontSize: 10, letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase' }}>
+                {/* Slot number tag above */}
+                <div style={{
+                  fontSize: 9, fontWeight: 800,
+                  letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase',
+                  color: isOver ? 'var(--accent)' : 'var(--muted)',
+                  marginBottom: 4, textAlign: 'center',
+                }}>
                   Slot {slot + 1}
                 </div>
                 {p ? (
-                  <>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{p.nickname}</div>
-                    <div className="muted small">{p.role} · CA {p.currentAbility}</div>
-                    <div style={{ display: 'flex', gap: 4, marginTop: 'auto' }}>
-                      <button className="btn btn-tiny" onClick={() => moveSlot(slot, -1)} disabled={slot === 0} title="Move left">◀</button>
-                      <button className="btn btn-tiny" onClick={() => moveSlot(slot, 1)} disabled={slot >= deck.length - 1} title="Move right">▶</button>
-                      <button className="btn btn-tiny" onClick={() => toggle(p.id)} title="Remove">×</button>
-                    </div>
-                  </>
+                  <PlayerCard
+                    player={p}
+                    highlighted={isOver}
+                    dragProps={{
+                      draggable: true,
+                      onDragStart: dragStart({ playerId: p.id, source: 'deck', sourceSlot: slot }),
+                      onDragEnd: dragEnd,
+                    }}
+                    actionSlot={
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeFromSlot(slot); }}
+                        title="Remove from deck"
+                        style={{
+                          width: 22, height: 22, borderRadius: '50%',
+                          background: 'rgba(0, 0, 0, 0.55)',
+                          border: '1px solid rgba(255, 255, 255, 0.2)',
+                          color: '#fff', cursor: 'pointer',
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          padding: 0,
+                        }}
+                      >
+                        <Icon name="x" size={11} />
+                      </button>
+                    }
+                  />
                 ) : (
-                  <div className="muted small" style={{ margin: 'auto' }}>Empty</div>
+                  <div
+                    style={{
+                      height: 168, borderRadius: 8,
+                      background: isOver ? 'var(--accent-soft)' : 'var(--bg-elev)',
+                      border: `2px dashed ${isOver ? 'var(--accent)' : 'var(--border)'}`,
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                      color: isOver ? 'var(--accent)' : 'var(--text-faint)',
+                      gap: 6,
+                      transition: 'background 140ms, border-color 140ms',
+                    }}
+                  >
+                    <Icon name="plus" size={22} />
+                    <div style={{
+                      fontSize: 10, fontWeight: 700,
+                      letterSpacing: '0.06em', textTransform: 'uppercase',
+                    }}>Drop card here</div>
+                  </div>
                 )}
               </div>
             );
@@ -188,45 +435,61 @@ function DeckPhase({
         </div>
       </div>
 
-      {/* Bench */}
-      <div className="panel" style={{ padding: 14 }}>
-        <div className="panel-title">Roster <span className="muted small">— tap to add</span></div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
-          {bench.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => toggle(p.id)}
-              disabled={deck.length >= 5}
-              style={{
-                padding: 10, borderRadius: 6, textAlign: 'left',
-                background: 'var(--panel-2)', border: '1px solid var(--border)',
-                color: 'var(--text)', cursor: 'pointer',
-              }}
-            >
-              <div style={{ fontWeight: 700, fontSize: 13 }}>{p.nickname}</div>
-              <div className="muted small">{p.role} · CA {p.currentAbility}</div>
-              <div className="muted small" style={{ marginTop: 4, fontSize: 10 }}>
-                HP {Math.round((p.attributes.endurance ?? 10) * 4 + 20)} · ATK {Math.round((p.attributes.aim + p.attributes.reflexes) / 2)} · DEF {Math.round((p.attributes.positioning + p.attributes.composure) / 2)}
-              </div>
-            </button>
-          ))}
+      {/* Bench / roster pool */}
+      <div
+        className="panel"
+        onDragOver={dragOver('bench')}
+        onDragLeave={dragLeave}
+        onDrop={dropOnBenchZone}
+        style={{
+          padding: 16,
+          background: dragOverSlot === 'bench' ? 'var(--panel-2)' : undefined,
+          borderColor: dragOverSlot === 'bench' && drag?.source === 'deck' ? 'var(--accent)' : undefined,
+        }}
+      >
+        <div className="panel-title">
+          Roster
+          <span className="muted small" style={{ marginLeft: 6 }}>
+            — drag onto a slot · click to auto-slot
+          </span>
         </div>
-        {bench.length === 0 && (
-          <div className="muted small" style={{ textAlign: 'center', padding: 20 }}>
+        {bench.length === 0 ? (
+          <div className="muted small" style={{ textAlign: 'center', padding: 24 }}>
             Every roster player is in your deck.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
+            {bench.map((p) => (
+              <PlayerCard
+                key={p.id}
+                player={p}
+                size="sm"
+                dragProps={{
+                  draggable: true,
+                  onDragStart: dragStart({ playerId: p.id, source: 'bench' }),
+                  onDragEnd: dragEnd,
+                }}
+                onClick={() => addToFirstOpenSlot(p.id)}
+              />
+            ))}
           </div>
         )}
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+        <div className="muted small">
+          {deckOK
+            ? 'Deck locked in — click Queue to search for an opponent.'
+            : `Fill ${5 - deckIds.length} more ${5 - deckIds.length === 1 ? 'slot' : 'slots'} to enter matchmaking.`}
+        </div>
         <button
           className="btn btn-accent"
           disabled={!canQueue}
-          onClick={() => onQueue(deck)}
+          onClick={() => onQueue(deckIds)}
           style={{ padding: '10px 24px', display: 'inline-flex', alignItems: 'center', gap: 8 }}
           title={
             teamMoney < CARD_DUEL_STAKE ? 'Insufficient funds'
-              : deck.length !== 5 ? 'Deck must have 5 cards'
+              : !deckOK ? 'Deck must have 5 cards'
               : 'Enter matchmaking'
           }
         >
