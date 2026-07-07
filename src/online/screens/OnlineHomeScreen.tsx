@@ -119,7 +119,14 @@ export default function OnlineHomeScreen() {
       <NewsTicker />
       <div className="hero-panel">
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          <div className="team-logo team-logo-lg team-logo-placeholder">{team.tag.slice(0, 2)}</div>
+          <div
+            className={`team-logo team-logo-lg ${team.logoId ? 'team-logo-emoji' : 'team-logo-placeholder'}`}
+            style={team.primaryColor && !team.logoId
+              ? { background: `linear-gradient(135deg, ${team.primaryColor}22, ${team.primaryColor}0d)`, borderColor: `${team.primaryColor}55`, color: team.primaryColor }
+              : undefined}
+          >
+            {team.logoId || team.tag.slice(0, 2)}
+          </div>
           <div>
             <h2>
               <span style={{ color: 'var(--accent)' }}>{team.tag}</span> · {team.name}
