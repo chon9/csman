@@ -37,6 +37,8 @@ export function cardFromPlayer(p: Player, slot: CardDuelSlot): CardDuelCard {
     nickname: p.nickname,
     role: p.role,
     slot,
+    ca: p.currentAbility,
+    nationality: p.nationality,
     maxHp: Math.round((a.endurance ?? 10) * 4 + 20),
     attack: (a.aim + a.reflexes) / 2,
     defense: (a.positioning + a.composure) / 2,
@@ -101,19 +103,23 @@ interface SituationEffect {
   save?: boolean;
 }
 
-const SITUATION_DECK: { id: CardDuelSituationId; effect: SituationEffect; attackerFavoured?: boolean }[] = [
-  { id: 'eco',            effect: { atkMult: 0.5 } },
-  { id: 'force_buy',      effect: { atkMult: 1.3, defMult: 0.8 }, attackerFavoured: true },
-  { id: 'bomb_plant',     effect: { atkMult: 1.4 }, attackerFavoured: true },
-  { id: 'bomb_defuse',    effect: { defMult: 1.4 }, attackerFavoured: false },
-  { id: 'clutch_time',    effect: { clutch: true } },
-  { id: 'awp_pick',       effect: { awpBonus: 2.0 } },
-  { id: 'smoke_wall',     effect: { smokedRoles: true } },
-  { id: 'flashbang',      effect: { flash: true } },
-  { id: 'utility_execute', effect: { atkMult: 1.2 }, attackerFavoured: true },
-  { id: 'crossfire',      effect: { crossfire: true } },
-  { id: 'rush_b',         effect: { rush: true }, attackerFavoured: true },
-  { id: 'save_round',     effect: { save: true } },
+// Effects apply globally to every card that swings this turn — both
+// sides. The old `attackerFavoured` cosmetic flag has been removed
+// because the descriptions on the client were implying asymmetry that
+// doesn't exist in the engine.
+const SITUATION_DECK: { id: CardDuelSituationId; effect: SituationEffect }[] = [
+  { id: 'eco',             effect: { atkMult: 0.5 } },
+  { id: 'force_buy',       effect: { atkMult: 1.3, defMult: 0.8 } },
+  { id: 'bomb_plant',      effect: { atkMult: 1.4 } },
+  { id: 'bomb_defuse',     effect: { defMult: 1.4 } },
+  { id: 'clutch_time',     effect: { clutch: true } },
+  { id: 'awp_pick',        effect: { awpBonus: 2.0 } },
+  { id: 'smoke_wall',      effect: { smokedRoles: true } },
+  { id: 'flashbang',       effect: { flash: true } },
+  { id: 'utility_execute', effect: { atkMult: 1.2 } },
+  { id: 'crossfire',       effect: { crossfire: true } },
+  { id: 'rush_b',          effect: { rush: true } },
+  { id: 'save_round',      effect: { save: true } },
 ];
 
 // ---------------------------------------------------------------------
@@ -145,7 +151,7 @@ export function simulateCardDuel(
     if (aHp.every((h) => h <= 0) || bHp.every((h) => h <= 0)) break;
     const drawn = SITUATION_DECK[rng.int(0, SITUATION_DECK.length - 1)]!;
     const situation: CardDuelSituation = { id: drawn.id };
-    if (drawn.attackerFavoured !== undefined) situation.attackerFavoured = drawn.attackerFavoured;
+    // situation.attackerFavoured intentionally omitted — see SITUATION_DECK comment.
     const effect = drawn.effect;
     const strikes: CardDuelStrike[] = [];
 

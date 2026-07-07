@@ -28,19 +28,22 @@ import { moneyCompact } from '../../ui/util';
 // Situation-card flavour (12 templates matching server SITUATION_DECK)
 // ---------------------------------------------------------------------
 
+// Blurbs describe what the ENGINE actually does — no more implying an
+// effect is asymmetric when it applies to every card that swings on the
+// turn. Kept short so the situation banner reads as a subtitle chip.
 const SITUATION_META: Record<CardDuelSituationId, { title: string; blurb: string; color: string }> = {
-  eco:            { title: 'Eco Round',        blurb: 'Both sides play cheap — damage halved.',        color: '#9aa0aa' },
-  force_buy:      { title: 'Force Buy',        blurb: 'Attackers rush better guns, defence dips.',       color: '#f04b6a' },
-  bomb_plant:     { title: 'Bomb Plant',       blurb: 'Attackers get the play — +40% damage.',           color: '#ff8a00' },
-  bomb_defuse:    { title: 'Bomb Defuse',      blurb: 'Defenders lock down — 40% harder to shift.',      color: '#4b8cd9' },
-  clutch_time:    { title: 'Clutch Time',      blurb: 'Last unit standing gets +100% damage.',            color: '#ffd166' },
-  awp_pick:       { title: 'AWP Pick',         blurb: 'Fastest unit on each side deals 2× damage.',       color: '#6ba0f5' },
-  smoke_wall:     { title: 'Smoke Wall',       blurb: 'Role advantage muted this turn.',                  color: '#8390ad' },
-  flashbang:      { title: 'Flashbang',        blurb: 'One unit per side is blinded — no damage.',        color: '#ffd700' },
-  utility_execute:{ title: 'Utility Execute',  blurb: 'Coordinated push — attackers +20% damage.',        color: '#4dd4b0' },
-  crossfire:      { title: 'Crossfire',        blurb: 'Every strike splashes to the next target.',        color: '#b47ef7' },
-  rush_b:         { title: 'Rush B',           blurb: 'Massive attack surge, weaker defence.',            color: '#f04b6a' },
-  save_round:     { title: 'Save Round',       blurb: 'Both sides save — damage cut in half.',            color: '#9aa0aa' },
+  eco:            { title: 'Eco Round',        blurb: 'Everyone plays cheap — all damage cut by 50%.',                          color: '#9aa0aa' },
+  force_buy:      { title: 'Force Buy',        blurb: 'All attacks +30% damage · all defence reduced 20%.',                     color: '#f04b6a' },
+  bomb_plant:     { title: 'Bomb Plant',       blurb: 'Every strike this turn deals +40% damage.',                              color: '#ff8a00' },
+  bomb_defuse:    { title: 'Bomb Defuse',      blurb: 'Everyone braces — defence +40% for this turn.',                          color: '#4b8cd9' },
+  clutch_time:    { title: 'Clutch Time',      blurb: 'Any side down to its last card deals +100% damage.',                     color: '#ffd166' },
+  awp_pick:       { title: 'AWP Pick',         blurb: 'Fastest card on each side deals 2× damage this turn.',                   color: '#6ba0f5' },
+  smoke_wall:     { title: 'Smoke Wall',       blurb: 'Role advantage disabled — no counter-pick bonus.',                        color: '#8390ad' },
+  flashbang:      { title: 'Flashbang',        blurb: 'One random card per side is flashed — deals 0 damage.',                   color: '#ffd700' },
+  utility_execute:{ title: 'Utility Execute',  blurb: 'Every card swings +20% damage this turn.',                                color: '#4dd4b0' },
+  crossfire:      { title: 'Crossfire',        blurb: 'Every strike splashes to the next living target for half damage.',       color: '#b47ef7' },
+  rush_b:         { title: 'Rush B',           blurb: 'Everyone rushes — attack +40%, defence -20%.',                           color: '#f04b6a' },
+  save_round:     { title: 'Save Round',       blurb: 'Everyone saves — attack halved.',                                        color: '#9aa0aa' },
 };
 
 // ---------------------------------------------------------------------
@@ -708,81 +711,184 @@ function SideRow({
   side: 'A' | 'B';
 }): React.ReactElement {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
       {cards.map((card, i) => {
         const currentHp = hp[i]!;
         const dead = currentHp <= 0;
         const pctHp = Math.max(0, Math.min(1, currentHp / card.maxHp));
         const hurtNow = currentStrike?.targetSlot === i;
         const attackerNow = attackerSlot === i && isAttacker;
+        const rarity = rarityForCa(card.ca);
+        const meta = RARITY_META[rarity];
         const barColor = pctHp > 0.6 ? '#4dd4b0' : pctHp > 0.3 ? '#ffd166' : '#f04b6a';
+        const flag = flagFor(card.nationality);
         return (
           <div
             key={card.playerId}
             style={{
-              padding: 10, borderRadius: 6, position: 'relative',
-              background: dead ? 'var(--bg-elev)' : attackerNow ? 'var(--accent-soft)' : 'var(--panel-2)',
-              border: `1px solid ${attackerNow ? 'var(--accent)' : dead ? 'var(--border-soft)' : 'var(--border)'}`,
-              opacity: dead ? 0.42 : 1,
-              boxShadow: hurtNow ? `0 0 0 2px #f04b6a` : 'none',
-              transition: 'background 140ms, box-shadow 140ms, opacity 140ms',
+              position: 'relative',
+              borderRadius: 8, overflow: 'hidden',
+              background: meta.gradient,
+              border: `1.5px solid ${meta.color}`,
+              color: meta.textColor,
+              // Attacker: teal accent ring around the card.
+              boxShadow: attackerNow
+                ? `0 0 0 2px var(--accent), 0 0 22px var(--accent-soft), 0 4px 12px rgba(0, 0, 0, 0.6)`
+                : hurtNow
+                ? `0 0 0 2px #f04b6a, 0 0 18px rgba(240, 75, 106, 0.55), 0 4px 12px rgba(0, 0, 0, 0.5)`
+                : `0 4px 10px rgba(0, 0, 0, 0.55)`,
+              opacity: dead ? 0.38 : 1,
+              filter: dead ? 'grayscale(0.9)' : 'none',
+              transition: 'box-shadow 140ms, opacity 200ms, filter 200ms',
+              minHeight: 148,
+              display: 'flex', flexDirection: 'column',
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {card.nickname}
-            </div>
-            <div className="muted" style={{ fontSize: 10, letterSpacing: 'var(--tracking-caps)', textTransform: 'uppercase' }}>
-              {card.role}
-            </div>
-            {/* HP bar */}
+            {/* Diagonal shine */}
             <div style={{
-              marginTop: 6,
-              position: 'relative', height: 5, borderRadius: 999,
-              background: 'var(--bg)', overflow: 'hidden',
+              position: 'absolute', inset: 0, pointerEvents: 'none',
+              background: 'linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 45%)',
+            }} />
+            {/* Rarity ribbon */}
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              padding: '3px 8px',
+              background: `linear-gradient(90deg, ${meta.color}55, transparent)`,
+              borderBottom: `1px solid ${meta.color}66`,
+              fontSize: 8.5, fontWeight: 800,
+              letterSpacing: '0.14em',
+              color: meta.color,
+              zIndex: 1,
+            }}>
+              <span>{meta.label}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {flag && <span style={{ fontSize: 11 }}>{flag}</span>}
+                <span style={{ color: meta.textColor, opacity: 0.75 }}>{side}{card.slot + 1}</span>
+              </span>
+            </div>
+            {/* Body */}
+            <div style={{
+              flex: 1, display: 'flex', gap: 8,
+              padding: '8px 10px 6px',
+              zIndex: 1,
+            }}>
+              {/* Left: CA rating + role */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 30 }}>
+                <div style={{
+                  fontSize: 24, fontWeight: 900, lineHeight: 1,
+                  color: meta.color,
+                  textShadow: '0 1px 2px rgba(0, 0, 0, 0.7)',
+                  fontVariantNumeric: 'tabular-nums',
+                }}>{card.ca}</div>
+                <div style={{
+                  marginTop: 2, fontSize: 8, fontWeight: 800,
+                  letterSpacing: '0.1em', color: meta.textColor, opacity: 0.85,
+                }}>{card.role.toUpperCase()}</div>
+              </div>
+              {/* Right: name + stats */}
+              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div style={{
+                  fontWeight: 700, fontSize: 12,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  color: meta.textColor,
+                  letterSpacing: '-0.005em',
+                }}>{card.nickname}</div>
+                <div style={{
+                  fontSize: 9.5,
+                  display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0px 6px',
+                  fontVariantNumeric: 'tabular-nums',
+                  color: meta.textColor, opacity: 0.85,
+                }}>
+                  <span>ATK <b style={{ color: meta.color }}>{Math.round(card.attack)}</b></span>
+                  <span>DEF <b style={{ color: meta.color }}>{Math.round(card.defense)}</b></span>
+                  <span>SPD <b style={{ color: meta.color }}>{Math.round(card.speed)}</b></span>
+                </div>
+              </div>
+            </div>
+            {/* HP block — bottom third */}
+            <div style={{
+              padding: '4px 10px 8px',
+              background: 'rgba(0, 0, 0, 0.35)',
+              zIndex: 1,
             }}>
               <div style={{
-                position: 'absolute', inset: 0, width: `${pctHp * 100}%`,
-                background: barColor, borderRadius: 999,
-                transition: 'width 200ms ease',
+                display: 'flex', justifyContent: 'space-between',
+                fontSize: 9, fontWeight: 700,
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                color: meta.textColor, opacity: 0.85,
+                marginBottom: 3,
+                fontVariantNumeric: 'tabular-nums',
+              }}>
+                <span>HP</span>
+                <span>{Math.max(0, Math.ceil(currentHp))} / {card.maxHp}</span>
+              </div>
+              <div style={{
+                position: 'relative', height: 6, borderRadius: 999,
+                background: 'rgba(0, 0, 0, 0.55)',
+                border: '1px solid rgba(0, 0, 0, 0.4)',
+                overflow: 'hidden',
+              }}>
+                <div style={{
+                  position: 'absolute', inset: 0, width: `${pctHp * 100}%`,
+                  background: barColor, borderRadius: 999,
+                  boxShadow: `0 0 6px ${barColor}88`,
+                  transition: 'width 200ms ease',
+                }} />
+              </div>
+            </div>
+            {/* Attacker chevron */}
+            {attackerNow && (
+              <div style={{
+                position: 'absolute', top: -8, left: '50%', transform: 'translateX(-50%)',
+                width: 0, height: 0,
+                borderLeft: '6px solid transparent',
+                borderRight: '6px solid transparent',
+                borderBottom: '8px solid var(--accent)',
+                zIndex: 2,
               }} />
-            </div>
-            <div style={{
-              marginTop: 4, fontSize: 10,
-              display: 'flex', justifyContent: 'space-between',
-              fontVariantNumeric: 'tabular-nums',
-              color: dead ? 'var(--text-faint)' : 'var(--text-dim)',
-            }}>
-              <span>{Math.max(0, Math.ceil(currentHp))}/{card.maxHp}</span>
-              <span>ATK {Math.round(card.attack)}</span>
-            </div>
-            {/* Strike overlay: floating damage number */}
-            {hurtNow && currentStrike && (
+            )}
+            {/* Floating damage number */}
+            {hurtNow && currentStrike && !currentStrike.skipped && (
               <div
                 key={`${currentStrike.attackerSlot}-${currentStrike.targetSlot}-${currentStrike.damage}`}
                 style={{
-                  position: 'absolute', top: -8, right: 6,
-                  fontWeight: 800, fontSize: 14, color: '#f04b6a',
-                  textShadow: '0 1px 2px rgba(0,0,0,0.6)',
-                  animation: 'card-duel-hit 500ms ease-out',
+                  position: 'absolute', top: 8, right: 10,
+                  fontWeight: 900, fontSize: 18, color: '#ff6b7f',
+                  textShadow: '0 2px 3px rgba(0,0,0,0.85)',
+                  animation: 'card-duel-hit 550ms ease-out',
+                  zIndex: 3,
                 }}
               >
                 −{currentStrike.damage}
-                {currentStrike.advantage && <span style={{ marginLeft: 3, fontSize: 8, color: 'var(--accent-hi)' }}>ADV</span>}
+                {currentStrike.advantage && <span style={{
+                  marginLeft: 4, fontSize: 9,
+                  background: 'var(--accent)', color: '#06121c',
+                  padding: '1px 4px', borderRadius: 3,
+                  letterSpacing: '0.06em',
+                }}>ADV</span>}
               </div>
+            )}
+            {hurtNow && currentStrike?.skipped && (
+              <div style={{
+                position: 'absolute', top: 8, right: 10,
+                fontWeight: 800, fontSize: 11,
+                color: '#ffd700',
+                background: 'rgba(0, 0, 0, 0.6)',
+                padding: '2px 6px', borderRadius: 3,
+                letterSpacing: '0.06em',
+                zIndex: 3,
+              }}>FLASHED</div>
             )}
             {dead && (
               <div style={{
-                position: 'absolute', top: '50%', left: '50%',
-                transform: 'translate(-50%, -50%)',
-                fontSize: 11, fontWeight: 700, color: 'var(--loss)',
-                letterSpacing: '0.06em', textTransform: 'uppercase',
-              }}>ELIMINATED</div>
+                position: 'absolute', inset: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 12, fontWeight: 800, color: '#ff6b7f',
+                letterSpacing: '0.14em', textTransform: 'uppercase',
+                background: 'rgba(0, 0, 0, 0.55)',
+                zIndex: 2,
+              }}>Eliminated</div>
             )}
-            {/* Slot number badge */}
-            <div style={{
-              position: 'absolute', top: 4, right: 6,
-              fontSize: 9, color: 'var(--muted)', fontWeight: 700,
-            }}>{side}{card.slot + 1}</div>
           </div>
         );
       })}

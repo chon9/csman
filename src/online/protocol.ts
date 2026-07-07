@@ -2315,6 +2315,11 @@ export interface CardDuelCard {
   nickname: string;
   role: PlayerRole;
   slot: CardDuelSlot;
+  /** Current Ability. Drives client-side rarity tint so the same
+   *  card face renders on both sides of the battle. */
+  ca: number;
+  /** ISO 3166-1 alpha-2 country code — flag emoji on the card face. */
+  nationality: string;
   /** HP pool at battle start. Endurance × 4 + 20 (range ~24–100). */
   maxHp: number;
   attack: number;
