@@ -9,6 +9,7 @@ import {
   massageEffects,
 } from '../protocol';
 import ToastStack from './ToastStack';
+import Icon from '../../ui/Icon';
 
 const PREVIEW_ROWS: Array<{ band: string; sample: number; tone: string; note: string }> = [
   { band: 'Class 1-3', sample: 2, tone: '#e25555', note: 'Cheap parlour. Players grumble — fatigue drops anyway.' },
@@ -35,16 +36,23 @@ export default function OnlineMassageScreen(): React.ReactElement | null {
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h2 style={{ margin: '0 0 4px' }}>Massage Center</h2>
-          <div className="muted small">
-            Book a spa session for the starting 5. Random class 1-10 — always knocks down fatigue, morale swings ± by class.
+      <div className="hero-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="sparkle" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>Recovery Suite</h2>
+            <div className="hero-sub">
+              Book a spa session for the starting 5. Random class 1-10 — always knocks down fatigue, morale swings ± by class.
+            </div>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <span className="muted small">Cash: <strong>${team.money.toLocaleString()}</strong></span>
-          <button className="btn" onClick={() => go('home')}>← Back</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span className="pill" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="cash" size={13} /> ${team.money.toLocaleString()}
+          </span>
+          <button className="btn" onClick={() => go('home')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="chevron-left" size={13} /> Back
+          </button>
         </div>
       </div>
 

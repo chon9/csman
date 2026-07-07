@@ -15,6 +15,7 @@ import {
   type AiMatchCardWire,
 } from '../protocol';
 import ToastStack from './ToastStack';
+import Icon from '../../ui/Icon';
 
 export default function AiBettingScreen(): React.ReactElement | null {
   const team = useOnline((s) => s.team);
@@ -64,11 +65,14 @@ export default function AiBettingScreen(): React.ReactElement | null {
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* ===== Header ===== */}
-      <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h2 style={{ margin: '0 0 4px' }}>🎰 AI Betting Market</h2>
-          <div className="muted small">
-            Synthetic AI vs AI matches every ~8 minutes. Bet on either side · 5% house edge · payout = stake × odds. Bets lock {Math.round(AI_BET_LOCK_LEAD_MS / 1000)}s before kickoff.
+      <div className="hero-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="bet" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>Sportsbook</h2>
+            <div className="hero-sub">
+              Synthetic AI vs AI matches every ~8 minutes. Bet either side · 5% house edge · payout = stake × odds. Bets lock {Math.round(AI_BET_LOCK_LEAD_MS / 1000)}s before kickoff.
+            </div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>

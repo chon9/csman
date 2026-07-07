@@ -11,6 +11,7 @@ import { APARTMENT_TIER_META, findCar, findLuxury } from '../protocol';
 import type { Player } from '../../types';
 import ToastStack from './ToastStack';
 import { moneyCompact } from '../../ui/util';
+import Icon from '../../ui/Icon';
 
 type Tab = 'cash' | 'skins' | 'players' | 'lots';
 
@@ -95,17 +96,20 @@ export default function EWalletScreen(): React.ReactElement | null {
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* Header */}
       <div className="hero-panel">
-        <div>
-          <h2>💳 E-Wallet</h2>
-          <div className="hero-sub">Peer-to-peer transfers · zero fee · cash, skins, players and real estate</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="wallet" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>E-Wallet</h2>
+            <div className="hero-sub">Peer-to-peer transfers · zero fee · cash, skins, players and real estate</div>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
           <span
             className="pill pill-accent"
-            style={{ fontSize: 'var(--text-md)', padding: '5px 12px', whiteSpace: 'nowrap' }}
+            style={{ fontSize: 'var(--text-md)', padding: '5px 12px', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 6 }}
             title={`$${team.money.toLocaleString()}`}
           >
-            💰 {moneyCompact(team.money)}
+            <Icon name="cash" size={13} /> {moneyCompact(team.money)}
           </span>
           <button className="btn" onClick={() => go('home')}>← Back</button>
         </div>

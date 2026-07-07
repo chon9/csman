@@ -17,6 +17,7 @@ import {
   fansForRoster,
 } from '../protocol';
 import ToastStack from './ToastStack';
+import Icon from '../../ui/Icon';
 
 const ATTR_LABELS: Record<string, string> = {
   aim: 'Aim',
@@ -46,16 +47,23 @@ export default function OnlineStreamScreen(): React.ReactElement | null {
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h2 style={{ margin: '0 0 4px' }}>📺 Streaming</h2>
-          <div className="muted small">
-            Pick a player to grind a Faceit pickup. They gain {STREAM_FATIGUE_COST} fatigue and burn {STREAM_CONTRACT_COST} contract duel · payout scales with team fans + player ability · 50% chance of +1 attribute (slow training).
+      <div className="hero-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="stream" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>Streaming</h2>
+            <div className="hero-sub">
+              Pick a player to grind a Faceit pickup. They gain {STREAM_FATIGUE_COST} fatigue and burn {STREAM_CONTRACT_COST} contract duel · payout scales with team fans + player ability · 50% chance of +1 attribute (slow training).
+            </div>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <span className="muted small">Cash: <strong>${team.money.toLocaleString()}</strong></span>
-          <button className="btn" onClick={() => go('home')}>← Back</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span className="pill" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="cash" size={13} /> ${team.money.toLocaleString()}
+          </span>
+          <button className="btn" onClick={() => go('home')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="chevron-left" size={13} /> Back
+          </button>
         </div>
       </div>
 

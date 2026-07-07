@@ -618,6 +618,20 @@ input[type='range'] {
   font-size: var(--text-sm);
   letter-spacing: 0.02em;
 }
+/* Icon badge that sits next to a hero-panel h2 — consistent look
+ * across every screen's header. Teal-tinted, rounded square. */
+.hero-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--border-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
 
 /* Stat card — big-number tile. Used on Home/Race/E-Wallet dashboards. */
 .stat-card {

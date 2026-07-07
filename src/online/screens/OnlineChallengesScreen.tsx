@@ -17,6 +17,7 @@ import {
 import type { MatchFormat } from '../../types';
 import ToastStack from './ToastStack';
 import { TeamTag } from './TeamProfileModal';
+import Icon from '../../ui/Icon';
 
 const APVP_PRESETS = [1000, 2500, 5000, 10000, 25000, 50000];
 
@@ -63,16 +64,23 @@ export default function OnlineChallengesScreen() {
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h2 style={{ margin: '0 0 4px' }}>PvP Lobby</h2>
-          <div className="muted small">
-            Post open challenges or accept another team's. Resolves instantly when accepted — frame-by-frame replay watchable in History.
+      <div className="hero-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="crosshair" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>PvP Lobby</h2>
+            <div className="hero-sub">
+              Post open challenges or accept another team's. Resolves instantly when accepted — frame-by-frame replay watchable in History.
+            </div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={refresh}>Refresh</button>
-          <button className="btn" onClick={() => go('home')}>← Back</button>
+          <button className="btn" onClick={refresh} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="refresh" size={13} /> Refresh
+          </button>
+          <button className="btn" onClick={() => go('home')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="chevron-left" size={13} /> Back
+          </button>
         </div>
       </div>
 

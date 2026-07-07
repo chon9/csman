@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import ToastStack from './ToastStack';
+import Icon from '../../ui/Icon';
 import { TeamTag } from './TeamProfileModal';
 import RankBadge from './RankBadge';
 
@@ -68,20 +69,25 @@ export default function OnlineLeaderboardScreen() {
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h2 style={{ margin: '0 0 4px' }}>
-            Season {season?.seasonNo ?? '—'} Leaderboard
-          </h2>
-          <div className="muted small">
-            {season
-              ? <>Ends in <strong>{fmtDuration(season.endsAt - Date.now())}</strong> · prize pool ${season.prizePool.toLocaleString()}</>
-              : 'Loading…'}
+      <div className="hero-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="bar-chart" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>Season {season?.seasonNo ?? '—'} Leaderboard</h2>
+            <div className="hero-sub">
+              {season
+                ? <>Ends in <strong>{fmtDuration(season.endsAt - Date.now())}</strong> · prize pool ${season.prizePool.toLocaleString()}</>
+                : 'Loading…'}
+            </div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={refresh}>Refresh</button>
-          <button className="btn" onClick={() => go('home')}>← Back</button>
+          <button className="btn" onClick={refresh} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="refresh" size={13} /> Refresh
+          </button>
+          <button className="btn" onClick={() => go('home')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="chevron-left" size={13} /> Back
+          </button>
         </div>
       </div>
 

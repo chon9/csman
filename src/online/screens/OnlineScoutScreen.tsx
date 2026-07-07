@@ -20,6 +20,7 @@ import {
 import type { Player } from '../../types';
 import { play } from '../../sound/soundManager';
 import ToastStack from './ToastStack';
+import Icon from '../../ui/Icon';
 
 export default function OnlineScoutScreen(): React.ReactElement | null {
   const team = useOnline((s) => s.team);
@@ -33,16 +34,23 @@ export default function OnlineScoutScreen(): React.ReactElement | null {
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h2 style={{ margin: '0 0 4px' }}>🔬 Scout Pack</h2>
-          <div className="muted small">
-            One pack, one player. Rarity is rolled when the pack cracks — Bronze through ICON. Contract = {SCOUT_CONTRACT_DUELS} ranked duels.
+      <div className="hero-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="scout" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>Scout Pack</h2>
+            <div className="hero-sub">
+              One pack, one player. Rarity is rolled when the pack cracks — Bronze through ICON. Contract = {SCOUT_CONTRACT_DUELS} ranked duels.
+            </div>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <span className="muted small">Cash: <strong>${team.money.toLocaleString()}</strong></span>
-          <button className="btn" onClick={() => go('home')}>← Back</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span className="pill" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="cash" size={13} /> ${team.money.toLocaleString()}
+          </span>
+          <button className="btn" onClick={() => go('home')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="chevron-left" size={13} /> Back
+          </button>
         </div>
       </div>
 

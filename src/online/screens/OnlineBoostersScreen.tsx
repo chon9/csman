@@ -15,6 +15,7 @@ import {
 } from '../protocol';
 import type { Player } from '../../types';
 import ToastStack from './ToastStack';
+import Icon from '../../ui/Icon';
 
 const RARITY_ORDER: BoostRarity[] = ['legendary', 'epic', 'rare', 'common'];
 
@@ -61,16 +62,23 @@ export default function OnlineBoostersScreen(): React.ReactElement | null {
 
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div className="panel" style={{ padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
-        <div>
-          <h2 style={{ margin: '0 0 4px' }}>Booster Packs</h2>
-          <div className="muted small">
-            Gacha cards that bump combat attributes for a few duels. Apply to any roster player.
+      <div className="hero-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="zap" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>Booster Packs</h2>
+            <div className="hero-sub">
+              Gacha cards that bump combat attributes for a few duels. Apply to any roster player.
+            </div>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <span className="muted small">Cash: <strong>${team.money.toLocaleString()}</strong></span>
-          <button className="btn" onClick={() => go('home')}>← Back</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span className="pill" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="cash" size={13} /> ${team.money.toLocaleString()}
+          </span>
+          <button className="btn" onClick={() => go('home')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="chevron-left" size={13} /> Back
+          </button>
         </div>
       </div>
 

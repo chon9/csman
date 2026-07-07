@@ -18,6 +18,7 @@ import {
   type SkinStripEntry,
 } from '../protocol';
 import ToastStack from './ToastStack';
+import Icon from '../../ui/Icon';
 
 /** Short float string for table cells — 4 dp. Returns dash for legacy skins
  *  minted before the float system. */
@@ -112,17 +113,22 @@ export default function OnlineCasesScreen() {
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div className="hero-panel">
-        <div>
-          <h2>📦 Cases</h2>
-          <div className="hero-sub">
-            Open cases, sell skins, fund your team. Daily free case from the {cases.find((c) => c.id === freeCaseId)?.name ?? 'starter'} pool.
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="cases" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>Cases</h2>
+            <div className="hero-sub">
+              Open cases, sell skins, fund your team. Daily free case from the {cases.find((c) => c.id === freeCaseId)?.name ?? 'starter'} pool.
+            </div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-          <span className="pill pill-accent" style={{ fontSize: 'var(--text-md)', padding: '5px 12px' }}>
-            💰 ${team.money.toLocaleString()}
+          <span className="pill pill-accent" style={{ fontSize: 'var(--text-md)', padding: '5px 12px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="cash" size={13} /> ${team.money.toLocaleString()}
           </span>
-          <button className="btn" onClick={() => go('home')}>← Back</button>
+          <button className="btn" onClick={() => go('home')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="chevron-left" size={13} /> Back
+          </button>
         </div>
       </div>
 

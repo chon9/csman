@@ -23,6 +23,7 @@ import {
 } from '../protocol';
 import LotDetailModal from './LotDetailModal';
 import ToastStack from './ToastStack';
+import Icon from '../../ui/Icon';
 
 const RANDOM_RETRY = 20; // tries before giving up on a fresh empty pick
 
@@ -97,26 +98,26 @@ export default function RealEstateScreen(): React.ReactElement | null {
   return (
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* ===== Header ===== */}
-      <div className="panel" style={{
-        padding: 18,
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10,
-        background: 'linear-gradient(135deg, #1d3b5c 0%, #2a1b4a 60%, #5c1d4a 100%)',
-        border: '1px solid rgba(255,255,255,0.14)',
-      }}>
-        <div>
-          <h2 style={{ margin: '0 0 4px', letterSpacing: 1 }}>🏘 REAL ESTATE</h2>
-          <div className="muted small">
-            {MAP_SIZE}×{MAP_SIZE} grid · pick any coord and bid ≥ ${LOT_MIN_OPENING_BID.toLocaleString()} · vault earns {(LOT_VAULT_INTEREST_PER_DAY * 100).toFixed(1)}%/day interest
+      <div className="hero-panel">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="building" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>Real Estate</h2>
+            <div className="hero-sub">
+              {MAP_SIZE}×{MAP_SIZE} grid · pick any coord and bid ≥ ${LOT_MIN_OPENING_BID.toLocaleString()} · vault earns {(LOT_VAULT_INTEREST_PER_DAY * 100).toFixed(1)}%/day interest
+            </div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <div style={{ padding: '6px 12px', borderRadius: 999, background: 'rgba(0,0,0,0.35)', fontSize: 12, fontWeight: 700 }}>
-            💰 <strong>${team.money.toLocaleString()}</strong>
-          </div>
-          <div style={{ padding: '6px 12px', borderRadius: 999, background: 'rgba(0,0,0,0.35)', fontSize: 12, fontWeight: 700 }}>
-            🏠 <strong>{myLots.length}</strong> {myLots.length === 1 ? 'lot' : 'lots'}
-          </div>
-          <button className="btn" onClick={() => go('home')}>← Back</button>
+          <span className="pill" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="cash" size={13} /> <strong>${team.money.toLocaleString()}</strong>
+          </span>
+          <span className="pill" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="home" size={13} /> <strong>{myLots.length}</strong> {myLots.length === 1 ? 'lot' : 'lots'}
+          </span>
+          <button className="btn" onClick={() => go('home')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="chevron-left" size={13} /> Back
+          </button>
         </div>
       </div>
 

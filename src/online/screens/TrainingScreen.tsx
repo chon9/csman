@@ -22,6 +22,7 @@ import {
 import { ATTRIBUTE_KEYS } from '../../types';
 import type { PlayerRole } from '../../types';
 import ToastStack from './ToastStack';
+import Icon from '../../ui/Icon';
 
 type AttrKey = keyof PlayerAttributes;
 
@@ -265,14 +266,19 @@ export default function TrainingScreen(): React.ReactElement | null {
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* Header */}
       <div className="hero-panel">
-        <div>
-          <h2>🎯 Training Center</h2>
-          <div className="hero-sub">
-            5-minute idle training · high-risk, high-return · newgens only · real-name legends are evergreen
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="dumbbell" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>Training Center</h2>
+            <div className="hero-sub">
+              5-minute idle training · high-risk, high-return · newgens only · real-name legends are evergreen
+            </div>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-          <button className="btn" onClick={() => go('home')}>← Back</button>
+          <button className="btn" onClick={() => go('home')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="chevron-left" size={13} /> Back
+          </button>
         </div>
       </div>
 

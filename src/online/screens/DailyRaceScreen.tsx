@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useOnline } from '../onlineStore';
 import type { DailyRaceEntryWire } from '../protocol';
 import ToastStack from './ToastStack';
+import Icon from '../../ui/Icon';
 
 export default function DailyRaceScreen(): React.ReactElement | null {
   const team = useOnline((s) => s.team);
@@ -29,22 +30,27 @@ export default function DailyRaceScreen(): React.ReactElement | null {
     <div className="screen" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* Header */}
       <div className="hero-panel">
-        <div>
-          <h2>🏁 Daily Race</h2>
-          <div className="hero-sub">Two boards · resets 00:00 UTC · top 3 win cash on each · no signup, just play</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="hero-icon"><Icon name="flag" size={20} /></div>
+          <div>
+            <h2 style={{ margin: 0 }}>Daily Race</h2>
+            <div className="hero-sub">Two boards · resets 00:00 UTC · top 3 win cash on each · no signup, just play</div>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
           {daily && <RolloverChip rolloverUtcMs={daily.rolloverUtcMs} />}
-          <button className="btn" onClick={() => go('home')}>← Back</button>
+          <button className="btn" onClick={() => go('home')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="chevron-left" size={13} /> Back
+          </button>
         </div>
       </div>
 
       {/* Payout schedule strip */}
       <div className="panel panel-accent" style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', alignItems: 'center' }}>
         <span className="section-title" style={{ margin: 0, flex: 'none' }}>Payout schedule</span>
-        <span className="pill pill-accent">🥇 $500,000</span>
-        <span className="pill">🥈 $250,000</span>
-        <span className="pill">🥉 $100,000</span>
+        <span className="pill pill-accent">1st · $500,000</span>
+        <span className="pill">2nd · $250,000</span>
+        <span className="pill">3rd · $100,000</span>
         <span className="muted small" style={{ marginLeft: 'auto' }}>Awarded automatically at 00:00 UTC · positive deltas only</span>
       </div>
 
@@ -54,16 +60,18 @@ export default function DailyRaceScreen(): React.ReactElement | null {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
           <Board
-            title="📈 Points Race"
+            title="Points Race"
+            icon="trending-up"
             subtitle="MMR gained today"
             rows={daily.pointsBoard}
             myTeamId={team.id}
             myRank={daily.myRank.points}
             unit="MMR"
-            accent="#78d078"
+            accent="#4dd4b0"
           />
           <Board
-            title="💰 Money Race"
+            title="Money Race"
+            icon="cash"
             subtitle="Gross earned today"
             rows={daily.moneyBoard}
             myTeamId={team.id}
@@ -88,7 +96,11 @@ export default function DailyRaceScreen(): React.ReactElement | null {
               }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                   <span className="pill" style={{ minWidth: 90 }}>{p.dateUtc}</span>
-                  <span>{p.raceKind === 'points' ? '📈 Points' : '💰 Money'} <span className="muted">#{p.rank}</span></span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <Icon name={p.raceKind === 'points' ? 'trending-up' : 'cash'} size={12} />
+                    {p.raceKind === 'points' ? 'Points' : 'Money'}
+                    <span className="muted">#{p.rank}</span>
+                  </span>
                   <span className="muted small">
                     Δ {p.raceKind === 'points' ? `${p.valueDelta.toLocaleString()} MMR` : `$${p.valueDelta.toLocaleString()}`}
                   </span>
@@ -108,20 +120,22 @@ export default function DailyRaceScreen(): React.ReactElement | null {
 // ---------------------------------------------------------------------
 
 function Board({
-  title, subtitle, rows, myTeamId, myRank, unit, accent,
+  title, icon, subtitle, rows, myTeamId, myRank, unit, accent,
 }: {
-  title: string; subtitle: string;
+  title: string; icon: React.ComponentProps<typeof Icon>['name']; subtitle: string;
   rows: DailyRaceEntryWire[]; myTeamId: string; myRank: number | null;
   unit: 'MMR' | '$'; accent: string;
 }): React.ReactElement {
   const fmtDelta = (n: number): string => unit === '$' ? `$${n.toLocaleString()}` : `+${n} MMR`;
   const rankColor = (i: number): string =>
-    i === 0 ? '#ffd700' : i === 1 ? '#c0c0c0' : i === 2 ? '#cd7f32' : 'rgba(255,255,255,0.55)';
+    i === 0 ? '#ffd700' : i === 1 ? '#c0c0c0' : i === 2 ? '#cd7f32' : 'var(--text-dim)';
 
   return (
-    <div className="panel" style={{ borderTop: `3px solid ${accent}`, padding: 'var(--space-4)' }}>
+    <div className="panel" style={{ borderTop: `2px solid ${accent}`, padding: 'var(--space-4)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 'var(--space-1)' }}>
-        <div className="panel-title" style={{ margin: 0 }}>{title}</div>
+        <div className="panel-title" style={{ margin: 0 }}>
+          <Icon name={icon} size={13} style={{ color: accent }} /> {title}
+        </div>
         {myRank != null && (
           <span className="pill" style={{
             background: `${accent}22`, borderColor: `${accent}55`, color: accent,
@@ -149,7 +163,7 @@ function Board({
                 transition: 'background var(--motion-fast)',
               }}>
                 <span style={{ color: rankColor(i), fontWeight: 700, fontSize: 'var(--text-md)', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-                  {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`}
+                  {i + 1}
                 </span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', minWidth: 0 }}>
                   {r.logoId && <span style={{ fontSize: 16 }}>{r.logoId}</span>}
